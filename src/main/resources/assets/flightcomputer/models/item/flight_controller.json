@@ -1,0 +1,6 @@
+{
+  "parent": "flightcomputer:block/flight_controller",
+  "textures": {
+    "particle": "flightcomputer:block/flight_controller"
+  }
+}

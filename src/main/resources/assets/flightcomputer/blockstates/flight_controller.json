@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "flightcomputer:block/flight_controller" }
+  }
+}

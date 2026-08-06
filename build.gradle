@@ -20,6 +20,13 @@ repositories {
             includeGroup "dev.engine-room"
         }
     }
+    maven {
+        name = "GeckoLib"
+        url = "https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/"
+        content {
+            includeGroup "software.bernie.geckolib"
+        }
+    }
 }
 
 runs {
@@ -52,6 +59,10 @@ dependencies {
     // requires) is NOT bundled in Create's slim jar - it lives in Ponder's own jar instead.
     // Without this, "package net.createmod.catnip.data does not exist" is expected.
     compileOnly("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
+
+    // GeckoLib - block/entity animation engine. Replaces hand-coded ModelPart rotation for
+    // the Flight Controller's buttons/dials with real keyframe animations authored in Blockbench.
+    implementation "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
 }
 
 tasks.withType(ProcessResources).configureEach {
