@@ -26,6 +26,8 @@ import software.bernie.geckolib.animation.RawAnimation;
 import software.bernie.geckolib.animatable.instance.AnimatableInstanceCache;
 import software.bernie.geckolib.util.GeckoLibUtil;
 
+import java.util.UUID;
+
 /** Server-authoritative state, FE storage, thermal state and upgrades for one controller block. */
 public class FlightControllerBlockEntity extends BlockEntity implements GeoBlockEntity {
     private final AnimatableInstanceCache animatableCache = GeckoLibUtil.createInstanceCache(this);
@@ -40,6 +42,9 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         }
         @Override public boolean isItemValid(int slot, ItemStack stack) { return stack.getItem() instanceof CoolingUpgradeItem; }
     };
+
+    /** Persistent identity for this physical controller. Never shared with another placement. */
+    private UUID controllerId = UUID.randomUUID();
 
     private FlightControllerState controllerState = FlightControllerState.DEFAULT;
     private FlightControllerAction lastAction = FlightControllerAction.PULSE_DISPLAY;
@@ -57,6 +62,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     private int renderedDisplayPulseId = -1;
 
     public FlightControllerBlockEntity(BlockPos pos, BlockState state) { super(ModBlockEntities.FLIGHT_CONTROLLER.get(), pos, state); }
+    public UUID getControllerId() { return controllerId; }
     public FlightControllerState getControllerState() { return controllerState; }
     public boolean isEngaged() { return controllerState.engaged(); }
     public boolean isStabiliser() { return controllerState.stabiliser(); }
@@ -163,6 +169,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
 
     @Override protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.saveAdditional(tag, registries);
+        tag.putUUID("ControllerId", controllerId);
         controllerState.save(tag);
         tag.putString("LastAction", lastAction.name());
         tag.putInt("ModePulseId", modePulseId);
@@ -177,6 +184,8 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     @Override public void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.loadAdditional(tag, registries);
         boolean firstClientLoad = renderedModePulseId == -1 && renderedDisplayPulseId == -1;
+        if (tag.hasUUID("ControllerId")) controllerId = tag.getUUID("ControllerId");
+        else controllerId = UUID.randomUUID();
         controllerState = FlightControllerState.load(tag);
         try { lastAction = FlightControllerAction.valueOf(tag.getString("LastAction")); } catch (IllegalArgumentException ignored) { lastAction = FlightControllerAction.PULSE_DISPLAY; }
         try { powerState = PowerState.valueOf(tag.getString("PowerState")); } catch (IllegalArgumentException ignored) { powerState = PowerState.NORMAL; }
