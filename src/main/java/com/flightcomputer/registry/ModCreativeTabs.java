@@ -15,6 +15,9 @@ public final class ModCreativeTabs {
             .displayItems((params, output) -> {
                 output.accept(ModItems.FLIGHT_CONTROLLER.get());
                 output.accept(ModItems.FLIGHT_LINK_TOOL.get());
+                output.accept(ModItems.BASIC_COOLING.get());
+                output.accept(ModItems.IMPROVED_COOLING.get());
+                output.accept(ModItems.ADVANCED_COOLING.get());
             }).build());
     private ModCreativeTabs() {}
 }
