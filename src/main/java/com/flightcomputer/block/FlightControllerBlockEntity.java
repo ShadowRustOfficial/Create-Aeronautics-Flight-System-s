@@ -76,8 +76,12 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     public boolean isFunctionalityReduced() { return powerState == PowerState.LOW || powerState == PowerState.CRITICAL; }
 
     public FlightControllerActionResult applyAction(FlightControllerAction action) {
-        if (!canPerformAction(action)) return FlightControllerActionResult.accepted(controllerState, action, FlightControllerAnimationBridge.forAction(action, controllerState));
-        if (action == FlightControllerAction.TOGGLE_ENGAGED && thermalShutdown && !controllerState.engaged()) return FlightControllerActionResult.accepted(controllerState, action, FlightControllerAnimationBridge.forAction(action, controllerState));
+        // The panel controls must remain individually interactive even while the power
+        // system is empty. Power restrictions belong to actual flight/operating behavior;
+        // they must not suppress the physical control animation/state layer.
+        if (action == FlightControllerAction.TOGGLE_ENGAGED && thermalShutdown && !controllerState.engaged()) {
+            return FlightControllerActionResult.accepted(controllerState, action, FlightControllerAnimationBridge.forAction(action, controllerState));
+        }
         controllerState = controllerState.apply(action);
         lastAction = action;
         switch (action) {
@@ -87,12 +91,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         }
         markDirtyAndSync();
         return FlightControllerActionResult.accepted(controllerState, action, FlightControllerAnimationBridge.forAction(action, controllerState));
-    }
-
-    private boolean canPerformAction(FlightControllerAction action) {
-        if (powerState == PowerState.NO_POWER || thermalShutdown) return action == FlightControllerAction.PULSE_DISPLAY;
-        if ((powerState == PowerState.LOW || powerState == PowerState.CRITICAL) && action == FlightControllerAction.CYCLE_MODE) return false;
-        return true;
     }
 
     /** Server ticker: consumes FE, updates power state, temperature and thermal protection. */
