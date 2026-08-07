@@ -1,6 +1,1 @@
-{
-  "parent": "flightcomputer:block/flight_controller",
-  "textures": {
-    "particle": "flightcomputer:block/flight_controller"
-  }
-}
+{"parent":"minecraft:item/generated","textures":{"layer0":"flightcomputer:block/flight_controller"}}

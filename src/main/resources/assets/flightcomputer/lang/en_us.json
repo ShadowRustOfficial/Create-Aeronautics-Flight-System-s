@@ -2,5 +2,7 @@
   "key.categories.flightcomputer": "Flight Computer",
   "key.flightcomputer.open_map": "Open Flight Map",
   "block.flightcomputer.flight_controller": "Flight Controller",
-  "item.flightcomputer.flight_controller": "Flight Controller"
+  "item.flightcomputer.flight_controller": "Flight Controller",
+  "itemGroup.flightcomputer": "Flight Computer",
+  "item.flightcomputer.flight_link_tool": "Flight Link Tool"
 }

@@ -1,4 +1,1 @@
-{
-  "parent": "minecraft:block/block",
-  "render_type": "minecraft:solid"
-}
+{"parent":"minecraft:block/cube_all","textures":{"all":"flightcomputer:block/flight_controller"}}

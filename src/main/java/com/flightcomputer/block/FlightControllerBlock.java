@@ -1,68 +1,83 @@
 package com.flightcomputer.block;
 
+import com.flightcomputer.avionics.buttons.FlightControllerButtonLayout;
+import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Mirror;
-import net.minecraft.world.level.block.RenderShape;
-import net.minecraft.world.level.block.Rotation;
-import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityTicker;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
+import net.minecraft.world.phys.BlockHitResult;
 import org.jetbrains.annotations.Nullable;
 
-/**
- * The controller records its own forward-facing direction at placement time via the
- * FACING blockstate property - vanilla persists blockstates automatically, no NBT
- * needed for this. FACING is the vehicle's nose direction; the button/screen face is
- * always FACING.getOpposite(). Nothing here re-derives orientation from the player
- * after placement, so the controller never "moves" just because a player walks past
- * or looks at it - see BUILD_NOTES.md / dev chat for the bug this replaces.
- */
 public class FlightControllerBlock extends BaseEntityBlock {
-
+    private static final MapCodec<FlightControllerBlock> CODEC = simpleCodec(FlightControllerBlock::new);
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
 
     public FlightControllerBlock(Properties properties) {
         super(properties);
-        this.registerDefaultState(this.stateDefinition.any().setValue(FACING, Direction.NORTH));
+        registerDefaultState(stateDefinition.any().setValue(FACING, Direction.NORTH));
     }
 
     @Override
-    protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
+    protected MapCodec<? extends BaseEntityBlock> codec() { return CODEC; }
+
+    @Override public RenderShape getRenderShape(BlockState state) { return RenderShape.ENTITYBLOCK_ANIMATED; }
+
+    @Override
+    protected void createBlockStateDefinition(StateDefinition.Builder<net.minecraft.world.level.block.Block, BlockState> builder) {
         builder.add(FACING);
     }
 
-    @Nullable
     @Override
-    public BlockState getStateForPlacement(BlockPlaceContext context) {
-        // Nose points away from the player, so the button face ends up toward them -
-        // this is captured once, here, and never touched again after placement.
-        return this.defaultBlockState().setValue(FACING, context.getHorizontalDirection().getOpposite());
+    public BlockState getStateForPlacement(net.minecraft.world.item.context.BlockPlaceContext context) {
+        return defaultBlockState().setValue(FACING, context.getHorizontalDirection().getOpposite());
     }
 
-    @Override
-    public BlockState rotate(BlockState state, Rotation rotation) {
-        return state.setValue(FACING, rotation.rotate(state.getValue(FACING)));
-    }
-
-    @Override
-    public BlockState mirror(BlockState state, Mirror mirror) {
-        return state.rotate(mirror.getRotation(state.getValue(FACING)));
-    }
-
-    @Override
-    public RenderShape getRenderShape(BlockState state) {
-        return RenderShape.ENTITYBLOCK_ANIMATED;
-    }
-
-    @Nullable
-    @Override
-    public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
+    @Nullable @Override public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
         return new FlightControllerBlockEntity(pos, state);
+    }
+
+    /**
+     * Shift-right-click with an empty offhand operates a physical panel control.
+     * Ordinary clicks are observed client-side and open the navigation console.
+     */
+    @Override
+    protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
+        if (!level.isClientSide && player.isShiftKeyDown() && player.getOffhandItem().isEmpty()
+                && level.getBlockEntity(pos) instanceof FlightControllerBlockEntity controller) {
+            Direction facing = state.getValue(FACING);
+            if (hit.getDirection() != facing) return InteractionResult.PASS;
+
+            double blockX = hit.getLocation().x - pos.getX();
+            double blockZ = hit.getLocation().z - pos.getZ();
+            double u = switch (facing) {
+                case NORTH -> blockX;
+                case SOUTH -> 1.0 - blockX;
+                case EAST -> 1.0 - blockZ;
+                case WEST -> blockZ;
+                default -> blockX;
+            };
+            double v = hit.getLocation().y - pos.getY();
+            FlightControllerButtonLayout.find(u, v).ifPresent(button -> controller.applyAction(button.action()));
+            return InteractionResult.SUCCESS;
+        }
+        return InteractionResult.sidedSuccess(level.isClientSide);
+    }
+
+    @Nullable @Override
+    public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state, BlockEntityType<T> type) {
+        return level.isClientSide ? null : (currentLevel, currentPos, currentState, blockEntity) -> {
+            if (blockEntity instanceof FlightControllerBlockEntity controller) controller.serverTick();
+        };
     }
 }

@@ -1,6 +1,7 @@
 package com.flightcomputer.registry;
 
 import com.flightcomputer.FlightComputer;
+import com.flightcomputer.item.FlightLinkToolItem;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -16,6 +17,9 @@ public final class ModItems {
                     ModBlocks.FLIGHT_CONTROLLER.get(),
                     new Item.Properties()
             ));
+
+    public static final DeferredHolder<Item, FlightLinkToolItem> FLIGHT_LINK_TOOL =
+            REGISTRY.register("flight_link_tool", () -> new FlightLinkToolItem(new Item.Properties().stacksTo(1)));
 
     private ModItems() {}
 }
