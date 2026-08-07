@@ -31,6 +31,10 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     // GeckoLib only receives a new toggle animation when the toggle actually changes.
     private Boolean renderedEngaged;
     private Boolean renderedStabiliser;
+    private int modePulseId;
+    private int displayPulseId;
+    private int renderedModePulseId = -1;
+    private int renderedDisplayPulseId = -1;
 
     public FlightControllerBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.FLIGHT_CONTROLLER.get(), pos, state);
@@ -48,10 +52,16 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
 
         // Toggle animations are state transitions: the first press selects the ON clip,
         // the next press selects the OFF clip. They are held at their final frame.
-        // Momentary controls use the pulse timer instead.
+        // Momentary controls use a pulse id so each click starts the press animation once.
         animationPulseTicks = switch (action) {
-            case CYCLE_MODE -> 10;
-            case PULSE_DISPLAY -> 12;
+            case CYCLE_MODE -> {
+                modePulseId++;
+                yield 10;
+            }
+            case PULSE_DISPLAY -> {
+                displayPulseId++;
+                yield 12;
+            }
             default -> 0;
         };
 
@@ -77,6 +87,8 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         controllerState.save(tag);
         tag.putString("LastAction", lastAction.name());
         tag.putInt("AnimationPulseTicks", animationPulseTicks);
+        tag.putInt("ModePulseId", modePulseId);
+        tag.putInt("DisplayPulseId", displayPulseId);
     }
 
     @Override
@@ -86,10 +98,14 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         try { lastAction = FlightControllerAction.valueOf(tag.getString("LastAction")); }
         catch (IllegalArgumentException ignored) { lastAction = FlightControllerAction.PULSE_DISPLAY; }
         animationPulseTicks = tag.getInt("AnimationPulseTicks");
+        modePulseId = tag.getInt("ModePulseId");
+        displayPulseId = tag.getInt("DisplayPulseId");
 
         // Force the client animation predicates to re-evaluate after a block-entity sync/load.
         renderedEngaged = null;
         renderedStabiliser = null;
+        renderedModePulseId = -1;
+        renderedDisplayPulseId = -1;
     }
 
     @Override
@@ -140,7 +156,11 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
 
     private PlayState modePredicate(AnimationState<FlightControllerBlockEntity> state) {
         if (lastAction == FlightControllerAction.CYCLE_MODE && animationPulseTicks > 0) {
-            state.getController().setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.MODE_PRESS));
+            AnimationController<FlightControllerBlockEntity> controller = state.getController();
+            if (renderedModePulseId != modePulseId) {
+                renderedModePulseId = modePulseId;
+                controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.MODE_PRESS));
+            }
             return PlayState.CONTINUE;
         }
         return PlayState.STOP;
@@ -148,7 +168,11 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
 
     private PlayState displayPredicate(AnimationState<FlightControllerBlockEntity> state) {
         if (lastAction == FlightControllerAction.PULSE_DISPLAY && animationPulseTicks > 0) {
-            state.getController().setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.DISPLAY_PRESS));
+            AnimationController<FlightControllerBlockEntity> controller = state.getController();
+            if (renderedDisplayPulseId != displayPulseId) {
+                renderedDisplayPulseId = displayPulseId;
+                controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.DISPLAY_PRESS));
+            }
             return PlayState.CONTINUE;
         }
         return PlayState.STOP;
