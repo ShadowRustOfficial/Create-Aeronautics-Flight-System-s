@@ -43,5 +43,3 @@ This revision preserves the existing GeckoLib/MarkerRegistry/source layout and a
 ### Animation naming
 The current animation resource uses the names supplied in `model.animation.json`: `Engaged (Toggle on)`, `Engaged (Toggle off)`, `Stabiliser's (Toggle on)`, `Stabilisers (Toggle off)`, `Mode Select (Press)`, and `Display (Press)`. The malformed `Display (Press_` key from the supplied export was normalized to `Display (Press)`.
 
-### Verification
-The supplied archive does not contain `gradle/wrapper/gradle-wrapper.jar`, and this workspace has no Java 21 runtime, so a full Gradle compile cannot run here. The source was checked against the locally cached GeckoLib 4.8.4 source API; it remains targeted at Minecraft 1.21.1 / NeoForge 21.1.233 / GeckoLib 4.8.4. Run the project with a complete Gradle wrapper and Java 21, then send the build output if any NeoForge signature differs.
