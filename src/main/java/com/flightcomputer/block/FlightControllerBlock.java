@@ -58,16 +58,36 @@ public class FlightControllerBlock extends BaseEntityBlock {
             Direction facing = state.getValue(FACING);
             if (hit.getDirection() != facing) return InteractionResult.PASS;
 
-            double blockX = hit.getLocation().x - pos.getX();
-            double blockZ = hit.getLocation().z - pos.getZ();
-            double u = switch (facing) {
-                case NORTH -> blockX;
-                case SOUTH -> 1.0 - blockX;
-                case EAST -> 1.0 - blockZ;
-                case WEST -> blockZ;
-                default -> blockX;
-            };
-            double v = hit.getLocation().y - pos.getY();
+            double localX = hit.getLocation().x - pos.getX();
+            double localY = hit.getLocation().y - pos.getY();
+            double localZ = hit.getLocation().z - pos.getZ();
+
+            double u;
+            double v;
+
+            switch (facing) {
+                case NORTH -> {
+                    u = localX;
+                    v = localY;
+                }
+                case SOUTH -> {
+                    u = 1.0 - localX;
+                    v = localY;
+                }
+                case EAST -> {
+                    u = 1.0 - localZ;
+                    v = localY;
+                }
+                case WEST -> {
+                    u = localZ;
+                    v = localY;
+                }
+                default -> {
+                    u = localX;
+                    v = localY;
+                }
+            }
+
             FlightControllerButtonLayout.find(u, v).ifPresent(button -> controller.applyAction(button.action()));
             return InteractionResult.SUCCESS;
         }
