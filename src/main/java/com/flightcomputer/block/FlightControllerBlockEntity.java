@@ -27,6 +27,11 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     private FlightControllerAction lastAction = FlightControllerAction.PULSE_DISPLAY;
     private int animationPulseTicks;
 
+    // Client-side animation state. These are deliberately separate from controllerState so
+    // GeckoLib only receives a new toggle animation when the toggle actually changes.
+    private Boolean renderedEngaged;
+    private Boolean renderedStabiliser;
+
     public FlightControllerBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.FLIGHT_CONTROLLER.get(), pos, state);
     }
@@ -41,9 +46,9 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         controllerState = controllerState.apply(action);
         lastAction = action;
 
-        // Toggle actions are state-driven. Let GeckoLib re-evaluate the correct on/off
-        // clip immediately from the updated controller state; only momentary actions
-        // need a short pulse timer.
+        // Toggle animations are state transitions: the first press selects the ON clip,
+        // the next press selects the OFF clip. They are held at their final frame.
+        // Momentary controls use the pulse timer instead.
         animationPulseTicks = switch (action) {
             case CYCLE_MODE -> 10;
             case PULSE_DISPLAY -> 12;
@@ -81,6 +86,10 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         try { lastAction = FlightControllerAction.valueOf(tag.getString("LastAction")); }
         catch (IllegalArgumentException ignored) { lastAction = FlightControllerAction.PULSE_DISPLAY; }
         animationPulseTicks = tag.getInt("AnimationPulseTicks");
+
+        // Force the client animation predicates to re-evaluate after a block-entity sync/load.
+        renderedEngaged = null;
+        renderedStabiliser = null;
     }
 
     @Override
@@ -104,14 +113,28 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     }
 
     private PlayState engagedPredicate(AnimationState<FlightControllerBlockEntity> state) {
-        state.getController().setAnimation(RawAnimation.begin().thenPlayAndHold(
-                controllerState.engaged() ? FlightControllerAnimationBridge.ENGAGED_ON : FlightControllerAnimationBridge.ENGAGED_OFF));
+        boolean engaged = controllerState.engaged();
+        AnimationController<FlightControllerBlockEntity> controller = state.getController();
+
+        if (renderedEngaged == null || renderedEngaged != engaged) {
+            renderedEngaged = engaged;
+            controller.setAnimation(RawAnimation.begin().thenPlayAndHold(
+                    engaged ? FlightControllerAnimationBridge.ENGAGED_ON : FlightControllerAnimationBridge.ENGAGED_OFF));
+        }
+
         return PlayState.CONTINUE;
     }
 
     private PlayState stabiliserPredicate(AnimationState<FlightControllerBlockEntity> state) {
-        state.getController().setAnimation(RawAnimation.begin().thenPlayAndHold(
-                controllerState.stabiliser() ? FlightControllerAnimationBridge.STABILISER_ON : FlightControllerAnimationBridge.STABILISER_OFF));
+        boolean stabiliser = controllerState.stabiliser();
+        AnimationController<FlightControllerBlockEntity> controller = state.getController();
+
+        if (renderedStabiliser == null || renderedStabiliser != stabiliser) {
+            renderedStabiliser = stabiliser;
+            controller.setAnimation(RawAnimation.begin().thenPlayAndHold(
+                    stabiliser ? FlightControllerAnimationBridge.STABILISER_ON : FlightControllerAnimationBridge.STABILISER_OFF));
+        }
+
         return PlayState.CONTINUE;
     }
 
