@@ -9,8 +9,10 @@ public class FlightControllerModel extends GeoModel<FlightControllerBlockEntity>
 
     private static final ResourceLocation MODEL = ResourceLocation.fromNamespaceAndPath(
             FlightComputer.MOD_ID, "geo/flight_controller.geo.json");
-    private static final ResourceLocation TEXTURE = ResourceLocation.fromNamespaceAndPath(
+    private static final ResourceLocation BODY_TEXTURE = ResourceLocation.fromNamespaceAndPath(
             FlightComputer.MOD_ID, "textures/block/flight_controller.png");
+    private static final ResourceLocation OVERLAY_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            FlightComputer.MOD_ID, "textures/block/flight_controller_overlay.png");
     private static final ResourceLocation ANIMATIONS = ResourceLocation.fromNamespaceAndPath(
             FlightComputer.MOD_ID, "animations/flight_controller.animation.json");
 
@@ -21,7 +23,11 @@ public class FlightControllerModel extends GeoModel<FlightControllerBlockEntity>
 
     @Override
     public ResourceLocation getTextureResource(FlightControllerBlockEntity animatable) {
-        return TEXTURE;
+        return BODY_TEXTURE;
+    }
+
+    public ResourceLocation getOverlayTextureResource(FlightControllerBlockEntity animatable) {
+        return OVERLAY_TEXTURE;
     }
 
     @Override
