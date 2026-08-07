@@ -25,10 +25,10 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     private final AnimatableInstanceCache animatableCache = GeckoLibUtil.createInstanceCache(this);
     private FlightControllerState controllerState = FlightControllerState.DEFAULT;
     private FlightControllerAction lastAction = FlightControllerAction.PULSE_DISPLAY;
-    private int animationPulseTicks;
 
     // Client-side animation state. These are deliberately separate from controllerState so
-    // GeckoLib only receives a new toggle animation when the toggle actually changes.
+    // GeckoLib only receives a new toggle animation when the toggle actually changes, while
+    // momentary controls use monotonically increasing pulse ids to play once per click.
     private Boolean renderedEngaged;
     private Boolean renderedStabiliser;
     private int modePulseId;
@@ -52,18 +52,13 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
 
         // Toggle animations are state transitions: the first press selects the ON clip,
         // the next press selects the OFF clip. They are held at their final frame.
-        // Momentary controls use a pulse id so each click starts the press animation once.
-        animationPulseTicks = switch (action) {
-            case CYCLE_MODE -> {
-                modePulseId++;
-                yield 10;
-            }
-            case PULSE_DISPLAY -> {
-                displayPulseId++;
-                yield 12;
-            }
-            default -> 0;
-        };
+        // Momentary controls are identified by a pulse id and their animation itself is
+        // non-looping, so each click plays exactly once and returns to idle automatically.
+        switch (action) {
+            case CYCLE_MODE -> modePulseId++;
+            case PULSE_DISPLAY -> displayPulseId++;
+            default -> { }
+        }
 
         markDirtyAndSync();
         return FlightControllerActionResult.accepted(controllerState, action,
@@ -77,16 +72,11 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         }
     }
 
-    public void serverTick() {
-        if (animationPulseTicks > 0) animationPulseTicks--;
-    }
-
     @Override
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.saveAdditional(tag, registries);
         controllerState.save(tag);
         tag.putString("LastAction", lastAction.name());
-        tag.putInt("AnimationPulseTicks", animationPulseTicks);
         tag.putInt("ModePulseId", modePulseId);
         tag.putInt("DisplayPulseId", displayPulseId);
     }
@@ -97,7 +87,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         controllerState = FlightControllerState.load(tag);
         try { lastAction = FlightControllerAction.valueOf(tag.getString("LastAction")); }
         catch (IllegalArgumentException ignored) { lastAction = FlightControllerAction.PULSE_DISPLAY; }
-        animationPulseTicks = tag.getInt("AnimationPulseTicks");
         modePulseId = tag.getInt("ModePulseId");
         displayPulseId = tag.getInt("DisplayPulseId");
 
@@ -155,27 +144,21 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     }
 
     private PlayState modePredicate(AnimationState<FlightControllerBlockEntity> state) {
-        if (lastAction == FlightControllerAction.CYCLE_MODE && animationPulseTicks > 0) {
-            AnimationController<FlightControllerBlockEntity> controller = state.getController();
-            if (renderedModePulseId != modePulseId) {
-                renderedModePulseId = modePulseId;
-                controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.MODE_PRESS));
-            }
-            return PlayState.CONTINUE;
+        AnimationController<FlightControllerBlockEntity> controller = state.getController();
+        if (lastAction == FlightControllerAction.CYCLE_MODE && renderedModePulseId != modePulseId) {
+            renderedModePulseId = modePulseId;
+            controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.MODE_PRESS));
         }
-        return PlayState.STOP;
+        return PlayState.CONTINUE;
     }
 
     private PlayState displayPredicate(AnimationState<FlightControllerBlockEntity> state) {
-        if (lastAction == FlightControllerAction.PULSE_DISPLAY && animationPulseTicks > 0) {
-            AnimationController<FlightControllerBlockEntity> controller = state.getController();
-            if (renderedDisplayPulseId != displayPulseId) {
-                renderedDisplayPulseId = displayPulseId;
-                controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.DISPLAY_PRESS));
-            }
-            return PlayState.CONTINUE;
+        AnimationController<FlightControllerBlockEntity> controller = state.getController();
+        if (lastAction == FlightControllerAction.PULSE_DISPLAY && renderedDisplayPulseId != displayPulseId) {
+            renderedDisplayPulseId = displayPulseId;
+            controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.DISPLAY_PRESS));
         }
-        return PlayState.STOP;
+        return PlayState.CONTINUE;
     }
 
     @Override
