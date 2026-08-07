@@ -63,29 +63,14 @@ public class FlightControllerBlock extends BaseEntityBlock {
             double localZ = hit.getLocation().z - pos.getZ();
 
             double u;
-            double v;
+            double v = localY;
 
             switch (facing) {
-                case NORTH -> {
-                    u = localX;
-                    v = localY;
-                }
-                case SOUTH -> {
-                    u = 1.0 - localX;
-                    v = localY;
-                }
-                case EAST -> {
-                    u = 1.0 - localZ;
-                    v = localY;
-                }
-                case WEST -> {
-                    u = localZ;
-                    v = localY;
-                }
-                default -> {
-                    u = localX;
-                    v = localY;
-                }
+                case NORTH -> u = localX;
+                case SOUTH -> u = 1.0 - localX;
+                case EAST -> u = 1.0 - localZ;
+                case WEST -> u = localZ;
+                default -> u = localX;
             }
 
             FlightControllerButtonLayout.find(u, v).ifPresent(button -> controller.applyAction(button.action()));
