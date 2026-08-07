@@ -66,8 +66,8 @@ public class FlightControllerBlock extends BaseEntityBlock {
             double v = localY;
 
             switch (facing) {
-                case NORTH -> u = localX;
-                case SOUTH -> u = 1.0 - localX;
+                case NORTH -> u = 1.0 - localX;
+                case SOUTH -> u = localX;
                 case EAST -> u = 1.0 - localZ;
                 case WEST -> u = localZ;
                 default -> u = localX;
