@@ -27,8 +27,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     private FlightControllerAction lastAction = FlightControllerAction.PULSE_DISPLAY;
     private int animationPulseTicks;
 
-    // Client-side animation state. These are deliberately separate from controllerState so
-    // GeckoLib only receives a new toggle animation when the toggle actually changes.
     private Boolean renderedEngaged;
     private Boolean renderedStabiliser;
     private int modePulseId;
@@ -41,7 +39,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     }
 
     public FlightControllerState getControllerState() { return controllerState; }
-    // Compatibility accessors for existing screens and integrations.
     public boolean isEngaged() { return controllerState.engaged(); }
     public boolean isStabiliser() { return controllerState.stabiliser(); }
     public int getFlightMode() { return controllerState.flightMode().ordinal(); }
@@ -50,9 +47,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         controllerState = controllerState.apply(action);
         lastAction = action;
 
-        // Toggle animations are state transitions: the first press selects the ON clip,
-        // the next press selects the OFF clip. They are held at their final frame.
-        // Momentary controls use a pulse id so each click starts the press animation once.
         animationPulseTicks = switch (action) {
             case CYCLE_MODE -> {
                 modePulseId++;
@@ -77,11 +71,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         }
     }
 
-    /**
-     * Called by the block's server ticker. The timer is retained for compatibility with
-     * the existing ticker; momentary animation playback itself is controlled by the
-     * pulse IDs and GeckoLib's one-shot animation definitions.
-     */
     public void serverTick() {
         if (animationPulseTicks > 0) animationPulseTicks--;
     }
@@ -105,8 +94,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         animationPulseTicks = tag.getInt("AnimationPulseTicks");
         modePulseId = tag.getInt("ModePulseId");
         displayPulseId = tag.getInt("DisplayPulseId");
-
-        // Force the client animation predicates to re-evaluate after a block-entity sync/load.
         renderedEngaged = null;
         renderedStabiliser = null;
         renderedModePulseId = -1;
@@ -136,51 +123,45 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     private PlayState engagedPredicate(AnimationState<FlightControllerBlockEntity> state) {
         boolean engaged = controllerState.engaged();
         AnimationController<FlightControllerBlockEntity> controller = state.getController();
-
         if (renderedEngaged == null || renderedEngaged != engaged) {
             renderedEngaged = engaged;
             controller.setAnimation(RawAnimation.begin().thenPlayAndHold(
                     engaged ? FlightControllerAnimationBridge.ENGAGED_ON : FlightControllerAnimationBridge.ENGAGED_OFF));
         }
-
         return PlayState.CONTINUE;
     }
 
     private PlayState stabiliserPredicate(AnimationState<FlightControllerBlockEntity> state) {
         boolean stabiliser = controllerState.stabiliser();
         AnimationController<FlightControllerBlockEntity> controller = state.getController();
-
         if (renderedStabiliser == null || renderedStabiliser != stabiliser) {
             renderedStabiliser = stabiliser;
             controller.setAnimation(RawAnimation.begin().thenPlayAndHold(
                     stabiliser ? FlightControllerAnimationBridge.STABILISER_ON : FlightControllerAnimationBridge.STABILISER_OFF));
         }
-
         return PlayState.CONTINUE;
     }
 
     private PlayState modePredicate(AnimationState<FlightControllerBlockEntity> state) {
-        if (lastAction == FlightControllerAction.CYCLE_MODE && animationPulseTicks > 0) {
-            AnimationController<FlightControllerBlockEntity> controller = state.getController();
-            if (renderedModePulseId != modePulseId) {
-                renderedModePulseId = modePulseId;
-                controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.MODE_PRESS));
-            }
+        AnimationController<FlightControllerBlockEntity> controller = state.getController();
+        if (lastAction == FlightControllerAction.CYCLE_MODE && renderedModePulseId != modePulseId) {
+            renderedModePulseId = modePulseId;
+            controller.forceAnimationReset();
+            controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.MODE_PRESS));
             return PlayState.CONTINUE;
         }
-        return PlayState.STOP;
+        return controller.hasAnimationFinished() ? PlayState.STOP : PlayState.CONTINUE;
     }
 
     private PlayState displayPredicate(AnimationState<FlightControllerBlockEntity> state) {
-        if (lastAction == FlightControllerAction.PULSE_DISPLAY && animationPulseTicks > 0) {
-            AnimationController<FlightControllerBlockEntity> controller = state.getController();
-            if (renderedDisplayPulseId != displayPulseId) {
-                renderedDisplayPulseId = displayPulseId;
-                controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.DISPLAY_PRESS));
-            }
+        AnimationController<FlightControllerBlockEntity> controller = state.getController();
+        if (lastAction == FlightControllerAction.PULSE_DISPLAY && renderedDisplayPulseId != displayPulseId) {
+            renderedDisplayPulseId = displayPulseId;
+            controller.forceAnimationReset();
+            controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.DISPLAY_PRESS));
             return PlayState.CONTINUE;
         }
-        return PlayState.STOP;
+        return controller.hasAnimationFinished() ? PlayState.STOP : PlayState.CONTINUE;
     }
 
     @Override
