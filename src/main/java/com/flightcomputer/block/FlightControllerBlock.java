@@ -14,8 +14,8 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
-import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.phys.BlockHitResult;
 import org.jetbrains.annotations.Nullable;
 
@@ -61,10 +61,10 @@ public class FlightControllerBlock extends BaseEntityBlock {
             double blockX = hit.getLocation().x - pos.getX();
             double blockZ = hit.getLocation().z - pos.getZ();
             double u = switch (facing) {
-                case NORTH -> 1.0 - blockX;
-                case SOUTH -> blockX;
-                case EAST -> blockZ;
-                case WEST -> 1.0 - blockZ;
+                case NORTH -> blockX;
+                case SOUTH -> 1.0 - blockX;
+                case EAST -> 1.0 - blockZ;
+                case WEST -> blockZ;
                 default -> blockX;
             };
             double v = hit.getLocation().y - pos.getY();
