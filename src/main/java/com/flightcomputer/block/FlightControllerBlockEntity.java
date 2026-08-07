@@ -41,8 +41,9 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         controllerState = controllerState.apply(action);
         lastAction = action;
 
-        // Toggle controls are state-driven and should remain available for repeated
-        // on/off presses. Momentary controls still get a short pulse animation.
+        // Toggle actions are state-driven. Let GeckoLib re-evaluate the correct on/off
+        // clip immediately from the updated controller state; only momentary actions
+        // need a short pulse timer.
         animationPulseTicks = switch (action) {
             case CYCLE_MODE -> 10;
             case PULSE_DISPLAY -> 12;
