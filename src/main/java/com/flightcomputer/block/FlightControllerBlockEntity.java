@@ -47,7 +47,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     private PowerState lastPowerState = PowerState.NORMAL;
     private double temperature;
     private boolean thermalShutdown;
-    private int animationPulseTicks;
     private int syncCooldown;
 
     private Boolean renderedEngaged;
@@ -75,11 +74,11 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         if (action == FlightControllerAction.TOGGLE_ENGAGED && thermalShutdown && !controllerState.engaged()) return FlightControllerActionResult.accepted(controllerState, action, FlightControllerAnimationBridge.forAction(action, controllerState));
         controllerState = controllerState.apply(action);
         lastAction = action;
-        animationPulseTicks = switch (action) {
-            case CYCLE_MODE -> { modePulseId++; yield 10; }
-            case PULSE_DISPLAY -> { displayPulseId++; yield 12; }
-            default -> 0;
-        };
+        switch (action) {
+            case CYCLE_MODE -> modePulseId++;
+            case PULSE_DISPLAY -> displayPulseId++;
+            default -> { }
+        }
         markDirtyAndSync();
         return FlightControllerActionResult.accepted(controllerState, action, FlightControllerAnimationBridge.forAction(action, controllerState));
     }
@@ -92,7 +91,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
 
     /** Server ticker: consumes FE, updates power state, temperature and thermal protection. */
     public void serverTick() {
-        if (animationPulseTicks > 0) animationPulseTicks--;
         if (level == null || level.isClientSide) return;
         updatePowerState();
         CoolingUpgradeItem.Tier cooling = getCoolingTier();
@@ -167,7 +165,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         super.saveAdditional(tag, registries);
         controllerState.save(tag);
         tag.putString("LastAction", lastAction.name());
-        tag.putInt("AnimationPulseTicks", animationPulseTicks);
         tag.putInt("ModePulseId", modePulseId);
         tag.putInt("DisplayPulseId", displayPulseId);
         tag.putString("PowerState", powerState.name());
@@ -179,18 +176,19 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
 
     @Override public void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.loadAdditional(tag, registries);
+        boolean firstClientLoad = renderedModePulseId == -1 && renderedDisplayPulseId == -1;
         controllerState = FlightControllerState.load(tag);
         try { lastAction = FlightControllerAction.valueOf(tag.getString("LastAction")); } catch (IllegalArgumentException ignored) { lastAction = FlightControllerAction.PULSE_DISPLAY; }
         try { powerState = PowerState.valueOf(tag.getString("PowerState")); } catch (IllegalArgumentException ignored) { powerState = PowerState.NORMAL; }
         lastPowerState = powerState;
-        animationPulseTicks = tag.getInt("AnimationPulseTicks");
         modePulseId = tag.getInt("ModePulseId");
         displayPulseId = tag.getInt("DisplayPulseId");
         temperature = tag.getDouble("Temperature");
         thermalShutdown = tag.getBoolean("ThermalShutdown");
         if (tag.contains("Energy")) energyStorage.deserializeNBT(registries, tag.get("Energy"));
         if (tag.contains("Upgrades")) upgradeHandler.deserializeNBT(registries, tag.getCompound("Upgrades"));
-        renderedEngaged = null; renderedStabiliser = null; renderedModePulseId = -1; renderedDisplayPulseId = -1;
+        if (firstClientLoad) { renderedModePulseId = modePulseId; renderedDisplayPulseId = displayPulseId; }
+        renderedEngaged = null; renderedStabiliser = null;
     }
 
     @Override public CompoundTag getUpdateTag(HolderLookup.Provider registries) { CompoundTag tag = new CompoundTag(); saveAdditional(tag, registries); return tag; }
@@ -214,12 +212,12 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     }
     private PlayState modePredicate(AnimationState<FlightControllerBlockEntity> state) {
         AnimationController<FlightControllerBlockEntity> controller = state.getController();
-        if (lastAction == FlightControllerAction.CYCLE_MODE && renderedModePulseId != modePulseId) { renderedModePulseId = modePulseId; controller.forceAnimationReset(); controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.MODE_PRESS)); return PlayState.CONTINUE; }
+        if (renderedModePulseId != modePulseId) { renderedModePulseId = modePulseId; controller.forceAnimationReset(); controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.MODE_PRESS)); return PlayState.CONTINUE; }
         return controller.hasAnimationFinished() ? PlayState.STOP : PlayState.CONTINUE;
     }
     private PlayState displayPredicate(AnimationState<FlightControllerBlockEntity> state) {
         AnimationController<FlightControllerBlockEntity> controller = state.getController();
-        if (lastAction == FlightControllerAction.PULSE_DISPLAY && renderedDisplayPulseId != displayPulseId) { renderedDisplayPulseId = displayPulseId; controller.forceAnimationReset(); controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.DISPLAY_PRESS)); return PlayState.CONTINUE; }
+        if (renderedDisplayPulseId != displayPulseId) { renderedDisplayPulseId = displayPulseId; controller.forceAnimationReset(); controller.setAnimation(RawAnimation.begin().thenPlay(FlightControllerAnimationBridge.DISPLAY_PRESS)); return PlayState.CONTINUE; }
         return controller.hasAnimationFinished() ? PlayState.STOP : PlayState.CONTINUE;
     }
     @Override public AnimatableInstanceCache getAnimatableInstanceCache() { return animatableCache; }
