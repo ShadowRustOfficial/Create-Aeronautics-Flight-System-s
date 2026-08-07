@@ -40,8 +40,15 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     public FlightControllerActionResult applyAction(FlightControllerAction action) {
         controllerState = controllerState.apply(action);
         lastAction = action;
-        animationPulseTicks = action == FlightControllerAction.CYCLE_MODE ? 10
-                : action == FlightControllerAction.PULSE_DISPLAY ? 12 : 0;
+
+        // Toggle controls are state-driven and should remain available for repeated
+        // on/off presses. Momentary controls still get a short pulse animation.
+        animationPulseTicks = switch (action) {
+            case CYCLE_MODE -> 10;
+            case PULSE_DISPLAY -> 12;
+            default -> 0;
+        };
+
         markDirtyAndSync();
         return FlightControllerActionResult.accepted(controllerState, action,
                 FlightControllerAnimationBridge.forAction(action, controllerState));
