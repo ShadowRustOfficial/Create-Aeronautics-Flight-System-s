@@ -63,8 +63,8 @@ public class FlightControllerBlock extends BaseEntityBlock {
             double u = switch (facing) {
                 case NORTH -> blockX;
                 case SOUTH -> 1.0 - blockX;
-                case EAST -> blockZ;
-                case WEST -> 1.0 - blockZ;
+                case EAST -> 1.0 - blockZ;
+                case WEST -> blockZ;
                 default -> blockX;
             };
             double v = hit.getLocation().y - pos.getY();
