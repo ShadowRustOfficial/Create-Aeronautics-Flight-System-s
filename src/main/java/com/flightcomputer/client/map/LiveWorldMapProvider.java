@@ -2,8 +2,8 @@ package com.flightcomputer.client.map;
 
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.level.Heightmap;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
 
 /** Fallback provider that samples only chunks already loaded by Minecraft. */
