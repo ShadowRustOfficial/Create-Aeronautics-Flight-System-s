@@ -28,7 +28,7 @@ public final class XaeroWorldMapLocator {
         if (minecraft == null || level == null) return Optional.empty();
         Path root = findRoot(minecraft.gameDirectory.toPath());
         if (root == null) return Optional.empty();
-        Path serverRoot = findServerRoot(root, minecraft, level);
+        Path serverRoot = findServerRoot(root, minecraft);
         if (serverRoot == null) return Optional.empty();
         Path dimensionDirectory = serverRoot.resolve(dimensionDirectoryName(level));
         if (!Files.isDirectory(dimensionDirectory)) return Optional.empty();
@@ -46,22 +46,13 @@ public final class XaeroWorldMapLocator {
         return Files.isDirectory(legacy) ? legacy : null;
     }
 
-    private static Path findServerRoot(Path root, Minecraft minecraft, ClientLevel level) {
-        String preferred;
-        if (minecraft.getCurrentServer() != null) {
-            preferred = "Multiplayer_" + sanitizeServerAddress(minecraft.getCurrentServer().ip);
-        } else {
-            preferred = singleplayerWorldName(minecraft);
-        }
-        if (preferred != null && !preferred.isBlank()) {
-            Path candidate = root.resolve(preferred);
-            if (Files.isDirectory(candidate)) return candidate;
-        }
-        try (Stream<Path> children = Files.list(root)) {
-            return children.filter(Files::isDirectory)
-                    .filter(path -> !path.getFileName().toString().equals("server_profiles"))
-                    .findFirst().orElse(null);
-        } catch (IOException ignored) { return null; }
+    private static Path findServerRoot(Path root, Minecraft minecraft) {
+        String preferred = minecraft.getCurrentServer() != null
+                ? "Multiplayer_" + sanitizeServerAddress(minecraft.getCurrentServer().ip)
+                : singleplayerWorldName(minecraft);
+        if (preferred == null || preferred.isBlank()) return null;
+        Path candidate = root.resolve(preferred);
+        return Files.isDirectory(candidate) ? candidate : null;
     }
 
     private static String singleplayerWorldName(Minecraft minecraft) {
@@ -82,10 +73,13 @@ public final class XaeroWorldMapLocator {
     private static Path findBestInstance(Path dimensionDirectory) {
         try (Stream<Path> children = Files.list(dimensionDirectory)) {
             List<Path> instances = children.filter(Files::isDirectory)
-                    .filter(path -> path.getFileName().toString().startsWith("mw$"))
+                    .filter(path -> path.getFileName().toString().startsWith("mw"))
                     .sorted(Comparator.comparingLong(XaeroWorldMapLocator::lastModified).reversed())
                     .toList();
-            return instances.isEmpty() ? null : instances.get(0);
+            Path defaultInstance = instances.stream()
+                    .filter(path -> path.getFileName().toString().equals("mw$default"))
+                    .findFirst().orElse(null);
+            return defaultInstance != null ? defaultInstance : (instances.isEmpty() ? null : instances.get(0));
         } catch (IOException ignored) { return null; }
     }
 
@@ -99,8 +93,7 @@ public final class XaeroWorldMapLocator {
 
     private static String readLevelId(Minecraft minecraft) {
         if (minecraft.getSingleplayerServer() == null) return "unknown";
-        String worldName = singleplayerWorldName(minecraft);
-        Path saveRoot = minecraft.gameDirectory.toPath().resolve("saves").resolve(worldName);
+        Path saveRoot = minecraft.gameDirectory.toPath().resolve("saves").resolve(singleplayerWorldName(minecraft));
         Path file = saveRoot.resolve("xaeromap.txt");
         if (!Files.isRegularFile(file)) return "unknown";
         try {
