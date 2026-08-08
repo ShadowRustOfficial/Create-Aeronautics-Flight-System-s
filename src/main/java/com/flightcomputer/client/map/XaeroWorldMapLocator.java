@@ -15,33 +15,27 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-/** Locates Xaero World Map data without a hard Xaero dependency. */
+/** Locates Xaero World Map data using the actual client instance/cache layout. */
 public final class XaeroWorldMapLocator {
     private static final Pattern LEVEL_ID = Pattern.compile("^\\s*id\\s*:\\s*(-?\\d+)\\s*$");
     private static final Pattern CACHE_DIRECTORY = Pattern.compile("cache(?:_\\d+)?");
 
     private XaeroWorldMapLocator() {}
 
-    /**
-     * The instance directory is the Xaero world/dimension map root. Modern singleplayer
-     * layouts commonly store terrain under cache/1/*.xwmc and conversion leftovers under
-     * cache_1/*.xwmc or *.xwmc.outdated.
-     */
     public record MapInstance(Path root, Path dimensionDirectory, Path instanceDirectory,
                               String levelId, int regionFiles, int outdatedFiles) {}
 
     public static Optional<MapInstance> locate(ClientLevel level) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || level == null) return Optional.empty();
-
         Path root = findRoot(minecraft.gameDirectory.toPath());
         if (root == null) return Optional.empty();
 
         Path serverRoot = findServerRoot(root, minecraft);
         if (serverRoot == null) return Optional.empty();
 
-        Path dimensionDirectory = serverRoot.resolve(dimensionDirectoryName(level));
-        if (!Files.isDirectory(dimensionDirectory)) return Optional.empty();
+        Path dimensionDirectory = resolveDimensionDirectory(serverRoot, level);
+        if (dimensionDirectory == null) return Optional.empty();
 
         Path instance = findBestInstance(dimensionDirectory);
         if (instance == null) return Optional.empty();
@@ -49,7 +43,6 @@ public final class XaeroWorldMapLocator {
         int regionFiles = countTerrainFiles(instance, false);
         int outdatedFiles = countTerrainFiles(instance, true);
         if (regionFiles == 0 && outdatedFiles == 0) return Optional.empty();
-
         return Optional.of(new MapInstance(root, dimensionDirectory, instance,
                 readLevelId(minecraft), regionFiles, outdatedFiles));
     }
@@ -62,39 +55,37 @@ public final class XaeroWorldMapLocator {
     }
 
     private static Path findServerRoot(Path root, Minecraft minecraft) {
-        String preferred;
         if (minecraft.getCurrentServer() != null) {
-            preferred = "Multiplayer_" + sanitizeServerAddress(minecraft.getCurrentServer().ip);
-        } else {
-            preferred = singleplayerWorldName(minecraft);
-        }
-
-        if (preferred != null && !preferred.isBlank()) {
+            String preferred = "Multiplayer_" + sanitizeServerAddress(minecraft.getCurrentServer().ip);
             Path candidate = root.resolve(preferred);
-            if (Files.isDirectory(candidate)) return candidate;
-
-            if (minecraft.getCurrentServer() == null) {
-                Path prefixed = root.resolve("Singleplayer_" + normalizeWorldFolderName(preferred));
-                if (Files.isDirectory(prefixed)) return prefixed;
-            }
+            return Files.isDirectory(candidate) ? candidate : null;
         }
 
-        if (minecraft.getCurrentServer() == null) {
-            String normalized = normalizeWorldFolderName(singleplayerWorldName(minecraft));
-            try (Stream<Path> children = Files.list(root)) {
-                return children.filter(Files::isDirectory)
-                        .filter(path -> {
-                            String folder = normalizeWorldFolderName(path.getFileName().toString());
-                            return folder.equals(normalized)
-                                    || folder.equals("singleplayer_" + normalized);
-                        })
-                        .findFirst().orElse(null);
-            } catch (IOException ignored) {
-                return null;
-            }
-        }
+        String worldName = singleplayerWorldName(minecraft);
+        String normalized = normalizeWorldFolderName(worldName);
+        Path[] directCandidates = {
+                root.resolve(worldName),
+                root.resolve("Singleplayer_" + normalized),
+                root.resolve("Singleplayer_" + worldName)
+        };
+        for (Path candidate : directCandidates) if (Files.isDirectory(candidate)) return candidate;
 
-        return null;
+        // Xaero's world directory name can differ from Minecraft's level display name.
+        // If the exact name is absent, prefer a directory that actually contains Overworld
+        // terrain cache data, using most-recent modification only as a deterministic fallback.
+        try (Stream<Path> children = Files.list(root)) {
+            List<Path> candidates = children.filter(Files::isDirectory)
+                    .filter(path -> hasTerrainData(path.resolve("null")))
+                    .sorted(Comparator.comparingLong(XaeroWorldMapLocator::lastModified).reversed())
+                    .toList();
+            for (Path candidate : candidates) {
+                String folder = normalizeWorldFolderName(candidate.getFileName().toString());
+                if (folder.equals(normalized) || folder.contains(normalized) || normalized.contains(folder)) return candidate;
+            }
+            return candidates.isEmpty() ? null : candidates.get(0);
+        } catch (IOException ignored) {
+            return null;
+        }
     }
 
     private static String singleplayerWorldName(Minecraft minecraft) {
@@ -103,14 +94,33 @@ public final class XaeroWorldMapLocator {
         return name == null || name.isBlank() ? "unknown" : name;
     }
 
-    /** Maps a Minecraft dimension key to Xaero's directory naming convention. */
-    private static String dimensionDirectoryName(ClientLevel level) {
+    private static Path resolveDimensionDirectory(Path serverRoot, ClientLevel level) {
         String dimensionId = level.dimension().location().toString();
-        return switch (dimensionId) {
+        String preferred = dimensionDirectoryName(level);
+        Path direct = serverRoot.resolve(preferred);
+        if (Files.isDirectory(direct)) return direct;
+
+        // Custom dimensions may use a sanitized Xaero directory name. Inspect the real
+        // dimension_config.txt when available instead of guessing from a display name.
+        try (Stream<Path> children = Files.list(serverRoot)) {
+            for (Path candidate : (Iterable<Path>) children.filter(Files::isDirectory)::iterator) {
+                Path config = candidate.resolve("dimension_config.txt");
+                if (!Files.isRegularFile(config)) continue;
+                try {
+                    String text = Files.readString(config, StandardCharsets.UTF_8);
+                    if (text.contains("dimensionTypeId:" + dimensionId) || text.contains(dimensionId)) return candidate;
+                } catch (IOException ignored) { }
+            }
+        } catch (IOException ignored) { }
+        return null;
+    }
+
+    private static String dimensionDirectoryName(ClientLevel level) {
+        return switch (level.dimension().location().toString()) {
             case "minecraft:overworld" -> "null";
             case "minecraft:the_nether" -> "DIM-1";
             case "minecraft:the_end" -> "DIM1";
-            default -> sanitizeDimension(dimensionId);
+            default -> sanitizeDimension(level.dimension().location().toString());
         };
     }
 
@@ -120,30 +130,17 @@ public final class XaeroWorldMapLocator {
                     .sorted(Comparator.comparingLong(XaeroWorldMapLocator::lastModified).reversed())
                     .toList();
 
-            Path converted = instances.stream()
-                    .filter(path -> path.getFileName().toString().equals("cm$converted"))
-                    .filter(XaeroWorldMapLocator::hasTerrainData)
-                    .findFirst().orElse(null);
+            Path converted = instances.stream().filter(path -> path.getFileName().toString().equals("cm$converted"))
+                    .filter(XaeroWorldMapLocator::hasTerrainData).findFirst().orElse(null);
             if (converted != null) return converted;
-
-            Path defaultInstance = instances.stream()
-                    .filter(path -> path.getFileName().toString().equals("mw$default"))
-                    .filter(XaeroWorldMapLocator::hasTerrainData)
-                    .findFirst().orElse(null);
+            Path defaultInstance = instances.stream().filter(path -> path.getFileName().toString().equals("mw$default"))
+                    .filter(XaeroWorldMapLocator::hasTerrainData).findFirst().orElse(null);
             if (defaultInstance != null) return defaultInstance;
-
-            Path anyMap = instances.stream()
-                    .filter(path -> path.getFileName().toString().startsWith("mw"))
-                    .filter(XaeroWorldMapLocator::hasTerrainData)
-                    .findFirst().orElse(null);
+            Path anyMap = instances.stream().filter(path -> path.getFileName().toString().startsWith("mw"))
+                    .filter(XaeroWorldMapLocator::hasTerrainData).findFirst().orElse(null);
             if (anyMap != null) return anyMap;
-
-            // Modern singleplayer layouts put cache/, cache_1/, etc. directly in the
-            // dimension directory. Do not descend into caves/; those are separate maps.
             return hasTerrainData(dimensionDirectory) ? dimensionDirectory : null;
-        } catch (IOException ignored) {
-            return null;
-        }
+        } catch (IOException ignored) { return null; }
     }
 
     private static boolean hasTerrainData(Path instance) {
@@ -151,17 +148,15 @@ public final class XaeroWorldMapLocator {
     }
 
     private static int countTerrainFiles(Path instance, boolean outdated) {
-        try (Stream<Path> files = Files.walk(instance, 4)) {
+        if (!Files.isDirectory(instance)) return 0;
+        try (Stream<Path> files = Files.walk(instance, 6)) {
             return (int) files.filter(Files::isRegularFile)
                     .filter(path -> !containsCavesDirectory(instance, path))
                     .filter(path -> isCachePath(instance, path))
-                    .filter(path -> outdated
-                            ? path.getFileName().toString().endsWith(".xwmc.outdated")
+                    .filter(path -> outdated ? path.getFileName().toString().endsWith(".xwmc.outdated")
                             : path.getFileName().toString().endsWith(".xwmc"))
                     .count();
-        } catch (IOException ignored) {
-            return 0;
-        }
+        } catch (IOException ignored) { return 0; }
     }
 
     private static boolean isCachePath(Path instance, Path file) {
@@ -172,10 +167,7 @@ public final class XaeroWorldMapLocator {
     }
 
     private static boolean containsCavesDirectory(Path instance, Path file) {
-        Path relative = instance.relativize(file);
-        for (Path part : relative) {
-            if (part.toString().equalsIgnoreCase("caves")) return true;
-        }
+        for (Path part : instance.relativize(file)) if (part.toString().equalsIgnoreCase("caves")) return true;
         return false;
     }
 
@@ -207,9 +199,7 @@ public final class XaeroWorldMapLocator {
     }
 
     private static String normalizeWorldFolderName(String value) {
-        return value.toLowerCase(Locale.ROOT)
-                .replace(" ", "_")
-                .replace("-", "_")
+        return value.toLowerCase(Locale.ROOT).replace(" ", "_").replace("-", "_")
                 .replaceAll("[^a-z0-9_.$]", "_");
     }
 }
