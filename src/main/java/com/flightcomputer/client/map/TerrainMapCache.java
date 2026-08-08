@@ -23,7 +23,6 @@ public final class TerrainMapCache {
     private static final WaystoneMapProvider WAYSTONE_PROVIDER = new WaystoneMapProvider();
 
     /* Never allow the UI to enqueue an effectively unbounded map area. */
-    private static final int MAX_VIEWPORT_RADIUS_BLOCKS = 512;
     private static final int MAX_REQUESTED_CHUNKS = 4096;
 
     private static String activeIdentity;
@@ -52,29 +51,58 @@ public final class TerrainMapCache {
     }
 
     /**
-     * Prepares only a bounded viewport. The old implementation could enqueue
-     * hundreds of thousands of requests at high zoom, masking the actual Xaero
-     * integration failure and steadily growing the pending queue.
+     * Compatibility overload for existing callers. The renderer-aware overload below
+     * is preferred because it requests only the world positions the map actually samples.
      */
     public static void requestViewport(ClientLevel level, int centerWorldX, int centerWorldZ, int radiusBlocks) {
+        requestViewport(level, centerWorldX, centerWorldZ, radiusBlocks, 16);
+    }
+
+    /**
+     * Requests terrain from the centre outward using the renderer's world-space
+     * sampling interval. This prevents a high-zoom radius from consuming the queue
+     * with the north-west corner while the actual player/controller area stays empty.
+     */
+    public static void requestViewport(ClientLevel level, int centerWorldX, int centerWorldZ,
+                                       int radiusBlocks, int sampleStepBlocks) {
         ensureLevel(level);
-        if (level == null) return;
+        if (level == null || REQUESTED.size() >= MAX_REQUESTED_CHUNKS) return;
 
-        int radius = Math.min(Math.max(32, radiusBlocks), MAX_VIEWPORT_RADIUS_BLOCKS);
-        int minChunkX = Math.floorDiv(centerWorldX - radius, 16);
-        int maxChunkX = Math.floorDiv(centerWorldX + radius, 16);
-        int minChunkZ = Math.floorDiv(centerWorldZ - radius, 16);
-        int maxChunkZ = Math.floorDiv(centerWorldZ + radius, 16);
+        int radius = Math.max(16, radiusBlocks);
+        int step = Math.max(1, sampleStepBlocks);
 
-        int requested = 0;
-        for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ && requested < MAX_REQUESTED_CHUNKS; chunkZ++) {
-            for (int chunkX = minChunkX; chunkX <= maxChunkX && requested < MAX_REQUESTED_CHUNKS; chunkX++) {
-                long key = ChunkPos.asLong(chunkX, chunkZ);
-                if (!CACHE.containsKey(key)) {
-                    requestChunk(level, key);
-                    requested++;
-                }
-            }
+        // Always request the exact centre first so the first useful Xaero result is
+        // the terrain around the player/controller rather than a distant corner.
+        requestChunk(level, ChunkPos.asLong(
+                Math.floorDiv(centerWorldX, 16),
+                Math.floorDiv(centerWorldZ, 16)));
+
+        // Expand in square rings at the same world-space interval used by the renderer.
+        for (int distance = step; distance <= radius && REQUESTED.size() < MAX_REQUESTED_CHUNKS; distance += step) {
+            requestSampleLine(level, centerWorldX - distance, centerWorldZ - distance,
+                    centerWorldX + distance, centerWorldZ - distance, step);
+            requestSampleLine(level, centerWorldX - distance, centerWorldZ + distance,
+                    centerWorldX + distance, centerWorldZ + distance, step);
+            requestSampleLine(level, centerWorldX - distance, centerWorldZ - distance,
+                    centerWorldX - distance, centerWorldZ + distance, step);
+            requestSampleLine(level, centerWorldX + distance, centerWorldZ - distance,
+                    centerWorldX + distance, centerWorldZ + distance, step);
+        }
+    }
+
+    private static void requestSampleLine(ClientLevel level, int x1, int z1, int x2, int z2, int step) {
+        int dx = Integer.compare(x2, x1);
+        int dz = Integer.compare(z2, z1);
+        int length = Math.max(Math.abs(x2 - x1), Math.abs(z2 - z1));
+
+        for (int offset = 0; offset <= length && REQUESTED.size() < MAX_REQUESTED_CHUNKS; offset += step) {
+            int x = x1 + dx * offset;
+            int z = z1 + dz * offset;
+            requestChunk(level, ChunkPos.asLong(Math.floorDiv(x, 16), Math.floorDiv(z, 16)));
+        }
+
+        if (REQUESTED.size() < MAX_REQUESTED_CHUNKS) {
+            requestChunk(level, ChunkPos.asLong(Math.floorDiv(x2, 16), Math.floorDiv(z2, 16)));
         }
     }
 
