@@ -12,9 +12,9 @@ import java.util.Optional;
 public final class FlightControllerButtonLayout {
     private static final List<ControllerButtonDefinition> BUTTONS = List.of(
             new ControllerButtonDefinition("engage", 0.105, 0.333, 0.105, 0.333, FlightControllerAction.TOGGLE_ENGAGED),
-            new ControllerButtonDefinition("mode", 0.324, 0.489, 0.105, 0.333, FlightControllerAction.CYCLE_MODE),
-            new ControllerButtonDefinition("stabiliser", 0.511, 0.676, 0.105, 0.333, FlightControllerAction.TOGGLE_STABILISER),
-            new ControllerButtonDefinition("display", 0.667, 0.895, 0.105, 0.333, FlightControllerAction.PULSE_DISPLAY));
+            new ControllerButtonDefinition("mode", 0.333, 0.489, 0.105, 0.333, FlightControllerAction.CYCLE_MODE),
+            new ControllerButtonDefinition("stabiliser", 0.489, 0.676, 0.105, 0.333, FlightControllerAction.TOGGLE_STABILISER),
+            new ControllerButtonDefinition("display", 0.676, 0.895, 0.105, 0.333, FlightControllerAction.PULSE_DISPLAY));
 
     private FlightControllerButtonLayout() {}
 
