@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -23,15 +24,24 @@ import java.util.stream.Stream;
  *     cache_1/
  *     caves/
  *
- * For the observed Overworld profile, Xaero stores the dimension directory as
- * "null" while Minecraft's authoritative dimension id is
- * minecraft:overworld. We therefore use the Minecraft dimension id for
- * identity and only use the Xaero directory name as storage metadata.
+ * Observed Xaero dimension storage names:
+ *   minecraft:overworld -> null
+ *   minecraft:the_nether -> DIM-1
+ *   minecraft:the_end -> DIM1
+ *
+ * Minecraft's dimension id is kept as the authoritative identity; these names
+ * are only the on-disk Xaero storage directories.
  */
 public final class XaeroCacheLocator {
     private static final Path XAERO_ROOT = Path.of("xaero", "world-map");
+
     private static final String OVERWORLD_DIMENSION = "minecraft:overworld";
-    private static final String OBSERVED_OVERWORLD_STORAGE = "null";
+    private static final String NETHER_DIMENSION = "minecraft:the_nether";
+    private static final String END_DIMENSION = "minecraft:the_end";
+
+    private static final String OVERWORLD_STORAGE = "null";
+    private static final String NETHER_STORAGE = "DIM-1";
+    private static final String END_STORAGE = "DIM1";
 
     private XaeroCacheLocator() {}
 
@@ -90,15 +100,23 @@ public final class XaeroCacheLocator {
         try (Stream<Path> children = Files.list(root)) {
             return children
                     .filter(Files::isDirectory)
-                    .max(Comparator.comparingLong(XaeroCacheLocator::lastModified));
+                    .max(Comparator.comparingLong(XaeroCacheLocator::lastModified))
+                    .orElse(null);
         } catch (IOException ignored) {
             return null;
         }
     }
 
     private static Path resolveDimensionDirectory(Path worldDirectory, String dimensionId) {
-        // First prefer an exact storage directory if Xaero exposes one matching the
-        // Minecraft dimension id (including namespace separators converted to '_').
+        // Xaero's storage directory is not required to have the same name as the
+        // Minecraft dimension id. Use the observed native directory names first.
+        for (String candidateName : storageCandidates(dimensionId)) {
+            Path candidate = worldDirectory.resolve(candidateName);
+            if (Files.isDirectory(candidate)) return candidate;
+        }
+
+        // Some Xaero versions/configurations use a sanitized representation of the
+        // Minecraft id. Keep this generic fallback for custom dimensions.
         String normalizedDimension = normalize(dimensionId);
         try (Stream<Path> children = Files.list(worldDirectory)) {
             Optional<Path> exact = children
@@ -110,16 +128,8 @@ public final class XaeroCacheLocator {
             return null;
         }
 
-        // The supplied authoritative instance shows minecraft:overworld stored by
-        // Xaero under "null". Keep this mapping deliberately scoped to the observed
-        // Overworld representation; other dimensions are discovered rather than guessed.
-        if (OVERWORLD_DIMENSION.equals(dimensionId)) {
-            Path observed = worldDirectory.resolve(OBSERVED_OVERWORLD_STORAGE);
-            if (Files.isDirectory(observed)) return observed;
-        }
-
-        // Search dimension_config.txt for the authoritative Minecraft dimension id.
-        // This lets future/other Xaero storage names resolve without hardcoding them.
+        // Finally inspect each dimension's own metadata. This allows custom Xaero
+        // storage names to resolve without hardcoding a user's dimension directory.
         try (Stream<Path> children = Files.list(worldDirectory)) {
             for (Path candidate : (Iterable<Path>) children.filter(Files::isDirectory)::iterator) {
                 Path config = candidate.resolve("dimension_config.txt");
@@ -136,6 +146,28 @@ public final class XaeroCacheLocator {
         }
 
         return null;
+    }
+
+    private static List<String> storageCandidates(String dimensionId) {
+        if (OVERWORLD_DIMENSION.equals(dimensionId)) {
+            return List.of(OVERWORLD_STORAGE);
+        }
+        if (NETHER_DIMENSION.equals(dimensionId)) {
+            return List.of(NETHER_STORAGE);
+        }
+        if (END_DIMENSION.equals(dimensionId)) {
+            return List.of(END_STORAGE);
+        }
+
+        // For non-vanilla dimensions, try the common Xaero/Minecraft filesystem
+        // representations before falling back to dimension_config.txt inspection.
+        String namespacePath = dimensionId.replace(':', '/');
+        String sanitized = normalize(dimensionId);
+        return List.of(
+                sanitized,
+                namespacePath,
+                dimensionId.replace(':', '_'),
+                dimensionId.replace(':', '-'));
     }
 
     private static String dimensionId(ClientLevel level) {
