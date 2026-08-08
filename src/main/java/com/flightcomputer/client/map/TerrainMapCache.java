@@ -15,8 +15,8 @@ import java.util.Set;
 
 /**
  * Normalized client-side map cache. Xaero's explored map data is the preferred source.
- * Rendering never performs disk reads or queues work; map preparation happens from tick().
- * The Flight Controller map intentionally does not fall back to loading/sampling live chunks.
+ * Rendering never performs disk reads or chunk scans. Xaero terrain, Xaero waypoints,
+ * and Waystones are separate data layers so one cannot corrupt another.
  */
 public final class TerrainMapCache {
     private static final int FORMAT_VERSION = 2;
@@ -24,6 +24,8 @@ public final class TerrainMapCache {
     private static final Set<Long> REQUESTED = new HashSet<>();
 
     private static final XaeroMapDataProvider XAERO_PROVIDER = new XaeroMapDataProvider();
+    private static final XaeroWaypointProvider XAERO_WAYPOINT_PROVIDER = new XaeroWaypointProvider();
+    private static final WaystoneMapProvider WAYSTONE_PROVIDER = new WaystoneMapProvider();
 
     private static String activeIdentity;
     private static Path activeCacheDirectory;
@@ -59,8 +61,6 @@ public final class TerrainMapCache {
         int minChunkZ = Math.floorDiv(centerWorldZ - radiusBlocks, 16);
         int maxChunkZ = Math.floorDiv(centerWorldZ + radiusBlocks, 16);
 
-        // Always queue the player's current region first so the first known-good Xaero tile
-        // can reach the renderer before the rest of the viewport is populated.
         requestChunk(level, ChunkPos.asLong(Math.floorDiv(centerWorldX, 16), Math.floorDiv(centerWorldZ, 16)));
 
         for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
@@ -75,19 +75,19 @@ public final class TerrainMapCache {
         ensureLevel(level);
         XAERO_PROVIDER.tick(level);
 
-        // The provider decodes asynchronously from the renderer's perspective: decoding occurs
-        // during tick(), then the newly decoded chunk tiles are transferred into our normalized
-        // cache here. The old implementation never performed this transfer, so REQUESTED tiles
-        // could remain permanently absent even after a successful Xaero decode.
         for (Map.Entry<Long, int[]> entry : XAERO_PROVIDER.drainDecodedTiles().entrySet()) {
             long key = entry.getKey();
             CACHE.put(key, entry.getValue());
             REQUESTED.remove(key);
-            writeTile(key, entry.getValue());
+            // Do not create hundreds of tiny files per Xaero region. The real Xaero XWMC
+            // files remain the source of truth and this memory cache is rebuilt cheaply.
         }
+
+        // Marker layers are intentionally independent of terrain decoding.
+        XAERO_WAYPOINT_PROVIDER.tick(level);
+        WAYSTONE_PROVIDER.tick(level);
     }
 
-    /** Current Xaero integration diagnostics, primarily for troubleshooting/logging. */
     public static String xaeroDiagnostics() {
         return XAERO_PROVIDER.diagnostics();
     }
@@ -101,9 +101,7 @@ public final class TerrainMapCache {
         if (xaeroTile != null) {
             CACHE.put(key, xaeroTile);
             REQUESTED.remove(key);
-            writeTile(key, xaeroTile);
         }
-        // If Xaero has no data yet, leave this cell unexplored. Never load a Minecraft chunk.
     }
 
     private static void ensureLevel(ClientLevel level) {
@@ -113,6 +111,8 @@ public final class TerrainMapCache {
         CACHE.clear();
         REQUESTED.clear();
         XAERO_PROVIDER.clear();
+        XAERO_WAYPOINT_PROVIDER.clear();
+        WAYSTONE_PROVIDER.clear();
         activeIdentity = identity;
         activeCacheDirectory = cacheDirectory(identity);
         try { Files.createDirectories(activeCacheDirectory); } catch (IOException ignored) { }
@@ -133,18 +133,21 @@ public final class TerrainMapCache {
     }
 
     private static Path cacheDirectory(String identity) {
-        Path root = Minecraft.getInstance().gameDirectory.toPath()
-                .resolve("config").resolve("flightcomputer").resolve("map_cache");
-        return root.resolve(identity);
+        return Minecraft.getInstance().gameDirectory.toPath()
+                .resolve("config").resolve("flightcomputer").resolve("map_cache").resolve(identity);
     }
 
+    // Retained as a compatibility helper for older callers that may inspect the normalized cache.
     private static Path tilePath(long key) {
+        if (activeCacheDirectory == null) return null;
         return activeCacheDirectory.resolve("c_" + ChunkPos.getX(key) + "_" + ChunkPos.getZ(key) + ".fct");
     }
 
+    @SuppressWarnings("unused")
     private static void writeTile(long key, int[] grid) {
         if (activeCacheDirectory == null) return;
         Path path = tilePath(key);
+        if (path == null) return;
         Path temp = path.resolveSibling(path.getFileName() + ".tmp");
         try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(temp))) {
             out.writeInt(FORMAT_VERSION);
@@ -165,6 +168,8 @@ public final class TerrainMapCache {
         CACHE.clear();
         REQUESTED.clear();
         XAERO_PROVIDER.clear();
+        XAERO_WAYPOINT_PROVIDER.clear();
+        WAYSTONE_PROVIDER.clear();
         activeIdentity = null;
         activeCacheDirectory = null;
     }
