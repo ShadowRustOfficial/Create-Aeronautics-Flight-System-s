@@ -18,7 +18,8 @@ public enum FlightControllerAction {
     TOGGLE_VELOCITY_HOLD(7),
     TOGGLE_NAVIGATION(8),
     START_ROUTE(9),
-    ABORT_ROUTE(10);
+    ABORT_ROUTE(10),
+    TOGGLE_TERRAIN(11);
 
     private final int networkId;
 
