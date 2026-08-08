@@ -218,14 +218,20 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "DIAGNOSTICS", left + 20, top + 10, 0xFFFFFFFF);
         g.drawString(font, "FLIGHT COMPUTER     ● " + (powered ? "OPERATIONAL" : "OFFLINE"), left + 20, top + 40, statusColor);
         g.drawString(font, "LINK                ● " + (powered ? linkStatus : "OFFLINE"), left + 20, top + 62, statusColor);
-        g.drawString(font, "POSITION", left + 20, top + 100, 0xFFFFFFFF);
-        g.drawString(font, String.format("X %8.2f", controllerPos.getX() + 0.5D), left + 20, top + 120, 0xFFBFC8CC);
-        g.drawString(font, String.format("Y %8.2f", controllerPos.getY() + 0.5D), left + 20, top + 140, 0xFFBFC8CC);
-        g.drawString(font, String.format("Z %8.2f", controllerPos.getZ() + 0.5D), left + 20, top + 160, 0xFFBFC8CC);
-        g.drawString(font, "SPEED   — m/s", left + 330, top + 120, 0xFFBFC8CC);
-        g.drawString(font, "HEADING —°", left + 330, top + 142, 0xFFBFC8CC);
-        g.drawString(font, "CONTROL OUTPUTS", left + 20, top + 205, 0xFFFFFFFF);
-        g.drawString(font, "UP 04      DOWN 00      WEST 00      EAST 07", left + 20, top + 227, 0xFFBFC8CC);
+        if (controller != null) {
+            long stored = controller.getEnergyStorage().getEnergyStored();
+            long capacity = controller.getEnergyStorage().getMaxEnergyStored();
+            g.drawString(font, String.format("ENERGY              %,d / %,d FE", stored, capacity), left + 20, top + 84, statusColor);
+            g.drawString(font, "POWER STATE         " + controller.getPowerState().name(), left + 20, top + 106, statusColor);
+        }
+        g.drawString(font, "POSITION", left + 20, top + 140, 0xFFFFFFFF);
+        g.drawString(font, String.format("X %8.2f", controllerPos.getX() + 0.5D), left + 20, top + 160, 0xFFBFC8CC);
+        g.drawString(font, String.format("Y %8.2f", controllerPos.getY() + 0.5D), left + 20, top + 180, 0xFFBFC8CC);
+        g.drawString(font, String.format("Z %8.2f", controllerPos.getZ() + 0.5D), left + 20, top + 200, 0xFFBFC8CC);
+        g.drawString(font, "SPEED   — m/s", left + 330, top + 160, 0xFFBFC8CC);
+        g.drawString(font, "HEADING —°", left + 330, top + 182, 0xFFBFC8CC);
+        g.drawString(font, "CONTROL OUTPUTS", left + 20, top + 245, 0xFFFFFFFF);
+        g.drawString(font, "UP 04      DOWN 00      WEST 00      EAST 07", left + 20, top + 267, 0xFFBFC8CC);
     }
 
     @Override public boolean isPauseScreen() { return false; }
