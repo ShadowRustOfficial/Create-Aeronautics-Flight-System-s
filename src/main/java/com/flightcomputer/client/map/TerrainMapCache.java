@@ -17,21 +17,17 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Normalized client-side map cache. It prefers persisted Flight Computer tiles,
- * then Xaero's explored map data. Rendering never performs disk reads or queues work;
- * map preparation happens from tick(). The Flight Controller map intentionally does not
- * fall back to loading/sampling live Minecraft chunks.
+ * Normalized client-side map cache. Xaero's explored map data is the preferred source.
+ * Rendering never performs disk reads or queues work; map preparation happens from tick().
+ * The Flight Controller map intentionally does not fall back to loading/sampling live chunks.
  */
 public final class TerrainMapCache {
-    private static final int CHUNKS_PER_TICK = 12;
     private static final int FORMAT_VERSION = 2;
     private static final Map<Long, int[]> CACHE = new HashMap<>();
-    private static final Set<Long> DISK_CHECKED = new HashSet<>();
     private static final Set<Long> QUEUED = new HashSet<>();
     private static final Deque<Long> QUEUE = new ArrayDeque<>();
 
     private static final XaeroMapDataProvider XAERO_PROVIDER = new XaeroMapDataProvider();
-    private static final LiveWorldMapProvider LIVE_PROVIDER = new LiveWorldMapProvider();
 
     private static String activeIdentity;
     private static Path activeCacheDirectory;
@@ -43,12 +39,6 @@ public final class TerrainMapCache {
         ensureLevel(level);
         long key = ChunkPos.asLong(Math.floorDiv(worldX, 16), Math.floorDiv(worldZ, 16));
         int[] grid = CACHE.get(key);
-        if (grid == null && !DISK_CHECKED.contains(key)) {
-            DISK_CHECKED.add(key);
-            grid = readTile(key);
-            if (grid != null) CACHE.put(key, grid);
-        }
-
         if (grid == null) {
             requestChunk(level, key);
             return 0;
@@ -76,16 +66,7 @@ public final class TerrainMapCache {
         for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
             for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
                 long key = ChunkPos.asLong(chunkX, chunkZ);
-                if (CACHE.containsKey(key)) continue;
-                if (!DISK_CHECKED.contains(key)) {
-                    DISK_CHECKED.add(key);
-                    int[] diskTile = readTile(key);
-                    if (diskTile != null) {
-                        CACHE.put(key, diskTile);
-                        continue;
-                    }
-                }
-                requestChunk(level, key);
+                if (!CACHE.containsKey(key)) requestChunk(level, key);
             }
         }
     }
@@ -93,37 +74,22 @@ public final class TerrainMapCache {
     public static void tick(ClientLevel level) {
         ensureLevel(level);
         XAERO_PROVIDER.tick(level);
-
-        // Keep the fallback provider available for future use, but do not invoke it here.
-        // The controller map must never generate/load live terrain as a side effect of opening it.
-        int processed = 0;
-        while (processed < CHUNKS_PER_TICK && !QUEUE.isEmpty()) {
-            long key = QUEUE.pollFirst();
-            QUEUED.remove(key);
-            int chunkX = ChunkPos.getX(key);
-            int chunkZ = ChunkPos.getZ(key);
-            int[] grid = LIVE_PROVIDER.getChunkTile(level, chunkX, chunkZ);
-            if (grid != null) {
-                CACHE.put(key, grid);
-                DISK_CHECKED.add(key);
-                writeTile(key, grid);
-                processed++;
-            }
-        }
+        // Region decoding is deliberately handled by XaeroMapDataProvider in bounded batches.
+        // No Minecraft chunk sampling happens here.
+        QUEUE.clear();
+        QUEUED.clear();
     }
 
     private static void requestChunk(ClientLevel level, long key) {
         if (QUEUED.contains(key) || CACHE.containsKey(key)) return;
         int chunkX = ChunkPos.getX(key);
         int chunkZ = ChunkPos.getZ(key);
-
         int[] xaeroTile = XAERO_PROVIDER.getChunkTile(level, chunkX, chunkZ);
         if (xaeroTile != null) {
             CACHE.put(key, xaeroTile);
             writeTile(key, xaeroTile);
-            DISK_CHECKED.add(key);
         }
-        // If Xaero has no data yet, leave this cell unexplored. Do not load/sample a Minecraft chunk.
+        // If Xaero has no data yet, leave this cell unexplored. Never load a Minecraft chunk.
     }
 
     private static void ensureLevel(ClientLevel level) {
@@ -132,10 +98,8 @@ public final class TerrainMapCache {
 
         CACHE.clear();
         QUEUED.clear();
-        DISK_CHECKED.clear();
         QUEUE.clear();
         XAERO_PROVIDER.clear();
-        LIVE_PROVIDER.clear();
         activeIdentity = identity;
         activeCacheDirectory = cacheDirectory(identity);
         try { Files.createDirectories(activeCacheDirectory); } catch (IOException ignored) { }
@@ -165,18 +129,6 @@ public final class TerrainMapCache {
         return activeCacheDirectory.resolve("c_" + ChunkPos.getX(key) + "_" + ChunkPos.getZ(key) + ".fct");
     }
 
-    private static int[] readTile(long key) {
-        if (activeCacheDirectory == null) return null;
-        Path path = tilePath(key);
-        if (!Files.isRegularFile(path)) return null;
-        try (DataInputStream in = new DataInputStream(Files.newInputStream(path))) {
-            if (in.readInt() != FORMAT_VERSION) return null;
-            int[] grid = new int[256];
-            for (int i = 0; i < grid.length; i++) grid[i] = in.readInt();
-            return grid;
-        } catch (IOException | RuntimeException ignored) { return null; }
-    }
-
     private static void writeTile(long key, int[] grid) {
         if (activeCacheDirectory == null) return;
         Path path = tilePath(key);
@@ -200,9 +152,7 @@ public final class TerrainMapCache {
         CACHE.clear();
         QUEUE.clear();
         QUEUED.clear();
-        DISK_CHECKED.clear();
         XAERO_PROVIDER.clear();
-        LIVE_PROVIDER.clear();
         activeIdentity = null;
         activeCacheDirectory = null;
     }
