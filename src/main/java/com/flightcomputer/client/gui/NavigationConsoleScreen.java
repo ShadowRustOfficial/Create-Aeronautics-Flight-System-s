@@ -21,7 +21,9 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 public final class NavigationConsoleScreen extends Screen {
     private enum Tab { MAP, ROUTE, FLIGHT_CONTROL, DIAGNOSTICS }
 
-    private static final int TERRAIN_STEP = 4;
+    private static final int TERRAIN_STEP = 8;
+    private static final int MAP_SCALE_BLOCKS_PER_PIXEL = 4;
+    private static final int MAP_PRELOAD_RADIUS_BLOCKS = 1200;
     private static final int UNLOADED_COLOR = 0xFF16202A;
     private static final int STATUS_ON_COLOR = 0xFF55FF55;
     private static final int STATUS_OFFLINE_COLOR = 0xFFFF5555;
@@ -70,7 +72,13 @@ public final class NavigationConsoleScreen extends Screen {
         super.tick();
         if (minecraft == null || minecraft.level == null) return;
         if (!controllerPowered()) { minecraft.setScreen(null); return; }
-        if (showTerrain) TerrainMapCache.tick(minecraft.level);
+
+        if (showTerrain) {
+            int centerX = minecraft.player == null ? controllerPos.getX() : minecraft.player.blockPosition().getX();
+            int centerZ = minecraft.player == null ? controllerPos.getZ() : minecraft.player.blockPosition().getZ();
+            TerrainMapCache.requestViewport(minecraft.level, centerX, centerZ, MAP_PRELOAD_RADIUS_BLOCKS);
+            TerrainMapCache.tick(minecraft.level);
+        }
     }
 
     private void switchTab(Tab newTab) { tab = newTab; clearWidgets(); init(); }
@@ -120,24 +128,25 @@ public final class NavigationConsoleScreen extends Screen {
     private void renderMap(GuiGraphics g, int left, int top) {
         int mapL = left + 20, mapT = top + 8, mapR = left + 620, mapB = top + 260;
         int cx = (mapL + mapR) / 2, cy = (mapT + mapB) / 2;
-        double controllerX = controllerPos.getX() + 0.5D;
-        double controllerZ = controllerPos.getZ() + 0.5D;
+        double centerX = minecraft != null && minecraft.player != null ? minecraft.player.getX() : controllerPos.getX() + 0.5D;
+        double centerZ = minecraft != null && minecraft.player != null ? minecraft.player.getZ() : controllerPos.getZ() + 0.5D;
         g.fill(mapL, mapT, mapR, mapB, UNLOADED_COLOR);
 
         if (showTerrain && minecraft != null && minecraft.level != null)
-            renderTerrain(g, minecraft.level, controllerX, controllerZ, mapL, mapT, mapR, mapB, cx, cy);
+            renderTerrain(g, minecraft.level, centerX, centerZ, mapL, mapT, mapR, mapB, cx, cy);
 
         for (int x = mapL; x < mapR; x += 32) g.vLine(x, mapT, mapB, 0x551E3037);
         for (int y = mapT; y < mapB; y += 32) g.hLine(mapL, mapR, y, 0x551E3037);
         g.fill(cx - 4, cy - 4, cx + 4, cy + 4, 0xFFFFFFFF);
-        g.drawString(font, "▲ FLIGHT CONTROLLER", cx + 10, cy - 5, 0xFFFFFFFF);
+        g.drawString(font, "▲ PLAYER", cx + 10, cy - 5, 0xFFFFFFFF);
+        g.drawString(font, "MAP: " + (showTerrain ? "ON" : "OFF"), mapR - 120, mapB + 6, 0xFFBFC8CC);
 
         if (minecraft != null && minecraft.level != null) {
             String dim = minecraft.level.dimension().location().toString();
             for (MapMarker marker : MarkerRegistry.all()) {
                 if (!dim.equals(marker.dimensionId()) || !MarkerRegistry.isVisible(marker.category())) continue;
-                int sx = cx + (int)((marker.x() - controllerX) / 4.0);
-                int sy = cy + (int)((marker.z() - controllerZ) / 4.0);
+                int sx = cx + (int)((marker.x() - centerX) / MAP_SCALE_BLOCKS_PER_PIXEL);
+                int sy = cy + (int)((marker.z() - centerZ) / MAP_SCALE_BLOCKS_PER_PIXEL);
                 if (sx < mapL || sx > mapR || sy < mapT || sy > mapB) continue;
                 g.fill(sx - 3, sy - 3, sx + 3, sy + 3, 0xFF000000 | marker.category().getColor());
                 g.drawString(font, marker.name(), sx + 7, sy - 4, 0xFFFFFFFF);
@@ -146,13 +155,15 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "DESTINATION: —    DISTANCE: —    BEARING: —    ETA: —", left + 20, top + 275, 0xFFBFC8CC);
     }
 
-    private void renderTerrain(GuiGraphics g, ClientLevel level, double controllerX, double controllerZ,
+    private void renderTerrain(GuiGraphics g, ClientLevel level, double centerWorldX, double centerWorldZ,
                                int mapL, int mapT, int mapR, int mapB, int cx, int cy) {
+        // Render only normalized tiles already prepared by the tick thread. No disk reads,
+        // chunk scans, or Xaero decoding occur from render().
         for (int sy = mapT; sy < mapB; sy += TERRAIN_STEP) {
-            double worldZ = controllerZ + (sy - cy) * 4.0;
+            double worldZ = centerWorldZ + (sy - cy) * MAP_SCALE_BLOCKS_PER_PIXEL;
             for (int sx = mapL; sx < mapR; sx += TERRAIN_STEP) {
-                double worldX = controllerX + (sx - cx) * 4.0;
-                int color = TerrainMapCache.colorAt(level, (int) Math.floor(worldX), (int) Math.floor(worldZ));
+                double worldX = centerWorldX + (sx - cx) * MAP_SCALE_BLOCKS_PER_PIXEL;
+                int color = TerrainMapCache.cachedColorAt(level, (int) Math.floor(worldX), (int) Math.floor(worldZ));
                 int x2 = Math.min(sx + TERRAIN_STEP, mapR);
                 int y2 = Math.min(sy + TERRAIN_STEP, mapB);
                 g.fill(sx, sy, x2, y2, color == 0 ? UNLOADED_COLOR : color);
@@ -204,9 +215,12 @@ public final class NavigationConsoleScreen extends Screen {
             g.drawString(font, "POWER STATE         " + controller.getPowerState().name(), left + 20, top + 106, statusColor);
         }
         g.drawString(font, "POSITION", left + 20, top + 140, 0xFFFFFFFF);
-        g.drawString(font, String.format("X %8.2f", controllerPos.getX() + 0.5D), left + 20, top + 160, 0xFFBFC8CC);
-        g.drawString(font, String.format("Y %8.2f", controllerPos.getY() + 0.5D), left + 20, top + 180, 0xFFBFC8CC);
-        g.drawString(font, String.format("Z %8.2f", controllerPos.getZ() + 0.5D), left + 20, top + 200, 0xFFBFC8CC);
+        double positionX = minecraft != null && minecraft.player != null ? minecraft.player.getX() : controllerPos.getX() + 0.5D;
+        double positionY = minecraft != null && minecraft.player != null ? minecraft.player.getY() : controllerPos.getY() + 0.5D;
+        double positionZ = minecraft != null && minecraft.player != null ? minecraft.player.getZ() : controllerPos.getZ() + 0.5D;
+        g.drawString(font, String.format("X %8.2f", positionX), left + 20, top + 160, 0xFFBFC8CC);
+        g.drawString(font, String.format("Y %8.2f", positionY), left + 20, top + 180, 0xFFBFC8CC);
+        g.drawString(font, String.format("Z %8.2f", positionZ), left + 20, top + 200, 0xFFBFC8CC);
         g.drawString(font, "SPEED   — m/s", left + 330, top + 160, 0xFFBFC8CC);
         g.drawString(font, "HEADING —°", left + 330, top + 182, 0xFFBFC8CC);
         g.drawString(font, "CONTROL OUTPUTS", left + 20, top + 245, 0xFFFFFFFF);
