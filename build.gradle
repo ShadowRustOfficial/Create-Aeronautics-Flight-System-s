@@ -78,17 +78,19 @@ dependencies {
     // the Flight Controller's buttons/dials with real keyframe animations authored in Blockbench.
     implementation "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
 
-    // Xaero World Map 1.44.2 is a hard dependency for the terrain integration. The official
-    // Xaero developer documentation provides the NeoForge Maven coordinate below; compiling
-    // directly against the mod lets us consume its decoded in-memory MapProcessor/MapTile data
-    // instead of reverse-engineering .xwmc cache files.
-    implementation "xaero.map:xaeroworldmap-neoforge-${minecraft_version}:1.44.2"
+    // Xaero World Map is a hard dependency for terrain integration. The provider consumes
+    // Xaero's native decoded MapProcessor/MapTile textures rather than reverse-engineering
+    // .xwmc files or scanning live Minecraft chunks.
+    implementation "xaero.map:xaeroworldmap-neoforge-${minecraft_version}:${xaero_world_map_version}"
+
+    // Xaero Minimap is also a hard dependency because Flight Computer consumes its persistent
+    // waypoint data. The provider reads Xaero's waypoint file without modifying Xaero state.
+    implementation "xaero.minimap:xaerominimap-neoforge-${minecraft_version}:${xaero_minimap_version}"
 
     // Waystones does not publish the `net.blay09.mods:waystones-common` artifact to the
     // repositories available to this project. The official NeoForge 1.21.1 distribution is
-    // published through CurseMaven instead. 21.1.34 is a verified NeoForge 1.21.1 release and
-    // supplies the API classes used by WaystoneMapProvider; keep this compile-only so the user's
-    // installed Waystones jar remains the runtime provider.
+    // published through CurseMaven instead. Keep this compile-only so the user's installed
+    // Waystones jar remains the runtime provider.
     compileOnly "curse.maven:waystones-245755:8163145"
 }
 
