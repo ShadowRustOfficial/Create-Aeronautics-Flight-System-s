@@ -4,12 +4,14 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.level.ChunkPos;
 
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 
@@ -19,7 +21,8 @@ import java.util.Set;
  * The Flight Controller map intentionally does not fall back to loading/sampling live chunks.
  */
 public final class TerrainMapCache {
-    private static final int FORMAT_VERSION = 2;
+    private static final int FORMAT_VERSION = 3;
+    private static final int MAX_PENDING_PROMOTIONS_PER_TICK = 512;
     private static final Map<Long, int[]> CACHE = new HashMap<>();
     private static final Set<Long> REQUESTED = new HashSet<>();
 
@@ -67,22 +70,43 @@ public final class TerrainMapCache {
         }
     }
 
+    /**
+     * Main-thread pump. Disk/cache reads and Xaero decoding are bounded and never run
+     * from render(). The provider's decoder thread produces normalized tiles; this
+     * method promotes completed tiles into the render cache and persists them.
+     */
     public static void tick(ClientLevel level) {
         ensureLevel(level);
         XAERO_PROVIDER.tick(level);
+
+        int promoted = 0;
+        Iterator<Long> iterator = REQUESTED.iterator();
+        while (iterator.hasNext() && promoted < MAX_PENDING_PROMOTIONS_PER_TICK) {
+            long key = iterator.next();
+            int[] tile = XAERO_PROVIDER.getChunkTile(level, ChunkPos.getX(key), ChunkPos.getZ(key));
+            if (tile == null) continue;
+            CACHE.put(key, tile);
+            writeTile(key, tile);
+            iterator.remove();
+            promoted++;
+        }
     }
 
     private static void requestChunk(ClientLevel level, long key) {
         if (CACHE.containsKey(key) || REQUESTED.contains(key)) return;
-        REQUESTED.add(key);
-        int chunkX = ChunkPos.getX(key);
-        int chunkZ = ChunkPos.getZ(key);
-        int[] xaeroTile = XAERO_PROVIDER.getChunkTile(level, chunkX, chunkZ);
-        if (xaeroTile != null) {
-            CACHE.put(key, xaeroTile);
-            writeTile(key, xaeroTile);
+
+        // Fast persistent cache path. This is an exact-file lookup, never a directory scan.
+        int[] diskTile = readTile(key);
+        if (diskTile != null) {
+            CACHE.put(key, diskTile);
+            return;
         }
-        // If Xaero has no data yet, leave this cell unexplored. Never load a Minecraft chunk.
+
+        REQUESTED.add(key);
+        // The provider owns the asynchronous Xaero file work. Keeping REQUESTED until
+        // the provider actually returns a tile fixes the previous "queued forever"
+        // failure where a region decoded successfully but the render cache stayed empty.
+        XAERO_PROVIDER.getChunkTile(level, ChunkPos.getX(key), ChunkPos.getZ(key));
     }
 
     private static void ensureLevel(ClientLevel level) {
@@ -121,8 +145,23 @@ public final class TerrainMapCache {
         return activeCacheDirectory.resolve("c_" + ChunkPos.getX(key) + "_" + ChunkPos.getZ(key) + ".fct");
     }
 
+    private static int[] readTile(long key) {
+        if (activeCacheDirectory == null) return null;
+        Path path = tilePath(key);
+        if (!Files.isRegularFile(path)) return null;
+        try (DataInputStream in = new DataInputStream(Files.newInputStream(path))) {
+            int version = in.readInt();
+            if (version != FORMAT_VERSION && version != 2) return null;
+            int[] grid = new int[256];
+            for (int i = 0; i < grid.length; i++) grid[i] = in.readInt();
+            return grid;
+        } catch (IOException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
     private static void writeTile(long key, int[] grid) {
-        if (activeCacheDirectory == null) return;
+        if (activeCacheDirectory == null || grid == null || grid.length != 256) return;
         Path path = tilePath(key);
         Path temp = path.resolveSibling(path.getFileName() + ".tmp");
         try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(temp))) {
