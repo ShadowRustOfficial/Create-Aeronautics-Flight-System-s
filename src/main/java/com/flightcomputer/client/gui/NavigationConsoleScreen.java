@@ -21,7 +21,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 public final class NavigationConsoleScreen extends Screen {
     private enum Tab { MAP, ROUTE, FLIGHT_CONTROL, DIAGNOSTICS }
 
-    private static final int TERRAIN_STEP = 3;
+    private static final int TERRAIN_STEP = 4;
     private static final int UNLOADED_COLOR = 0xFF16202A;
     private static final int STATUS_ON_COLOR = 0xFF55FF55;
     private static final int STATUS_OFFLINE_COLOR = 0xFFFF5555;
@@ -64,24 +64,16 @@ public final class NavigationConsoleScreen extends Screen {
         }
     }
 
-    private Component terrainLabel() {
-        return Component.literal("MAP: " + (showTerrain ? "ON" : "OFF"));
-    }
+    private Component terrainLabel() { return Component.literal("MAP: " + (showTerrain ? "ON" : "OFF")); }
 
-    @Override
-    public void tick() {
+    @Override public void tick() {
         super.tick();
         if (minecraft == null || minecraft.level == null) return;
-        TerrainMapCache.tick(minecraft.level);
-        if (!controllerPowered()) minecraft.setScreen(null);
+        if (!controllerPowered()) { minecraft.setScreen(null); return; }
+        if (showTerrain) TerrainMapCache.tick(minecraft.level);
     }
 
-    private void switchTab(Tab newTab) {
-        tab = newTab;
-        clearWidgets();
-        init();
-    }
-
+    private void switchTab(Tab newTab) { tab = newTab; clearWidgets(); init(); }
     private void send(FlightControllerAction action) { FlightComputerNetwork.sendControllerAction(controllerPos, action); }
 
     private FlightControllerBlockEntity getController() {
@@ -92,8 +84,7 @@ public final class NavigationConsoleScreen extends Screen {
 
     private boolean controllerPowered() {
         if (controller == null) controller = getController();
-        return controller != null
-                && controller.getEnergyStorage().getEnergyStored() > 0
+        return controller != null && controller.getEnergyStorage().getEnergyStored() > 0
                 && controller.getPowerState() != PowerState.NO_POWER;
     }
 
@@ -102,9 +93,7 @@ public final class NavigationConsoleScreen extends Screen {
         return controller != null && controller.getLinkedControllerId() != null ? "CONNECTED" : "NOT LINKED";
     }
 
-    private int statusColor(boolean online) {
-        return online ? STATUS_ON_COLOR : STATUS_OFFLINE_COLOR;
-    }
+    private int statusColor(boolean online) { return online ? STATUS_ON_COLOR : STATUS_OFFLINE_COLOR; }
 
     @Override public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         int left = Math.max(10, (width - 640) / 2);
@@ -115,8 +104,7 @@ public final class NavigationConsoleScreen extends Screen {
         boolean powered = controllerPowered();
         String linkStatus = linkStatus();
         g.drawString(font, "◈ NAVIGATION CONSOLE", left, top - 2, 0xFFFFFFFF);
-        g.drawString(font, "LINK: " + (powered ? linkStatus : "OFFLINE"), left + 500, top - 2,
-                statusColor(powered));
+        g.drawString(font, "LINK: " + (powered ? linkStatus : "OFFLINE"), left + 500, top - 2, statusColor(powered));
 
         switch (tab) {
             case MAP -> renderMap(g, left, top + 42);
@@ -127,29 +115,23 @@ public final class NavigationConsoleScreen extends Screen {
         super.render(g, mouseX, mouseY, partialTick);
     }
 
-    @Override
-    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        // Intentionally blank: NavigationConsoleScreen renders its own background.
-    }
+    @Override public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) { }
 
     private void renderMap(GuiGraphics g, int left, int top) {
         int mapL = left + 20, mapT = top + 8, mapR = left + 620, mapB = top + 260;
         int cx = (mapL + mapR) / 2, cy = (mapT + mapB) / 2;
         double controllerX = controllerPos.getX() + 0.5D;
         double controllerZ = controllerPos.getZ() + 0.5D;
-
         g.fill(mapL, mapT, mapR, mapB, UNLOADED_COLOR);
 
-        if (showTerrain && minecraft != null && minecraft.level != null) {
-            renderTerrain(g, minecraft.level, controllerX, controllerZ,
-                    mapL, mapT, mapR, mapB, cx, cy);
-        }
+        if (showTerrain && minecraft != null && minecraft.level != null)
+            renderTerrain(g, minecraft.level, controllerX, controllerZ, mapL, mapT, mapR, mapB, cx, cy);
 
         for (int x = mapL; x < mapR; x += 32) g.vLine(x, mapT, mapB, 0x551E3037);
         for (int y = mapT; y < mapB; y += 32) g.hLine(mapL, mapR, y, 0x551E3037);
-
         g.fill(cx - 4, cy - 4, cx + 4, cy + 4, 0xFFFFFFFF);
         g.drawString(font, "▲ FLIGHT CONTROLLER", cx + 10, cy - 5, 0xFFFFFFFF);
+
         if (minecraft != null && minecraft.level != null) {
             String dim = minecraft.level.dimension().location().toString();
             for (MapMarker marker : MarkerRegistry.all()) {
@@ -165,16 +147,15 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void renderTerrain(GuiGraphics g, ClientLevel level, double controllerX, double controllerZ,
-                                int mapL, int mapT, int mapR, int mapB, int cx, int cy) {
+                               int mapL, int mapT, int mapR, int mapB, int cx, int cy) {
         for (int sy = mapT; sy < mapB; sy += TERRAIN_STEP) {
             double worldZ = controllerZ + (sy - cy) * 4.0;
             for (int sx = mapL; sx < mapR; sx += TERRAIN_STEP) {
                 double worldX = controllerX + (sx - cx) * 4.0;
                 int color = TerrainMapCache.colorAt(level, (int) Math.floor(worldX), (int) Math.floor(worldZ));
-                if (color == 0) continue;
                 int x2 = Math.min(sx + TERRAIN_STEP, mapR);
                 int y2 = Math.min(sy + TERRAIN_STEP, mapB);
-                g.fill(sx, sy, x2, y2, color);
+                g.fill(sx, sy, x2, y2, color == 0 ? UNLOADED_COLOR : color);
             }
         }
     }
@@ -212,12 +193,10 @@ public final class NavigationConsoleScreen extends Screen {
 
     private void renderDiagnostics(GuiGraphics g, int left, int top) {
         boolean powered = controllerPowered();
-        String linkStatus = linkStatus();
         int statusColor = statusColor(powered);
-
         g.drawString(font, "DIAGNOSTICS", left + 20, top + 10, 0xFFFFFFFF);
         g.drawString(font, "FLIGHT COMPUTER     ● " + (powered ? "OPERATIONAL" : "OFFLINE"), left + 20, top + 40, statusColor);
-        g.drawString(font, "LINK                ● " + (powered ? linkStatus : "OFFLINE"), left + 20, top + 62, statusColor);
+        g.drawString(font, "LINK                ● " + (powered ? linkStatus() : "OFFLINE"), left + 20, top + 62, statusColor);
         if (controller != null) {
             long stored = controller.getEnergyStorage().getEnergyStored();
             long capacity = controller.getEnergyStorage().getMaxEnergyStored();
