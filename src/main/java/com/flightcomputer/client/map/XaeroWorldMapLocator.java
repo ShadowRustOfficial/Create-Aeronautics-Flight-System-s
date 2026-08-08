@@ -57,6 +57,12 @@ public final class XaeroWorldMapLocator {
         if (preferred != null && !preferred.isBlank()) {
             Path candidate = root.resolve(preferred);
             if (Files.isDirectory(candidate)) return candidate;
+
+            // Some Xaero versions/installations prefix singleplayer map roots.
+            if (minecraft.getCurrentServer() == null) {
+                Path prefixed = root.resolve("Singleplayer_" + normalizeWorldFolderName(preferred));
+                if (Files.isDirectory(prefixed)) return prefixed;
+            }
         }
 
         // Xaero's folder naming can differ from the Minecraft level name by replacing
@@ -66,8 +72,11 @@ public final class XaeroWorldMapLocator {
             String normalized = normalizeWorldFolderName(singleplayerWorldName(minecraft));
             try (Stream<Path> children = Files.list(root)) {
                 return children.filter(Files::isDirectory)
-                        .filter(path -> normalizeWorldFolderName(path.getFileName().toString()).equals(normalized)
-                                || normalizeWorldFolderName(path.getFileName().toString()).equals("singleplayer_" + normalized))
+                        .filter(path -> {
+                            String folder = normalizeWorldFolderName(path.getFileName().toString());
+                            return folder.equals(normalized)
+                                    || folder.equals("singleplayer_" + normalized);
+                        })
                         .findFirst().orElse(null);
             } catch (IOException ignored) {
                 return null;
@@ -81,6 +90,21 @@ public final class XaeroWorldMapLocator {
         if (minecraft.getSingleplayerServer() == null) return "unknown";
         String name = minecraft.getSingleplayerServer().getWorldData().getLevelName();
         return name == null || name.isBlank() ? "unknown" : name;
+    }
+
+    /**
+     * Maps a Minecraft dimension key to Xaero's directory naming convention.
+     * Xaero uses null/DIM-1/DIM1 for the three vanilla dimensions and replaces
+     * ':' with '$' for other dimension IDs.
+     */
+    private static String dimensionDirectoryName(ClientLevel level) {
+        String dimensionId = level.dimension().location().toString();
+        return switch (dimensionId) {
+            case "minecraft:overworld" -> "null";
+            case "minecraft:the_nether" -> "DIM-1";
+            case "minecraft:the_end" -> "DIM1";
+            default -> sanitizeDimension(dimensionId);
+        };
     }
 
     private static Path findBestInstance(Path dimensionDirectory) {
