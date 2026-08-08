@@ -19,21 +19,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Native Xaero World Map terrain provider.
- *
- * Xaero World Map 1.44.2 already owns the decoded map tiles and their 64x64
- * colour textures. We consume that in-memory representation instead of
- * reverse-engineering .xwmc/cache.xaero files or scanning Minecraft chunks.
- *
- * Xaero is a hard runtime dependency for this integration, so this class is
- * intentionally compiled against Xaero's public map classes.
- */
+/** Native Xaero World Map 1.44.2 terrain adapter. */
 public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private static final Logger LOGGER = LogUtils.getLogger();
-
-    private static final int XAERO_TILE_SIDE = 16;
-    private static final int XAERO_TEXTURE_SIDE = 64;
+    private static final int TILE_SIDE = 16;
+    private static final int TEXTURE_SIDE = 64;
     private static final int BYTES_PER_PIXEL = 4;
     private static final int MAX_PENDING_PER_TICK = 64;
 
@@ -41,7 +31,6 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private final Set<Long> decodedKeys = new HashSet<>();
     private final Set<Long> pendingChunks = new HashSet<>();
     private final ArrayDeque<Long> pendingQueue = new ArrayDeque<>();
-
     private String activeIdentity;
     private long tickCounter;
     private String diagnosticReport = "Xaero provider not initialized.";
@@ -49,11 +38,9 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     @Override
     public int[] getChunkTile(ClientLevel level, int chunkX, int chunkZ) {
         ensureLevel(level);
-
         long key = ChunkPos.asLong(chunkX, chunkZ);
         int[] cached = chunkTiles.get(key);
         if (cached != null) return cached;
-
         int[] decoded = readNativeChunk(level, chunkX, chunkZ);
         if (decoded != null) {
             chunkTiles.put(key, decoded);
@@ -61,7 +48,6 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             pendingChunks.remove(key);
             return decoded;
         }
-
         queueChunk(key);
         return null;
     }
@@ -70,51 +56,36 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     public void tick(ClientLevel level) {
         ensureLevel(level);
         tickCounter++;
-
         if (level == null || Minecraft.getInstance().player == null) return;
 
         MapProcessor processor = getProcessor(level);
         if (processor == null) {
-            updateDiagnostic("Xaero World Map session/processor is not ready.");
+            updateDiagnostic("Xaero session/processor unavailable.\nOpen the World Map once to initialise it.");
             return;
         }
 
         int processed = 0;
-        while (processed < MAX_PENDING_PER_TICK && !pendingQueue.isEmpty()) {
+        while (processed++ < MAX_PENDING_PER_TICK && !pendingQueue.isEmpty()) {
             long key = pendingQueue.pollFirst();
             pendingChunks.remove(key);
-
-            if (chunkTiles.containsKey(key)) {
-                processed++;
-                continue;
-            }
-
-            int chunkX = ChunkPos.getX(key);
-            int chunkZ = ChunkPos.getZ(key);
-            int[] decoded = readNativeChunk(level, chunkX, chunkZ);
+            if (chunkTiles.containsKey(key)) continue;
+            int[] decoded = readNativeChunk(level, ChunkPos.getX(key), ChunkPos.getZ(key));
             if (decoded != null) {
                 chunkTiles.put(key, decoded);
                 decodedKeys.add(key);
             } else {
-                // Xaero can finish processing/uploading a tile after our request.
-                // Requeue it so the terrain appears as soon as its native texture
-                // becomes available rather than getting permanently stuck.
                 queueChunk(key);
             }
-            processed++;
         }
 
-        if (pendingQueue.isEmpty()) {
-            updateDiagnostic("Xaero native terrain ready"
-                    + "\nworld=" + safe(processor.getCurrentWorldId())
-                    + "\ndimension=" + safe(processor.getCurrentDimId())
-                    + "\nmap=" + safe(processor.getCurrentMWId())
-                    + "\nloadedChunks=" + chunkTiles.size()
-                    + "\npending=0");
-        }
+        updateDiagnostic("Xaero native terrain adapter"
+                + "\nworld=" + safe(processor.getCurrentWorldId())
+                + "\ndimension=" + safe(processor.getCurrentDimId())
+                + "\nmap=" + safe(processor.getCurrentMWId())
+                + "\nloaded=" + chunkTiles.size()
+                + "\npending=" + pendingQueue.size());
     }
 
-    /** Transfers decoded 16x16 chunk tiles into TerrainMapCache. */
     public Map<Long, int[]> drainDecodedTiles() {
         Map<Long, int[]> result = new LinkedHashMap<>();
         for (Long key : decodedKeys) {
@@ -125,9 +96,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         return result;
     }
 
-    public String diagnostics() {
-        return diagnosticReport;
-    }
+    public String diagnostics() { return diagnosticReport; }
 
     @Override
     public void clear() {
@@ -142,79 +111,70 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
 
     private void ensureLevel(ClientLevel level) {
         if (level == null) return;
-
-        Minecraft minecraft = Minecraft.getInstance();
-        String identity = buildIdentity(minecraft, level);
+        String identity = buildIdentity(Minecraft.getInstance(), level);
         if (identity.equals(activeIdentity)) return;
-
-        chunkTiles.clear();
-        decodedKeys.clear();
-        pendingChunks.clear();
-        pendingQueue.clear();
-
+        clear();
         activeIdentity = identity;
-        diagnosticReport = "Waiting for Xaero World Map session"
-                + "\nworld=" + identity
+        diagnosticReport = "Waiting for Xaero World Map session\nworld=" + identity
                 + "\ndimension=" + level.dimension().location();
     }
 
     private int[] readNativeChunk(ClientLevel level, int chunkX, int chunkZ) {
         try {
             MapProcessor processor = getProcessor(level);
-            if (processor == null || !processor.isMapWorldUsable()) return null;
-            if (processor.getWorld() != level) return null;
+            if (processor == null) return null;
+            if (!processor.isMapWorldUsable()) {
+                updateDiagnostic("Xaero map world is not usable yet.");
+                return null;
+            }
+            if (processor.getWorld() != level) {
+                updateDiagnostic("Xaero processor is attached to a different client world.");
+                return null;
+            }
 
             int caveLayer = processor.getCurrentCaveLayer();
             MapTile tile = processor.getMapTile(chunkX, chunkZ, caveLayer);
-            if (tile == null || !tile.isLoaded()) return null;
+            if (tile == null) return null;
+            if (!tile.isLoaded()) return null;
 
             MapTileChunk tileChunk = processor.getMapChunk(chunkX >> 2, chunkZ >> 2, caveLayer);
             if (tileChunk == null) return null;
-
             LeafRegionTexture texture = tileChunk.getLeafTexture();
-            if (texture == null || !texture.isUploaded()) return null;
+            if (texture == null) return null;
 
+            // Do not require GL upload state. The CPU-side direct buffer is the data we
+            // actually consume and can be ready before Xaero's render upload completes.
             ByteBuffer source = texture.getDirectColorBuffer();
-            if (source == null) return null;
+            if (source == null) {
+                updateDiagnostic("Xaero texture exists but its CPU color buffer is not ready.\nchunk=" + chunkX + "," + chunkZ);
+                return null;
+            }
 
-            int requiredBytes = XAERO_TEXTURE_SIDE * XAERO_TEXTURE_SIDE * BYTES_PER_PIXEL;
+            int requiredBytes = TEXTURE_SIDE * TEXTURE_SIDE * BYTES_PER_PIXEL;
             if (source.capacity() < requiredBytes) {
-                updateDiagnostic("Xaero native texture buffer too small"
-                        + "\nchunk=" + chunkX + "," + chunkZ
-                        + "\ncapacity=" + source.capacity()
+                updateDiagnostic("Xaero color buffer is smaller than expected.\ncapacity=" + source.capacity()
                         + "\nrequired=" + requiredBytes);
                 return null;
             }
 
-            int localTileX = chunkX & 3;
-            int localTileZ = chunkZ & 3;
-            int baseX = localTileX * XAERO_TILE_SIDE;
-            int baseZ = localTileZ * XAERO_TILE_SIDE;
-
-            int[] result = new int[XAERO_TILE_SIDE * XAERO_TILE_SIDE];
+            int localTileX = Math.floorMod(chunkX, 4);
+            int localTileZ = Math.floorMod(chunkZ, 4);
+            int baseX = localTileX * TILE_SIDE;
+            int baseZ = localTileZ * TILE_SIDE;
+            int[] result = new int[TILE_SIDE * TILE_SIDE];
             ByteBuffer pixels = source.duplicate().order(ByteOrder.BIG_ENDIAN);
 
-            for (int localZ = 0; localZ < XAERO_TILE_SIDE; localZ++) {
-                for (int localX = 0; localX < XAERO_TILE_SIDE; localX++) {
-                    int pixelIndex = (baseZ + localZ) * XAERO_TEXTURE_SIDE + baseX + localX;
-                    result[localZ * XAERO_TILE_SIDE + localX]
-                            = pixels.getInt(pixelIndex * BYTES_PER_PIXEL);
+            for (int z = 0; z < TILE_SIDE; z++) {
+                for (int x = 0; x < TILE_SIDE; x++) {
+                    int pixel = (baseZ + z) * TEXTURE_SIDE + baseX + x;
+                    result[z * TILE_SIDE + x] = pixels.getInt(pixel * BYTES_PER_PIXEL);
                 }
             }
-
-            updateDiagnostic("Xaero native terrain tile read"
-                    + "\nworld=" + safe(processor.getCurrentWorldId())
-                    + "\ndimension=" + safe(processor.getCurrentDimId())
-                    + "\nmap=" + safe(processor.getCurrentMWId())
-                    + "\nchunk=" + chunkX + "," + chunkZ
-                    + "\nxaeroTile=" + tile.getChunkX() + "," + tile.getChunkZ()
-                    + "\ntexture=64x64"
-                    + "\nformat=" + texture.getColorBufferFormat()
-                    + "\ncompressed=" + texture.isColorBufferCompressed());
 
             return result;
         } catch (RuntimeException e) {
             LOGGER.debug("[FlightComputer] Xaero native terrain tile is not ready", e);
+            updateDiagnostic("Xaero native tile read deferred: " + e.getClass().getSimpleName());
             return null;
         }
     }
@@ -222,7 +182,6 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private MapProcessor getProcessor(ClientLevel level) {
         WorldMapSession session = WorldMapSession.getCurrentSession();
         if (session == null || !session.isUsable()) return null;
-
         MapProcessor processor = session.getMapProcessor();
         if (processor == null || processor.getWorld() != level) return null;
         return processor;
@@ -245,11 +204,6 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         return name == null || name.isBlank() ? "unknown" : name;
     }
 
-    private String safe(String value) {
-        return value == null || value.isBlank() ? "<none>" : value;
-    }
-
-    private void updateDiagnostic(String value) {
-        diagnosticReport = value + "\ntick=" + tickCounter;
-    }
+    private String safe(String value) { return value == null || value.isBlank() ? "<none>" : value; }
+    private void updateDiagnostic(String value) { diagnosticReport = value + "\ntick=" + tickCounter; }
 }
