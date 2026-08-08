@@ -23,23 +23,19 @@ import java.util.Set;
 /**
  * Client-side persistent terrain cache. It only samples chunks that Minecraft has
  * already loaded; it never requests a chunk solely for the Flight Computer map.
- * Cached 16x16 surface-color tiles survive closing the map and restarting the game.
  */
 public final class TerrainMapCache {
     private static final int CHUNKS_PER_TICK = 6;
     private static final int FORMAT_VERSION = 1;
-
     private static final Map<Long, int[]> CACHE = new HashMap<>();
     private static final Set<Long> QUEUED = new HashSet<>();
     private static final Set<Long> DISK_CHECKED = new HashSet<>();
     private static final Deque<Long> QUEUE = new ArrayDeque<>();
-
     private static String activeIdentity;
     private static Path activeCacheDirectory;
 
     private TerrainMapCache() {}
 
-    /** Returns the cached color, or 0 when the tile is not known yet. */
     public static int colorAt(ClientLevel level, int worldX, int worldZ) {
         ensureLevel(level);
         long key = ChunkPos.asLong(worldX >> 4, worldZ >> 4);
@@ -53,12 +49,9 @@ public final class TerrainMapCache {
             enqueue(level, key);
             return 0;
         }
-        int localX = worldX & 15;
-        int localZ = worldZ & 15;
-        return grid[localZ * 16 + localX];
+        return grid[(worldZ & 15) * 16 + (worldX & 15)];
     }
 
-    /** Call once per client tick while the map is open. */
     public static void tick(ClientLevel level) {
         ensureLevel(level);
         int processed = 0;
@@ -79,9 +72,7 @@ public final class TerrainMapCache {
 
     private static void enqueue(ClientLevel level, long key) {
         if (QUEUED.contains(key) || CACHE.containsKey(key)) return;
-        int chunkX = ChunkPos.getX(key);
-        int chunkZ = ChunkPos.getZ(key);
-        if (!level.hasChunk(chunkX, chunkZ)) return;
+        if (!level.hasChunk(ChunkPos.getX(key), ChunkPos.getZ(key))) return;
         QUEUED.add(key);
         QUEUE.addLast(key);
     }
@@ -91,13 +82,12 @@ public final class TerrainMapCache {
         int baseX = chunkX << 4;
         int baseZ = chunkZ << 4;
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-
         for (int lz = 0; lz < 16; lz++) {
             for (int lx = 0; lx < 16; lx++) {
                 int wx = baseX + lx;
                 int wz = baseZ + lz;
-                int y = level.getHeight(Heightmap.Types.WORLD_SURFACE, wx, wz) - 1;
-                y = Math.max(level.getMinBuildHeight(), y);
+                int y = Math.max(level.getMinBuildHeight(),
+                        level.getHeight(Heightmap.Types.WORLD_SURFACE, wx, wz) - 1);
                 pos.set(wx, y, wz);
                 BlockState state = level.getBlockState(pos);
                 MapColor mapColor = state.getMapColor(level, pos);
@@ -110,10 +100,7 @@ public final class TerrainMapCache {
     private static void ensureLevel(ClientLevel level) {
         String identity = buildIdentity(level);
         if (identity.equals(activeIdentity)) return;
-        CACHE.clear();
-        QUEUED.clear();
-        DISK_CHECKED.clear();
-        QUEUE.clear();
+        CACHE.clear(); QUEUED.clear(); DISK_CHECKED.clear(); QUEUE.clear();
         activeIdentity = identity;
         activeCacheDirectory = cacheDirectory(identity);
         try { Files.createDirectories(activeCacheDirectory); } catch (IOException ignored) { }
@@ -124,12 +111,11 @@ public final class TerrainMapCache {
         String server = minecraft.getCurrentServer() != null
                 ? minecraft.getCurrentServer().ip
                 : "singleplayer:" + level.getLevelData().getLevelName();
-        String dimension = level.dimension().location().toString();
-        return sanitize(server) + "__" + sanitize(dimension);
+        return sanitize(server) + "__" + sanitize(level.dimension().location().toString());
     }
 
     private static Path cacheDirectory(String identity) {
-        Path root = Minecraft.getInstance().gameDirectory
+        Path root = Minecraft.getInstance().gameDirectory.toPath()
                 .resolve("config").resolve("flightcomputer").resolve("map_cache");
         return root.resolve(identity);
     }
@@ -147,9 +133,7 @@ public final class TerrainMapCache {
             int[] grid = new int[256];
             for (int i = 0; i < grid.length; i++) grid[i] = in.readInt();
             return grid;
-        } catch (IOException | RuntimeException ignored) {
-            return null;
-        }
+        } catch (IOException | RuntimeException ignored) { return null; }
     }
 
     private static void writeTile(long key, int[] grid) {
@@ -159,9 +143,7 @@ public final class TerrainMapCache {
         try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(temp))) {
             out.writeInt(FORMAT_VERSION);
             for (int color : grid) out.writeInt(color);
-        } catch (IOException ignored) {
-            return;
-        }
+        } catch (IOException ignored) { return; }
         try {
             Files.move(temp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
                     java.nio.file.StandardCopyOption.ATOMIC_MOVE);
@@ -171,17 +153,10 @@ public final class TerrainMapCache {
         }
     }
 
-    private static String sanitize(String value) {
-        return value.replaceAll("[^A-Za-z0-9._-]", "_");
-    }
+    private static String sanitize(String value) { return value.replaceAll("[^A-Za-z0-9._-]", "_"); }
 
-    /** Clears only the in-memory state; persisted tiles remain available next session. */
     public static void clear() {
-        CACHE.clear();
-        QUEUE.clear();
-        QUEUED.clear();
-        DISK_CHECKED.clear();
-        activeIdentity = null;
-        activeCacheDirectory = null;
+        CACHE.clear(); QUEUE.clear(); QUEUED.clear(); DISK_CHECKED.clear();
+        activeIdentity = null; activeCacheDirectory = null;
     }
 }
