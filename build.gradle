@@ -28,10 +28,10 @@ repositories {
         }
     }
     maven {
-        name = "Twelve Iterations"
-        url = "https://maven.twelveiterations.com/repository/maven-public/"
+        name = "CurseMaven"
+        url = "https://www.cursemaven.com"
         content {
-            includeGroup "net.blay09.mods"
+            includeGroup "curse.maven"
         }
     }
 }
@@ -71,12 +71,12 @@ dependencies {
     // the Flight Controller's buttons/dials with real keyframe animations authored in Blockbench.
     implementation "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
 
-    // Waystones 1.21.1 API. The common 21.1.40 coordinate is not published in the configured
-    // Maven repository, so Gradle cannot resolve it. 21.1.38 is the latest published 1.21.1
-    // release visible from the official Waystones distribution and exposes the same API surface
-    // used by WaystoneMapProvider. Keep this compile-only: the user's installed Waystones jar
-    // remains the runtime provider and the integration is guarded when Waystones is absent.
-    compileOnly "net.blay09.mods:waystones-common:21.1.38"
+    // Waystones does not publish the `net.blay09.mods:waystones-common` artifact to the
+    // repositories available to this project. The official NeoForge 1.21.1 distribution is
+    // published through CurseMaven instead. 21.1.34 is a verified NeoForge 1.21.1 release and
+    // supplies the API classes used by WaystoneMapProvider; keep this compile-only so the user's
+    // installed Waystones jar remains the runtime provider.
+    compileOnly "curse.maven:waystones-245755:8163145"
 }
 
 tasks.withType(ProcessResources).configureEach {
