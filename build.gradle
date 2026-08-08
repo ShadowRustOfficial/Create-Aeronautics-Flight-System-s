@@ -28,6 +28,13 @@ repositories {
         }
     }
     maven {
+        name = "Xaero's Maven"
+        url = "https://chocolateminecraft.com/maven"
+        content {
+            includeGroupByRegex "xaero\\..*"
+        }
+    }
+    maven {
         name = "CurseMaven"
         url = "https://www.cursemaven.com"
         content {
@@ -70,6 +77,12 @@ dependencies {
     // GeckoLib - block/entity animation engine. Replaces hand-coded ModelPart rotation for
     // the Flight Controller's buttons/dials with real keyframe animations authored in Blockbench.
     implementation "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
+
+    // Xaero World Map 1.44.2 is a hard dependency for the terrain integration. The official
+    // Xaero developer documentation provides the NeoForge Maven coordinate below; compiling
+    // directly against the mod lets us consume its decoded in-memory MapProcessor/MapTile data
+    // instead of reverse-engineering .xwmc cache files.
+    implementation "xaero.map:xaeroworldmap-neoforge-${minecraft_version}:1.44.2"
 
     // Waystones does not publish the `net.blay09.mods:waystones-common` artifact to the
     // repositories available to this project. The official NeoForge 1.21.1 distribution is
