@@ -36,6 +36,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private long tickCounter;
     private long lastRetryTick;
     private String diagnosticReport = "Xaero provider not initialized.";
+    private XaeroCacheLocator.Snapshot cacheSnapshot = XaeroCacheLocator.Snapshot.missing("Not resolved yet.");
 
     private int mapTileNull;
     private int mapTileNotLoaded;
@@ -68,9 +69,16 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         tickCounter++;
         if (level == null || Minecraft.getInstance().player == null) return;
 
+        // Resolve the actual Minecraft instance directory and Xaero storage profile.
+        // This is intentionally separate from the native API: it verifies that the
+        // native session is looking at the same map data the user can see on disk.
+        cacheSnapshot = XaeroCacheLocator.resolve(Minecraft.getInstance(), level);
+
         MapProcessor processor = getProcessor(level);
         if (processor == null) {
-            updateDiagnostic("Xaero session/processor unavailable.\nOpen the World Map once to initialise it.");
+            updateDiagnostic("Xaero session/processor unavailable.\n"
+                    + "Open the World Map once to initialise it.\n"
+                    + cacheDiagnostics());
             return;
         }
 
@@ -95,7 +103,9 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
 
         updateDiagnostic("Xaero native terrain adapter"
                 + "\nworld=" + safe(processor.getCurrentWorldId())
-                + "\ndimension=" + safe(processor.getCurrentDimId())
+                + "\nminecraftDimension=" + level.dimension().location()
+                + "\ndimensionTypeId=" + level.dimension().location()
+                + "\nxaeroDimension=" + safe(processor.getCurrentDimId())
                 + "\nmap=" + safe(processor.getCurrentMWId())
                 + "\nloaded=" + chunkTiles.size()
                 + "\npending=" + pendingQueue.size()
@@ -104,7 +114,8 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
                 + "\nmapChunkNull=" + mapChunkNull
                 + "\ntextureNull=" + textureNull
                 + "\nbufferNull=" + bufferNull
-                + "\ndecoded=" + decodedCount);
+                + "\ndecoded=" + decodedCount
+                + "\n" + cacheDiagnostics());
     }
 
     public Map<Long, int[]> drainDecodedTiles() {
@@ -128,6 +139,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         activeIdentity = null;
         tickCounter = 0L;
         lastRetryTick = 0L;
+        cacheSnapshot = XaeroCacheLocator.Snapshot.missing("Not resolved yet.");
         mapTileNull = 0;
         mapTileNotLoaded = 0;
         mapChunkNull = 0;
@@ -143,8 +155,11 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         if (identity.equals(activeIdentity)) return;
         clear();
         activeIdentity = identity;
-        diagnosticReport = "Waiting for Xaero World Map session\nworld=" + identity
-                + "\ndimension=" + level.dimension().location();
+        cacheSnapshot = XaeroCacheLocator.resolve(Minecraft.getInstance(), level);
+        diagnosticReport = "Waiting for Xaero World Map session"
+                + "\nworld=" + identity
+                + "\ndimensionTypeId=" + level.dimension().location()
+                + "\n" + cacheDiagnostics();
     }
 
     private int[] readNativeChunk(ClientLevel level, int chunkX, int chunkZ) {
@@ -152,11 +167,11 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             MapProcessor processor = getProcessor(level);
             if (processor == null) return null;
             if (!processor.isMapWorldUsable()) {
-                updateDiagnostic("Xaero map world is not usable yet.");
+                updateDiagnostic("Xaero map world is not usable yet.\n" + cacheDiagnostics());
                 return null;
             }
             if (processor.getWorld() != level) {
-                updateDiagnostic("Xaero processor is attached to a different client world.");
+                updateDiagnostic("Xaero processor is attached to a different client world.\n" + cacheDiagnostics());
                 return null;
             }
 
@@ -193,7 +208,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             int requiredBytes = TEXTURE_SIDE * TEXTURE_SIDE * BYTES_PER_PIXEL;
             if (source.capacity() < requiredBytes) {
                 updateDiagnostic("Xaero color buffer is smaller than expected.\ncapacity=" + source.capacity()
-                        + "\nrequired=" + requiredBytes);
+                        + "\nrequired=" + requiredBytes + "\n" + cacheDiagnostics());
                 return null;
             }
 
@@ -214,7 +229,8 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             return result;
         } catch (RuntimeException e) {
             LOGGER.debug("[FlightComputer] Xaero native terrain tile is not ready", e);
-            updateDiagnostic("Xaero native tile read deferred: " + e.getClass().getSimpleName());
+            updateDiagnostic("Xaero native tile read deferred: " + e.getClass().getSimpleName()
+                    + "\n" + cacheDiagnostics());
             return null;
         }
     }
@@ -242,6 +258,20 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         if (minecraft.getSingleplayerServer() == null) return "unknown";
         String name = minecraft.getSingleplayerServer().getWorldData().getLevelName();
         return name == null || name.isBlank() ? "unknown" : name;
+    }
+
+    private String cacheDiagnostics() {
+        return "XAERO CACHE"
+                + "\nroot=" + cacheSnapshot.rootDisplay()
+                + "\nworld=" + cacheSnapshot.worldDisplay()
+                + "\nminecraftDimension=" + cacheSnapshot.minecraftDimensionId()
+                + "\nxaeroStorageDimension=" + cacheSnapshot.dimensionDisplay()
+                + "\ncache=" + (cacheSnapshot.cacheFound() ? "FOUND" : "MISSING")
+                + "\ncache_1=" + (cacheSnapshot.cache1Found() ? "FOUND" : "MISSING")
+                + "\ncaves=" + (cacheSnapshot.cavesFound() ? "FOUND" : "MISSING")
+                + "\nxwmcFiles=" + cacheSnapshot.xwmcFileCount()
+                + "\ncaveDirs=" + cacheSnapshot.caveDirectoryCount()
+                + "\nstatus=" + cacheSnapshot.status();
     }
 
     private String safe(String value) { return value == null || value.isBlank() ? "<none>" : value; }
