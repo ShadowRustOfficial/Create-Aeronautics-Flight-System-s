@@ -1,5 +1,6 @@
 package com.flightcomputer.client.map;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.level.ChunkPos;
 
@@ -20,6 +21,10 @@ public final class TerrainMapCache {
     private static final XaeroMapDataProvider XAERO_PROVIDER = new XaeroMapDataProvider();
     private static final XaeroWaypointProvider XAERO_WAYPOINT_PROVIDER = new XaeroWaypointProvider();
     private static final WaystoneMapProvider WAYSTONE_PROVIDER = new WaystoneMapProvider();
+
+    /* Never allow the UI to enqueue an effectively unbounded map area. */
+    private static final int MAX_VIEWPORT_RADIUS_BLOCKS = 512;
+    private static final int MAX_REQUESTED_CHUNKS = 4096;
 
     private static String activeIdentity;
 
@@ -46,20 +51,29 @@ public final class TerrainMapCache {
         return grid[Math.floorMod(worldZ, 16) * 16 + Math.floorMod(worldX, 16)];
     }
 
-    /** Prepares visible map data without doing work from render(). */
+    /**
+     * Prepares only a bounded viewport. The old implementation could enqueue
+     * hundreds of thousands of requests at high zoom, masking the actual Xaero
+     * integration failure and steadily growing the pending queue.
+     */
     public static void requestViewport(ClientLevel level, int centerWorldX, int centerWorldZ, int radiusBlocks) {
         ensureLevel(level);
-        int minChunkX = Math.floorDiv(centerWorldX - radiusBlocks, 16);
-        int maxChunkX = Math.floorDiv(centerWorldX + radiusBlocks, 16);
-        int minChunkZ = Math.floorDiv(centerWorldZ - radiusBlocks, 16);
-        int maxChunkZ = Math.floorDiv(centerWorldZ + radiusBlocks, 16);
+        if (level == null) return;
 
-        requestChunk(level, ChunkPos.asLong(Math.floorDiv(centerWorldX, 16), Math.floorDiv(centerWorldZ, 16)));
+        int radius = Math.min(Math.max(32, radiusBlocks), MAX_VIEWPORT_RADIUS_BLOCKS);
+        int minChunkX = Math.floorDiv(centerWorldX - radius, 16);
+        int maxChunkX = Math.floorDiv(centerWorldX + radius, 16);
+        int minChunkZ = Math.floorDiv(centerWorldZ - radius, 16);
+        int maxChunkZ = Math.floorDiv(centerWorldZ + radius, 16);
 
-        for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
-            for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+        int requested = 0;
+        for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ && requested < MAX_REQUESTED_CHUNKS; chunkZ++) {
+            for (int chunkX = minChunkX; chunkX <= maxChunkX && requested < MAX_REQUESTED_CHUNKS; chunkX++) {
                 long key = ChunkPos.asLong(chunkX, chunkZ);
-                if (!CACHE.containsKey(key)) requestChunk(level, key);
+                if (!CACHE.containsKey(key)) {
+                    requestChunk(level, key);
+                    requested++;
+                }
             }
         }
     }
@@ -85,6 +99,8 @@ public final class TerrainMapCache {
 
     private static void requestChunk(ClientLevel level, long key) {
         if (CACHE.containsKey(key) || REQUESTED.contains(key)) return;
+        if (REQUESTED.size() >= MAX_REQUESTED_CHUNKS) return;
+
         REQUESTED.add(key);
         int chunkX = ChunkPos.getX(key);
         int chunkZ = ChunkPos.getZ(key);
@@ -109,7 +125,13 @@ public final class TerrainMapCache {
     }
 
     private static String buildIdentity(ClientLevel level) {
-        return level.dimension().location().toString();
+        Minecraft minecraft = Minecraft.getInstance();
+        String world = minecraft.getCurrentServer() != null
+                ? "server:" + minecraft.getCurrentServer().ip
+                : "singleplayer:" + (minecraft.getSingleplayerServer() != null
+                ? minecraft.getSingleplayerServer().getWorldData().getLevelName()
+                : "unknown");
+        return world + "|" + level.dimension().location();
     }
 
     public static void clear() {
