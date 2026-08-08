@@ -19,9 +19,10 @@ import java.util.Set;
 /**
  * Normalized client-side map cache. It prefers persisted Flight Computer tiles,
  * then Xaero's explored map data, and finally samples only already-loaded chunks.
+ * Rendering never performs disk reads or queues work; preparation happens from tick().
  */
 public final class TerrainMapCache {
-    private static final int CHUNKS_PER_TICK = 6;
+    private static final int CHUNKS_PER_TICK = 12;
     private static final int FORMAT_VERSION = 2;
     private static final Map<Long, int[]> CACHE = new HashMap<>();
     private static final Set<Long> DISK_CHECKED = new HashSet<>();
@@ -36,6 +37,7 @@ public final class TerrainMapCache {
 
     private TerrainMapCache() {}
 
+    /** Legacy lookup retained for callers outside the renderer. */
     public static int colorAt(ClientLevel level, int worldX, int worldZ) {
         ensureLevel(level);
         long key = ChunkPos.asLong(Math.floorDiv(worldX, 16), Math.floorDiv(worldZ, 16));
@@ -47,22 +49,50 @@ public final class TerrainMapCache {
         }
 
         if (grid == null) {
-            int chunkX = ChunkPos.getX(key);
-            int chunkZ = ChunkPos.getZ(key);
+            requestChunk(level, key);
+            return 0;
+        }
+        return grid[Math.floorMod(worldZ, 16) * 16 + Math.floorMod(worldX, 16)];
+    }
 
-            // Xaero data is client-side and does not force a Minecraft chunk load.
-            grid = XAERO_PROVIDER.getChunkTile(level, chunkX, chunkZ);
-            if (grid != null) {
-                CACHE.put(key, grid);
-                writeTile(key, grid);
-                DISK_CHECKED.add(key);
-            } else {
-                enqueueLive(level, key);
+    /**
+     * Fast render-only lookup. It never touches disk, scans chunks, or queues work.
+     * A missing tile is intentionally rendered as unexplored until the tick queue supplies it.
+     */
+    public static int cachedColorAt(ClientLevel level, int worldX, int worldZ) {
+        ensureLevel(level);
+        long key = ChunkPos.asLong(Math.floorDiv(worldX, 16), Math.floorDiv(worldZ, 16));
+        int[] grid = CACHE.get(key);
+        if (grid == null) return 0;
+        return grid[Math.floorMod(worldZ, 16) * 16 + Math.floorMod(worldX, 16)];
+    }
+
+    /**
+     * Prepares the visible map area without doing the work from the render thread.
+     * Xaero data is preferred; live-world sampling is only a fallback for already-loaded chunks.
+     */
+    public static void requestViewport(ClientLevel level, int centerWorldX, int centerWorldZ, int radiusBlocks) {
+        ensureLevel(level);
+        int minChunkX = Math.floorDiv(centerWorldX - radiusBlocks, 16);
+        int maxChunkX = Math.floorDiv(centerWorldX + radiusBlocks, 16);
+        int minChunkZ = Math.floorDiv(centerWorldZ - radiusBlocks, 16);
+        int maxChunkZ = Math.floorDiv(centerWorldZ + radiusBlocks, 16);
+
+        for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+            for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+                long key = ChunkPos.asLong(chunkX, chunkZ);
+                if (CACHE.containsKey(key)) continue;
+                if (!DISK_CHECKED.contains(key)) {
+                    DISK_CHECKED.add(key);
+                    int[] diskTile = readTile(key);
+                    if (diskTile != null) {
+                        CACHE.put(key, diskTile);
+                        continue;
+                    }
+                }
+                requestChunk(level, key);
             }
         }
-
-        if (grid == null) return 0;
-        return grid[(Math.floorMod(worldZ, 16)) * 16 + Math.floorMod(worldX, 16)];
     }
 
     public static void tick(ClientLevel level) {
@@ -85,9 +115,20 @@ public final class TerrainMapCache {
         }
     }
 
-    private static void enqueueLive(ClientLevel level, long key) {
+    private static void requestChunk(ClientLevel level, long key) {
         if (QUEUED.contains(key) || CACHE.containsKey(key)) return;
-        if (!level.hasChunk(ChunkPos.getX(key), ChunkPos.getZ(key))) return;
+        int chunkX = ChunkPos.getX(key);
+        int chunkZ = ChunkPos.getZ(key);
+
+        int[] xaeroTile = XAERO_PROVIDER.getChunkTile(level, chunkX, chunkZ);
+        if (xaeroTile != null) {
+            CACHE.put(key, xaeroTile);
+            writeTile(key, xaeroTile);
+            DISK_CHECKED.add(key);
+            return;
+        }
+
+        if (!level.hasChunk(chunkX, chunkZ)) return;
         QUEUED.add(key);
         QUEUE.addLast(key);
     }
