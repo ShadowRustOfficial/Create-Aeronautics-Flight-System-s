@@ -25,7 +25,6 @@ public final class XaeroWaypointProvider {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || level == null || minecraft.player == null || minecraft.gameDirectory == null) return;
         if (minecraft.level != level) return;
-        if (minecraft.getFrameTime() < 0) return;
 
         long now = minecraft.level.getGameTime();
         if (now < nextScan) return;
