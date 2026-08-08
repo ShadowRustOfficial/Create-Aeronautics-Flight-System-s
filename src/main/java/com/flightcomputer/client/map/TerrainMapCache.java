@@ -110,8 +110,14 @@ public final class TerrainMapCache {
         Minecraft minecraft = Minecraft.getInstance();
         String server = minecraft.getCurrentServer() != null
                 ? minecraft.getCurrentServer().ip
-                : "singleplayer:" + level.getLevelData().getLevelName();
+                : "singleplayer:" + singleplayerWorldName(minecraft);
         return sanitize(server) + "__" + sanitize(level.dimension().location().toString());
+    }
+
+    private static String singleplayerWorldName(Minecraft minecraft) {
+        if (minecraft.getSingleplayerServer() == null) return "unknown";
+        String name = minecraft.getSingleplayerServer().getWorldData().getLevelName();
+        return name == null || name.isBlank() ? "unknown" : name;
     }
 
     private static Path cacheDirectory(String identity) {
