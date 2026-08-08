@@ -4,13 +4,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.level.ChunkPos;
 
-import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -24,8 +21,7 @@ import java.util.Set;
 public final class TerrainMapCache {
     private static final int FORMAT_VERSION = 2;
     private static final Map<Long, int[]> CACHE = new HashMap<>();
-    private static final Set<Long> QUEUED = new HashSet<>();
-    private static final Deque<Long> QUEUE = new ArrayDeque<>();
+    private static final Set<Long> REQUESTED = new HashSet<>();
 
     private static final XaeroMapDataProvider XAERO_PROVIDER = new XaeroMapDataProvider();
 
@@ -74,14 +70,11 @@ public final class TerrainMapCache {
     public static void tick(ClientLevel level) {
         ensureLevel(level);
         XAERO_PROVIDER.tick(level);
-        // Region decoding is deliberately handled by XaeroMapDataProvider in bounded batches.
-        // No Minecraft chunk sampling happens here.
-        QUEUE.clear();
-        QUEUED.clear();
     }
 
     private static void requestChunk(ClientLevel level, long key) {
-        if (QUEUED.contains(key) || CACHE.containsKey(key)) return;
+        if (CACHE.containsKey(key) || REQUESTED.contains(key)) return;
+        REQUESTED.add(key);
         int chunkX = ChunkPos.getX(key);
         int chunkZ = ChunkPos.getZ(key);
         int[] xaeroTile = XAERO_PROVIDER.getChunkTile(level, chunkX, chunkZ);
@@ -97,8 +90,7 @@ public final class TerrainMapCache {
         if (identity.equals(activeIdentity)) return;
 
         CACHE.clear();
-        QUEUED.clear();
-        QUEUE.clear();
+        REQUESTED.clear();
         XAERO_PROVIDER.clear();
         activeIdentity = identity;
         activeCacheDirectory = cacheDirectory(identity);
@@ -150,8 +142,7 @@ public final class TerrainMapCache {
 
     public static void clear() {
         CACHE.clear();
-        QUEUE.clear();
-        QUEUED.clear();
+        REQUESTED.clear();
         XAERO_PROVIDER.clear();
         activeIdentity = null;
         activeCacheDirectory = null;
