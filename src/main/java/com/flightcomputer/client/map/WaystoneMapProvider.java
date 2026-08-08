@@ -86,7 +86,7 @@ public final class WaystoneMapProvider {
         var pos = waystone.getPos();
         return new WaystoneSnapshot(
                 waystone.getWaystoneUid().toString(),
-                waystone.getEffectiveName().getString(),
+                waystone.getName().getString(),
                 waystone.getDimension().location().toString(),
                 pos.getX(), pos.getY(), pos.getZ(),
                 waystone.isValid());
