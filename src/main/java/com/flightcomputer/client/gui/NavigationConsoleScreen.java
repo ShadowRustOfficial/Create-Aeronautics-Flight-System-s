@@ -6,7 +6,6 @@ import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.client.map.TerrainMapCache;
 import com.flightcomputer.map.MapMarker;
-import com.flightcomputer.map.MarkerCategory;
 import com.flightcomputer.map.MarkerRegistry;
 import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.client.Minecraft;
@@ -22,7 +21,6 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 public final class NavigationConsoleScreen extends Screen {
     private enum Tab { MAP, ROUTE, FLIGHT_CONTROL, DIAGNOSTICS }
 
-    /** Screen-pixel spacing between terrain samples - see TerrainMapCache for the actual cache. */
     private static final int TERRAIN_STEP = 3;
     private static final int UNLOADED_COLOR = 0xFF16202A;
     private static final int STATUS_ON_COLOR = 0xFF55FF55;
@@ -40,6 +38,8 @@ public final class NavigationConsoleScreen extends Screen {
 
     @Override protected void init() {
         controller = getController();
+        if (controller != null) showTerrain = controller.isTerrainEnabled();
+
         int left = Math.max(10, (width - 640) / 2);
         int top = 20;
         int tabW = 150;
@@ -51,6 +51,7 @@ public final class NavigationConsoleScreen extends Screen {
         if (tab == Tab.MAP) {
             addRenderableWidget(Button.builder(terrainLabel(), b -> {
                 showTerrain = !showTerrain;
+                send(FlightControllerAction.TOGGLE_TERRAIN);
                 b.setMessage(terrainLabel());
             }).bounds(left + 500, top + 210, 140, 20).build());
         }
@@ -64,15 +65,15 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private Component terrainLabel() {
-        return Component.literal("TERRAIN: " + (showTerrain ? "ON" : "OFF"));
+        return Component.literal("MAP: " + (showTerrain ? "ON" : "OFF"));
     }
 
     @Override
     public void tick() {
         super.tick();
-        if (minecraft != null && minecraft.level != null) {
-            TerrainMapCache.tick(minecraft.level);
-        }
+        if (minecraft == null || minecraft.level == null) return;
+        TerrainMapCache.tick(minecraft.level);
+        if (!controllerPowered()) minecraft.setScreen(null);
     }
 
     private void switchTab(Tab newTab) {
@@ -90,8 +91,9 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private boolean controllerPowered() {
-        if (controller == null) return false;
-        return controller.getEnergyStorage().getEnergyStored() > 0
+        if (controller == null) controller = getController();
+        return controller != null
+                && controller.getEnergyStorage().getEnergyStored() > 0
                 && controller.getPowerState() != PowerState.NO_POWER;
     }
 
@@ -125,11 +127,6 @@ public final class NavigationConsoleScreen extends Screen {
         super.render(g, mouseX, mouseY, partialTick);
     }
 
-    /**
-     * Screen.render calls this before it draws our widgets. Leaving the default
-     * implementation in place runs Minecraft's blur shader over the console
-     * content because this screen supplies its own opaque panel.
-     */
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         // Intentionally blank: NavigationConsoleScreen renders its own background.
@@ -138,11 +135,13 @@ public final class NavigationConsoleScreen extends Screen {
     private void renderMap(GuiGraphics g, int left, int top) {
         int mapL = left + 20, mapT = top + 8, mapR = left + 620, mapB = top + 260;
         int cx = (mapL + mapR) / 2, cy = (mapT + mapB) / 2;
+        double controllerX = controllerPos.getX() + 0.5D;
+        double controllerZ = controllerPos.getZ() + 0.5D;
 
         g.fill(mapL, mapT, mapR, mapB, UNLOADED_COLOR);
 
-        if (showTerrain && minecraft != null && minecraft.player != null && minecraft.level != null) {
-            renderTerrain(g, minecraft.level, minecraft.player.getX(), minecraft.player.getZ(),
+        if (showTerrain && minecraft != null && minecraft.level != null) {
+            renderTerrain(g, minecraft.level, controllerX, controllerZ,
                     mapL, mapT, mapR, mapB, cx, cy);
         }
 
@@ -150,14 +149,13 @@ public final class NavigationConsoleScreen extends Screen {
         for (int y = mapT; y < mapB; y += 32) g.hLine(mapL, mapR, y, 0x551E3037);
 
         g.fill(cx - 4, cy - 4, cx + 4, cy + 4, 0xFFFFFFFF);
-        g.drawString(font, "▲ AIRSHIP", cx + 10, cy - 5, 0xFFFFFFFF);
-        if (minecraft != null && minecraft.player != null) {
-            double px = minecraft.player.getX(), pz = minecraft.player.getZ();
-            String dim = minecraft.player.level().dimension().location().toString();
+        g.drawString(font, "▲ FLIGHT CONTROLLER", cx + 10, cy - 5, 0xFFFFFFFF);
+        if (minecraft != null && minecraft.level != null) {
+            String dim = minecraft.level.dimension().location().toString();
             for (MapMarker marker : MarkerRegistry.all()) {
                 if (!dim.equals(marker.dimensionId()) || !MarkerRegistry.isVisible(marker.category())) continue;
-                int sx = cx + (int)((marker.x() - px) / 4.0);
-                int sy = cy + (int)((marker.z() - pz) / 4.0);
+                int sx = cx + (int)((marker.x() - controllerX) / 4.0);
+                int sy = cy + (int)((marker.z() - controllerZ) / 4.0);
                 if (sx < mapL || sx > mapR || sy < mapT || sy > mapB) continue;
                 g.fill(sx - 3, sy - 3, sx + 3, sy + 3, 0xFF000000 | marker.category().getColor());
                 g.drawString(font, marker.name(), sx + 7, sy - 4, 0xFFFFFFFF);
@@ -166,24 +164,14 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "DESTINATION: —    DISTANCE: —    BEARING: —    ETA: —", left + 20, top + 275, 0xFFBFC8CC);
     }
 
-    /**
-     * Terrain layer: samples world columns on a coarse screen-pixel grid, reading
-     * colors from TerrainMapCache (a cheap chunk-keyed lookup) rather than scanning
-     * blocks here directly. Uses the same world-units-per-pixel scale (4.0) as the
-     * marker positions above, so terrain and markers line up. Samples in a chunk
-     * that hasn't been cached yet just draw as the flat "unloaded" color for this
-     * frame - they fill in automatically once TerrainMapCache finishes that chunk.
-     */
-    private void renderTerrain(GuiGraphics g, ClientLevel level, double playerX, double playerZ,
+    private void renderTerrain(GuiGraphics g, ClientLevel level, double controllerX, double controllerZ,
                                 int mapL, int mapT, int mapR, int mapB, int cx, int cy) {
         for (int sy = mapT; sy < mapB; sy += TERRAIN_STEP) {
-            double worldZ = playerZ + (sy - cy) * 4.0;
+            double worldZ = controllerZ + (sy - cy) * 4.0;
             for (int sx = mapL; sx < mapR; sx += TERRAIN_STEP) {
-                double worldX = playerX + (sx - cx) * 4.0;
+                double worldX = controllerX + (sx - cx) * 4.0;
                 int color = TerrainMapCache.colorAt(level, (int) Math.floor(worldX), (int) Math.floor(worldZ));
-                if (color == 0) {
-                    continue; // not cached yet this frame - leave the flat background showing through
-                }
+                if (color == 0) continue;
                 int x2 = Math.min(sx + TERRAIN_STEP, mapR);
                 int y2 = Math.min(sy + TERRAIN_STEP, mapB);
                 g.fill(sx, sy, x2, y2, color);
@@ -230,14 +218,12 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "DIAGNOSTICS", left + 20, top + 10, 0xFFFFFFFF);
         g.drawString(font, "FLIGHT COMPUTER     ● " + (powered ? "OPERATIONAL" : "OFFLINE"), left + 20, top + 40, statusColor);
         g.drawString(font, "LINK                ● " + (powered ? linkStatus : "OFFLINE"), left + 20, top + 62, statusColor);
-        if (minecraft != null && minecraft.player != null) {
-            g.drawString(font, "POSITION", left + 20, top + 100, 0xFFFFFFFF);
-            g.drawString(font, String.format("X %8.2f", minecraft.player.getX()), left + 20, top + 120, 0xFFBFC8CC);
-            g.drawString(font, String.format("Y %8.2f", minecraft.player.getY()), left + 20, top + 140, 0xFFBFC8CC);
-            g.drawString(font, String.format("Z %8.2f", minecraft.player.getZ()), left + 20, top + 160, 0xFFBFC8CC);
-            g.drawString(font, "SPEED   — m/s", left + 330, top + 120, 0xFFBFC8CC);
-            g.drawString(font, "HEADING —°", left + 330, top + 142, 0xFFBFC8CC);
-        }
+        g.drawString(font, "POSITION", left + 20, top + 100, 0xFFFFFFFF);
+        g.drawString(font, String.format("X %8.2f", controllerPos.getX() + 0.5D), left + 20, top + 120, 0xFFBFC8CC);
+        g.drawString(font, String.format("Y %8.2f", controllerPos.getY() + 0.5D), left + 20, top + 140, 0xFFBFC8CC);
+        g.drawString(font, String.format("Z %8.2f", controllerPos.getZ() + 0.5D), left + 20, top + 160, 0xFFBFC8CC);
+        g.drawString(font, "SPEED   — m/s", left + 330, top + 120, 0xFFBFC8CC);
+        g.drawString(font, "HEADING —°", left + 330, top + 142, 0xFFBFC8CC);
         g.drawString(font, "CONTROL OUTPUTS", left + 20, top + 205, 0xFFFFFFFF);
         g.drawString(font, "UP 04      DOWN 00      WEST 00      EAST 07", left + 20, top + 227, 0xFFBFC8CC);
     }
