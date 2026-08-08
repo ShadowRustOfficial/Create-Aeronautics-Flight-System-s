@@ -59,6 +59,10 @@ public final class TerrainMapCache {
         int minChunkZ = Math.floorDiv(centerWorldZ - radiusBlocks, 16);
         int maxChunkZ = Math.floorDiv(centerWorldZ + radiusBlocks, 16);
 
+        // Always queue the player's current region first so the first known-good Xaero tile
+        // can reach the renderer before the rest of the viewport is populated.
+        requestChunk(level, ChunkPos.asLong(Math.floorDiv(centerWorldX, 16), Math.floorDiv(centerWorldZ, 16)));
+
         for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
             for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
                 long key = ChunkPos.asLong(chunkX, chunkZ);
@@ -70,6 +74,22 @@ public final class TerrainMapCache {
     public static void tick(ClientLevel level) {
         ensureLevel(level);
         XAERO_PROVIDER.tick(level);
+
+        // The provider decodes asynchronously from the renderer's perspective: decoding occurs
+        // during tick(), then the newly decoded chunk tiles are transferred into our normalized
+        // cache here. The old implementation never performed this transfer, so REQUESTED tiles
+        // could remain permanently absent even after a successful Xaero decode.
+        for (Map.Entry<Long, int[]> entry : XAERO_PROVIDER.drainDecodedTiles().entrySet()) {
+            long key = entry.getKey();
+            CACHE.put(key, entry.getValue());
+            REQUESTED.remove(key);
+            writeTile(key, entry.getValue());
+        }
+    }
+
+    /** Current Xaero integration diagnostics, primarily for troubleshooting/logging. */
+    public static String xaeroDiagnostics() {
+        return XAERO_PROVIDER.diagnostics();
     }
 
     private static void requestChunk(ClientLevel level, long key) {
@@ -80,6 +100,7 @@ public final class TerrainMapCache {
         int[] xaeroTile = XAERO_PROVIDER.getChunkTile(level, chunkX, chunkZ);
         if (xaeroTile != null) {
             CACHE.put(key, xaeroTile);
+            REQUESTED.remove(key);
             writeTile(key, xaeroTile);
         }
         // If Xaero has no data yet, leave this cell unexplored. Never load a Minecraft chunk.
