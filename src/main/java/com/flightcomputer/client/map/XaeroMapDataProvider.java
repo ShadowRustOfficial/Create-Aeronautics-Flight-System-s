@@ -26,6 +26,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private static final int TEXTURE_SIDE = 64;
     private static final int BYTES_PER_PIXEL = 4;
     private static final int MAX_PENDING_PER_TICK = 64;
+    private static final int RETRY_INTERVAL_TICKS = 10;
 
     private final Map<Long, int[]> chunkTiles = new LinkedHashMap<>();
     private final Set<Long> decodedKeys = new HashSet<>();
@@ -33,7 +34,15 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private final ArrayDeque<Long> pendingQueue = new ArrayDeque<>();
     private String activeIdentity;
     private long tickCounter;
+    private long lastRetryTick;
     private String diagnosticReport = "Xaero provider not initialized.";
+
+    private int mapTileNull;
+    private int mapTileNotLoaded;
+    private int mapChunkNull;
+    private int textureNull;
+    private int bufferNull;
+    private int decodedCount;
 
     @Override
     public int[] getChunkTile(ClientLevel level, int chunkX, int chunkZ) {
@@ -46,6 +55,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             chunkTiles.put(key, decoded);
             decodedKeys.add(key);
             pendingChunks.remove(key);
+            decodedCount++;
             return decoded;
         }
         queueChunk(key);
@@ -64,17 +74,22 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             return;
         }
 
-        int processed = 0;
-        while (processed++ < MAX_PENDING_PER_TICK && !pendingQueue.isEmpty()) {
-            long key = pendingQueue.pollFirst();
-            pendingChunks.remove(key);
-            if (chunkTiles.containsKey(key)) continue;
-            int[] decoded = readNativeChunk(level, ChunkPos.getX(key), ChunkPos.getZ(key));
-            if (decoded != null) {
-                chunkTiles.put(key, decoded);
-                decodedKeys.add(key);
-            } else {
-                queueChunk(key);
+        /* Retry failed native reads at a controlled rate instead of hammering Xaero every tick. */
+        if (tickCounter - lastRetryTick >= RETRY_INTERVAL_TICKS) {
+            lastRetryTick = tickCounter;
+            int processed = 0;
+            while (processed++ < MAX_PENDING_PER_TICK && !pendingQueue.isEmpty()) {
+                long key = pendingQueue.pollFirst();
+                pendingChunks.remove(key);
+                if (chunkTiles.containsKey(key)) continue;
+                int[] decoded = readNativeChunk(level, ChunkPos.getX(key), ChunkPos.getZ(key));
+                if (decoded != null) {
+                    chunkTiles.put(key, decoded);
+                    decodedKeys.add(key);
+                    decodedCount++;
+                } else {
+                    queueChunk(key);
+                }
             }
         }
 
@@ -83,7 +98,13 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
                 + "\ndimension=" + safe(processor.getCurrentDimId())
                 + "\nmap=" + safe(processor.getCurrentMWId())
                 + "\nloaded=" + chunkTiles.size()
-                + "\npending=" + pendingQueue.size());
+                + "\npending=" + pendingQueue.size()
+                + "\nmapTileNull=" + mapTileNull
+                + "\nmapTileNotLoaded=" + mapTileNotLoaded
+                + "\nmapChunkNull=" + mapChunkNull
+                + "\ntextureNull=" + textureNull
+                + "\nbufferNull=" + bufferNull
+                + "\ndecoded=" + decodedCount);
     }
 
     public Map<Long, int[]> drainDecodedTiles() {
@@ -106,6 +127,13 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         pendingQueue.clear();
         activeIdentity = null;
         tickCounter = 0L;
+        lastRetryTick = 0L;
+        mapTileNull = 0;
+        mapTileNotLoaded = 0;
+        mapChunkNull = 0;
+        textureNull = 0;
+        bufferNull = 0;
+        decodedCount = 0;
         diagnosticReport = "Xaero provider cleared.";
     }
 
@@ -134,19 +162,31 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
 
             int caveLayer = processor.getCurrentCaveLayer();
             MapTile tile = processor.getMapTile(chunkX, chunkZ, caveLayer);
-            if (tile == null) return null;
-            if (!tile.isLoaded()) return null;
+            if (tile == null) {
+                mapTileNull++;
+                return null;
+            }
+            if (!tile.isLoaded()) {
+                mapTileNotLoaded++;
+                return null;
+            }
 
             MapTileChunk tileChunk = processor.getMapChunk(chunkX >> 2, chunkZ >> 2, caveLayer);
-            if (tileChunk == null) return null;
+            if (tileChunk == null) {
+                mapChunkNull++;
+                return null;
+            }
             LeafRegionTexture texture = tileChunk.getLeafTexture();
-            if (texture == null) return null;
+            if (texture == null) {
+                textureNull++;
+                return null;
+            }
 
             // Do not require GL upload state. The CPU-side direct buffer is the data we
             // actually consume and can be ready before Xaero's render upload completes.
             ByteBuffer source = texture.getDirectColorBuffer();
             if (source == null) {
-                updateDiagnostic("Xaero texture exists but its CPU color buffer is not ready.\nchunk=" + chunkX + "," + chunkZ);
+                bufferNull++;
                 return null;
             }
 
