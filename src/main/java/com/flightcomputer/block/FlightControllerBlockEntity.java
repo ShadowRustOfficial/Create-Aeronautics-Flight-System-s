@@ -35,7 +35,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     private final EnergyStorage energyStorage = new EnergyStorage(
             FlightComputerConfig.ENERGY_CAPACITY.get(),
             FlightComputerConfig.ENERGY_INPUT_PER_TICK.get(),
-            0);
+            FlightComputerConfig.ENERGY_CAPACITY.get());
     private final ItemStackHandler upgradeHandler = new ItemStackHandler(3) {
         @Override protected void onContentsChanged(int slot) {
             setChanged();
