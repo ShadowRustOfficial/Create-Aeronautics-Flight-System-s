@@ -71,10 +71,12 @@ dependencies {
     // the Flight Controller's buttons/dials with real keyframe animations authored in Blockbench.
     implementation "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
 
-    // Waystones 1.21.1 API. Compile-only: the user's existing Waystones jar remains the
-    // runtime provider. The integration is guarded at runtime so the base mod still works
-    // when Waystones is absent.
-    compileOnly "net.blay09.mods:waystones-common:21.1.40"
+    // Waystones 1.21.1 API. The common 21.1.40 coordinate is not published in the configured
+    // Maven repository, so Gradle cannot resolve it. 21.1.38 is the latest published 1.21.1
+    // release visible from the official Waystones distribution and exposes the same API surface
+    // used by WaystoneMapProvider. Keep this compile-only: the user's installed Waystones jar
+    // remains the runtime provider and the integration is guarded when Waystones is absent.
+    compileOnly "net.blay09.mods:waystones-common:21.1.38"
 }
 
 tasks.withType(ProcessResources).configureEach {
