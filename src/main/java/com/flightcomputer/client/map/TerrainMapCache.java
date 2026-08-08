@@ -115,7 +115,7 @@ public final class TerrainMapCache {
         DISK_CHECKED.clear();
         QUEUE.clear();
         activeIdentity = identity;
-        activeCacheDirectory = cacheDirectory(level, identity);
+        activeCacheDirectory = cacheDirectory(identity);
         try { Files.createDirectories(activeCacheDirectory); } catch (IOException ignored) { }
     }
 
@@ -128,8 +128,8 @@ public final class TerrainMapCache {
         return sanitize(server) + "__" + sanitize(dimension);
     }
 
-    private static Path cacheDirectory(ClientLevel level, String identity) {
-        Path root = Minecraft.getInstance().gameDirectory.toPath()
+    private static Path cacheDirectory(String identity) {
+        Path root = Minecraft.getInstance().gameDirectory
                 .resolve("config").resolve("flightcomputer").resolve("map_cache");
         return root.resolve(identity);
     }
