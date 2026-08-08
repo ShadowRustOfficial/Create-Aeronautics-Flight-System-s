@@ -36,7 +36,7 @@ public final class XaeroWorldMapLocator {
         if (instance == null) return Optional.empty();
         int regionFiles = countRegionFiles(instance);
         if (regionFiles == 0) return Optional.empty();
-        return Optional.of(new MapInstance(root, dimensionDirectory, instance, readLevelId(level), regionFiles));
+        return Optional.of(new MapInstance(root, dimensionDirectory, instance, readLevelId(minecraft), regionFiles));
     }
 
     private static Path findRoot(Path gameDirectory) {
@@ -51,7 +51,7 @@ public final class XaeroWorldMapLocator {
         if (minecraft.getCurrentServer() != null) {
             preferred = "Multiplayer_" + sanitizeServerAddress(minecraft.getCurrentServer().ip);
         } else {
-            preferred = level.getLevelData().getLevelName();
+            preferred = singleplayerWorldName(minecraft);
         }
         if (preferred != null && !preferred.isBlank()) {
             Path candidate = root.resolve(preferred);
@@ -62,6 +62,12 @@ public final class XaeroWorldMapLocator {
                     .filter(path -> !path.getFileName().toString().equals("server_profiles"))
                     .findFirst().orElse(null);
         } catch (IOException ignored) { return null; }
+    }
+
+    private static String singleplayerWorldName(Minecraft minecraft) {
+        if (minecraft.getSingleplayerServer() == null) return "unknown";
+        String name = minecraft.getSingleplayerServer().getWorldData().getLevelName();
+        return name == null || name.isBlank() ? "unknown" : name;
     }
 
     private static String dimensionDirectoryName(ClientLevel level) {
@@ -91,11 +97,9 @@ public final class XaeroWorldMapLocator {
         } catch (IOException ignored) { return 0; }
     }
 
-    private static String readLevelId(ClientLevel level) {
-        Minecraft minecraft = Minecraft.getInstance();
+    private static String readLevelId(Minecraft minecraft) {
         if (minecraft.getSingleplayerServer() == null) return "unknown";
-        String worldName = level.getLevelData().getLevelName();
-        if (worldName == null || worldName.isBlank()) return "unknown";
+        String worldName = singleplayerWorldName(minecraft);
         Path saveRoot = minecraft.gameDirectory.toPath().resolve("saves").resolve(worldName);
         Path file = saveRoot.resolve("xaeromap.txt");
         if (!Files.isRegularFile(file)) return "unknown";
