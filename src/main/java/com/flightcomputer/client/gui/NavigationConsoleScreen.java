@@ -147,7 +147,11 @@ public final class NavigationConsoleScreen extends Screen {
         int mapW = 600;
         int mapH = 260;
         int radius = Math.max(256, Math.min(1536, Math.max(mapW, mapH) * zoom() / 2 + 64));
-        TerrainMapCache.requestViewport(minecraft.level, (int) Math.floor(centerX), (int) Math.floor(centerZ), radius);
+        // Match the terrain request interval to the renderer: each 4x4 screen cell
+        // represents TERRAIN_STEP * zoom() world blocks. This keeps requests centred
+        // on the actual visible map instead of filling a huge corner-first radius.
+        TerrainMapCache.requestViewport(minecraft.level, (int) Math.floor(centerX), (int) Math.floor(centerZ),
+                radius, TERRAIN_STEP * zoom());
         TerrainMapCache.tick(minecraft.level);
     }
 
@@ -207,7 +211,15 @@ public final class NavigationConsoleScreen extends Screen {
         for (int x = mapL; x < mapR; x += 32) g.vLine(x, mapT, mapB, MAP_GRID);
         for (int y = mapT; y < mapB; y += 32) g.hLine(mapL, mapR, y, MAP_GRID);
 
-        drawMarker(g, cx, cy, CYAN_BRIGHT, "FLIGHT CONTROLLER");
+        // The controller marker is tied to the actual Flight Controller block position.
+        // It is not permanently painted at the viewport centre; panning now moves it
+        // relative to the map exactly like every other world-space marker.
+        int controllerX = cx + (int) ((controllerPos.getX() + 0.5 - centerX) / zoom());
+        int controllerZ = cy + (int) ((controllerPos.getZ() + 0.5 - centerZ) / zoom());
+        if (controllerX >= mapL && controllerX <= mapR && controllerZ >= mapT && controllerZ <= mapB) {
+            drawMarker(g, controllerX, controllerZ, CYAN_BRIGHT, "FLIGHT CONTROLLER");
+        }
+
         if (minecraft != null && minecraft.player != null) {
             int px = cx + (int)((minecraft.player.getX() - centerX) / zoom());
             int pz = cy + (int)((minecraft.player.getZ() - centerZ) / zoom());
