@@ -28,12 +28,21 @@ displayName="${mod_name}"
     ordering="AFTER"
     side="BOTH"
 
-# Flight Computer's map terrain integration consumes Xaero World Map's native
-# in-memory MapProcessor/MapTile textures. Keep this exact client dependency
-# aligned with the supplied 1.21.1 / 1.44.2 Xaero World Map build.
+# Flight Computer consumes Xaero World Map's native decoded terrain representation.
+# Keep the exact client version aligned with the supplied 1.21.1 / 1.44.2 jar.
 [[dependencies.'${mod_id}']]
     modId="xaeroworldmap"
     type="required"
     versionRange="[1.44.2,1.44.3)"
+    ordering="AFTER"
+    side="CLIENT"
+
+# Flight Computer consumes Xaero Minimap's persistent waypoint data as part of the
+# same navigation integration. Keep the exact client version aligned with the
+# supplied 1.21.1 / 26.4.2 jar.
+[[dependencies.'${mod_id}']]
+    modId="xaerominimap"
+    type="required"
+    versionRange="[26.4.2,26.4.3)"
     ordering="AFTER"
     side="CLIENT"
