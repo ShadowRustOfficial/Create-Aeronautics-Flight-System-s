@@ -42,6 +42,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private final Set<Long> queuedRegions = ConcurrentHashMap.newKeySet();
     private final Set<Long> attemptedRegions = ConcurrentHashMap.newKeySet();
     private final ConcurrentLinkedQueue<Long> regionQueue = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<Long> decodedTileQueue = new ConcurrentLinkedQueue<>();
     private final ExecutorService decoder = Executors.newSingleThreadExecutor(new DecoderThreadFactory());
 
     private volatile String activeIdentity;
@@ -61,6 +62,31 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             regionQueue.add(regionKey);
         }
         return null;
+    }
+
+    /**
+     * Returns tiles decoded since the previous drain. This is intentionally separate
+     * from getChunkTile(): the decoder thread writes tiles into chunkTiles, while the
+     * client tick thread promotes only newly completed tiles into the normalized cache.
+     */
+    public Map<Long, int[]> drainDecodedTiles() {
+        Map<Long, int[]> decoded = new java.util.HashMap<>();
+        Long key;
+        while ((key = decodedTileQueue.poll()) != null) {
+            int[] tile = chunkTiles.get(key);
+            if (tile != null) decoded.put(key, tile);
+        }
+        return decoded;
+    }
+
+    /** Current provider state for troubleshooting without exposing internal collections. */
+    public String diagnostics() {
+        return "identity=" + activeIdentity
+                + ", mapFound=" + (activeMap != null)
+                + ", cachedTiles=" + chunkTiles.size()
+                + ", queuedRegions=" + queuedRegions.size()
+                + ", pendingRegions=" + regionQueue.size()
+                + ", decodedPending=" + decodedTileQueue.size();
     }
 
     @Override
@@ -183,7 +209,9 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
                     if (present) {
                         int worldChunkX = regionX * REGION_CHUNKS + sectionX * CHUNKS_PER_SECTION + chunkX;
                         int worldChunkZ = regionZ * REGION_CHUNKS + sectionZ * CHUNKS_PER_SECTION + chunkZ;
-                        chunkTiles.put(ChunkPos.asLong(worldChunkX, worldChunkZ), tile);
+                        long key = ChunkPos.asLong(worldChunkX, worldChunkZ);
+                        chunkTiles.put(key, tile);
+                        decodedTileQueue.add(key);
                     }
                 }
             }
@@ -297,6 +325,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         queuedRegions.clear();
         attemptedRegions.clear();
         regionQueue.clear();
+        decodedTileQueue.clear();
         activeIdentity = null;
         activeMap = null;
     }
