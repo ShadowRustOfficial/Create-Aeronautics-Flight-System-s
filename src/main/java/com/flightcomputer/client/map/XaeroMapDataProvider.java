@@ -25,15 +25,12 @@ import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-/**
- * Optional, filesystem-only Xaero World Map reader. It converts Xaero's explored
- * 512x512 region zips into the Flight Computer's own 16x16 chunk tile format.
- * No Xaero classes or dependency are required and no Minecraft chunks are loaded.
- */
+/** Optional filesystem-only Xaero World Map reader. */
 public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private static final int MAX_REGIONS_PER_TICK = 1;
     private static final int REGION_CHUNKS = 32;
     private static final int CHUNKS_PER_SECTION = 4;
+    private static final long NBT_BUDGET = 2_000_000L;
 
     private final Map<Long, int[]> chunkTiles = new HashMap<>();
     private final Set<Long> queuedRegions = new HashSet<>();
@@ -42,13 +39,11 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private String activeIdentity;
     private XaeroWorldMapLocator.MapInstance activeMap;
 
-    @Override
-    public int[] getChunkTile(ClientLevel level, int chunkX, int chunkZ) {
+    @Override public int[] getChunkTile(ClientLevel level, int chunkX, int chunkZ) {
         ensureLevel(level);
         long key = ChunkPos.asLong(chunkX, chunkZ);
         int[] tile = chunkTiles.get(key);
         if (tile != null) return tile;
-
         int regionX = Math.floorDiv(chunkX, REGION_CHUNKS);
         int regionZ = Math.floorDiv(chunkZ, REGION_CHUNKS);
         long regionKey = ChunkPos.asLong(regionX, regionZ);
@@ -59,8 +54,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         return null;
     }
 
-    @Override
-    public void tick(ClientLevel level) {
+    @Override public void tick(ClientLevel level) {
         ensureLevel(level);
         int processed = 0;
         while (processed < MAX_REGIONS_PER_TICK && !regionQueue.isEmpty()) {
@@ -69,11 +63,8 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             attemptedRegions.add(key);
             Path regionFile = regionFile(key);
             if (regionFile != null) {
-                try {
-                    decodeRegion(regionFile, ChunkPos.getX(key), ChunkPos.getZ(key));
-                } catch (IOException | RuntimeException ignored) {
-                    // A corrupt/unsupported Xaero region simply falls back to the live provider.
-                }
+                try { decodeRegion(regionFile, ChunkPos.getX(key), ChunkPos.getZ(key)); }
+                catch (IOException | RuntimeException ignored) { }
             }
             processed++;
         }
@@ -113,23 +104,19 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private void decodeRegion(Path file, int regionX, int regionZ) throws IOException {
         try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(file))) {
             ZipEntry entry;
-            boolean decodedAny = false;
             List<BlockState> palette = new ArrayList<>();
             while ((entry = zip.getNextEntry()) != null) {
                 if (entry.isDirectory()) continue;
-                DataInputStream in = new DataInputStream(zip);
-                decodedAny |= decodeRegionStream(in, regionX, regionZ, palette);
+                decodeRegionStream(new DataInputStream(zip), regionX, regionZ, palette);
                 zip.closeEntry();
             }
-            if (!decodedAny) return;
         }
     }
 
-    private boolean decodeRegionStream(DataInputStream in, int regionX, int regionZ,
-                                       List<BlockState> palette) throws IOException {
+    private void decodeRegionStream(DataInputStream in, int regionX, int regionZ,
+                                    List<BlockState> palette) throws IOException {
         int firstByte = in.read();
-        if (firstByte < 0) return false;
-
+        if (firstByte < 0) return;
         int majorVersion = 0;
         int minorVersion = -1;
         if (firstByte == 255) {
@@ -139,7 +126,6 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             firstByte = -1;
         }
 
-        boolean decodedAny = false;
         while (true) {
             int sectionCoords = firstByte == -1 ? in.read() : firstByte;
             if (sectionCoords < 0) break;
@@ -162,11 +148,9 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
                         }
                     }
                     chunkTiles.put(ChunkPos.asLong(worldChunkX, worldChunkZ), tile);
-                    decodedAny = true;
                 }
             }
         }
-        return decodedAny;
     }
 
     private int readPixel(DataInputStream in, int info, int majorVersion, int minorVersion,
@@ -174,14 +158,11 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         BlockState state = (info & 1) != 0
                 ? readBlockState(in, info, majorVersion, palette)
                 : Blocks.GRASS_BLOCK.defaultBlockState();
-
-        if ((info & 64) != 0) in.readUnsignedByte(); // legacy height byte
-
+        if ((info & 64) != 0) in.readUnsignedByte();
         if ((info & 2) != 0) {
             int amount = in.readUnsignedByte();
             for (int i = 0; i < amount; i++) readOverlay(in, majorVersion, minorVersion, palette);
         }
-
         int colorType = (info >>> 2) & 3;
         int color = 0xFF000000 | (state.getBlock().defaultMapColor().col & 0xFFFFFF);
         if (colorType == 3) {
@@ -193,7 +174,6 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     }
 
     private void readBiome(DataInputStream in, int majorVersion, int minorVersion) throws IOException {
-        // Xaero switched multiplayer map biome IDs to strings in the 1.16.2-era format.
         if (majorVersion >= 3 && minorVersion >= 1) in.readUTF();
         else in.readUnsignedByte();
     }
@@ -204,9 +184,8 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             in.readInt();
             return Blocks.GRASS_BLOCK.defaultBlockState();
         }
-        boolean paletteNew = (info & 2097152) != 0;
-        if (paletteNew) {
-            CompoundTag nbt = NbtIo.read(in, NbtAccounter.unlimitedHeap());
+        if ((info & 2097152) != 0) {
+            CompoundTag nbt = NbtIo.read(in, NbtAccounter.create(NBT_BUDGET));
             BlockState state = blockStateFromTag(nbt);
             palette.add(state);
             return state;
@@ -220,18 +199,16 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
                              List<BlockState> palette) throws IOException {
         int info = in.readInt();
         if ((info & 1) != 0) {
-            boolean paletteNew = majorVersion == 0 ? false : (info & 1024) != 0;
             if (majorVersion == 0) {
                 in.readInt();
-            } else if (paletteNew) {
-                CompoundTag nbt = NbtIo.read(in, NbtAccounter.unlimitedHeap());
+            } else if ((info & 1024) != 0) {
+                CompoundTag nbt = NbtIo.read(in, NbtAccounter.create(NBT_BUDGET));
                 palette.add(blockStateFromTag(nbt));
             } else {
                 int paletteIndex = in.readInt();
                 if (paletteIndex < 0 || paletteIndex >= palette.size()) return;
             }
         }
-
         if (minorVersion < 1 && (info & 2) != 0) in.readInt();
         int colorType = (info >>> 8) & 3;
         if (colorType == 2 || (info & 4) != 0) in.readInt();
