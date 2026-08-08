@@ -1,25 +1,19 @@
 package com.flightcomputer.client.map;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.level.ChunkPos;
 
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Normalized client-side map cache. Xaero's explored map data is the preferred source.
- * Rendering never performs disk reads or chunk scans. Xaero terrain, Xaero waypoints,
- * and Waystones are separate data layers so one cannot corrupt another.
+ * Small render-side cache of data consumed from Xaero's native map state.
+ * Xaero remains the source of truth: this class does not read/write Xaero files,
+ * scan Minecraft chunks, or maintain a persistent terrain database.
  */
 public final class TerrainMapCache {
-    private static final int FORMAT_VERSION = 2;
     private static final Map<Long, int[]> CACHE = new HashMap<>();
     private static final Set<Long> REQUESTED = new HashSet<>();
 
@@ -28,7 +22,6 @@ public final class TerrainMapCache {
     private static final WaystoneMapProvider WAYSTONE_PROVIDER = new WaystoneMapProvider();
 
     private static String activeIdentity;
-    private static Path activeCacheDirectory;
 
     private TerrainMapCache() {}
 
@@ -79,11 +72,9 @@ public final class TerrainMapCache {
             long key = entry.getKey();
             CACHE.put(key, entry.getValue());
             REQUESTED.remove(key);
-            // Do not create hundreds of tiny files per Xaero region. The real Xaero XWMC
-            // files remain the source of truth and this memory cache is rebuilt cheaply.
         }
 
-        // Marker layers are intentionally independent of terrain decoding.
+        // Marker layers remain independent from terrain and are updated on the same client tick.
         XAERO_WAYPOINT_PROVIDER.tick(level);
         WAYSTONE_PROVIDER.tick(level);
     }
@@ -105,6 +96,7 @@ public final class TerrainMapCache {
     }
 
     private static void ensureLevel(ClientLevel level) {
+        if (level == null) return;
         String identity = buildIdentity(level);
         if (identity.equals(activeIdentity)) return;
 
@@ -114,55 +106,11 @@ public final class TerrainMapCache {
         XAERO_WAYPOINT_PROVIDER.clear();
         WAYSTONE_PROVIDER.clear();
         activeIdentity = identity;
-        activeCacheDirectory = cacheDirectory(identity);
-        try { Files.createDirectories(activeCacheDirectory); } catch (IOException ignored) { }
     }
 
     private static String buildIdentity(ClientLevel level) {
-        Minecraft minecraft = Minecraft.getInstance();
-        String server = minecraft.getCurrentServer() != null
-                ? minecraft.getCurrentServer().ip
-                : "singleplayer:" + singleplayerWorldName(minecraft);
-        return sanitize(server) + "__" + sanitize(level.dimension().location().toString());
+        return level.dimension().location().toString();
     }
-
-    private static String singleplayerWorldName(Minecraft minecraft) {
-        if (minecraft.getSingleplayerServer() == null) return "unknown";
-        String name = minecraft.getSingleplayerServer().getWorldData().getLevelName();
-        return name == null || name.isBlank() ? "unknown" : name;
-    }
-
-    private static Path cacheDirectory(String identity) {
-        return Minecraft.getInstance().gameDirectory.toPath()
-                .resolve("config").resolve("flightcomputer").resolve("map_cache").resolve(identity);
-    }
-
-    // Retained as a compatibility helper for older callers that may inspect the normalized cache.
-    private static Path tilePath(long key) {
-        if (activeCacheDirectory == null) return null;
-        return activeCacheDirectory.resolve("c_" + ChunkPos.getX(key) + "_" + ChunkPos.getZ(key) + ".fct");
-    }
-
-    @SuppressWarnings("unused")
-    private static void writeTile(long key, int[] grid) {
-        if (activeCacheDirectory == null) return;
-        Path path = tilePath(key);
-        if (path == null) return;
-        Path temp = path.resolveSibling(path.getFileName() + ".tmp");
-        try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(temp))) {
-            out.writeInt(FORMAT_VERSION);
-            for (int color : grid) out.writeInt(color);
-        } catch (IOException ignored) { return; }
-        try {
-            Files.move(temp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException ignored) {
-            try { Files.move(temp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING); }
-            catch (IOException ignoredAgain) { }
-        }
-    }
-
-    private static String sanitize(String value) { return value.replaceAll("[^A-Za-z0-9._-]", "_"); }
 
     public static void clear() {
         CACHE.clear();
@@ -171,6 +119,5 @@ public final class TerrainMapCache {
         XAERO_WAYPOINT_PROVIDER.clear();
         WAYSTONE_PROVIDER.clear();
         activeIdentity = null;
-        activeCacheDirectory = null;
     }
 }
