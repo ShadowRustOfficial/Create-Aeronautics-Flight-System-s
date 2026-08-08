@@ -2,7 +2,6 @@ package com.flightcomputer.client.map;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
@@ -11,10 +10,8 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.material.MapColor;
 
 import java.io.DataInputStream;
-import java.io.EOFException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -96,8 +93,14 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private String buildIdentity(Minecraft minecraft, ClientLevel level) {
         String server = minecraft.getCurrentServer() != null
                 ? minecraft.getCurrentServer().ip
-                : "singleplayer:" + minecraft.getSingleplayerServer();
+                : "singleplayer:" + singleplayerWorldName(minecraft);
         return server + "|" + level.dimension().location();
+    }
+
+    private String singleplayerWorldName(Minecraft minecraft) {
+        if (minecraft.getSingleplayerServer() == null) return "unknown";
+        String name = minecraft.getSingleplayerServer().getWorldData().getLevelName();
+        return name == null || name.isBlank() ? "unknown" : name;
     }
 
     private Path regionFile(long regionKey) {
@@ -119,10 +122,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
                 decodedAny |= decodeRegionStream(in, regionX, regionZ, palette);
                 zip.closeEntry();
             }
-            if (!decodedAny) {
-                // Some Xaero versions may expose an empty/partial conversion; leave it to fallback.
-                return;
-            }
+            if (!decodedAny) return;
         }
     }
 
@@ -175,16 +175,11 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
 
     private int readPixel(DataInputStream in, int info, int majorVersion, int minorVersion,
                            List<BlockState> palette) throws IOException {
-        BlockState state;
-        if ((info & 1) != 0) {
-            state = readBlockState(in, info, majorVersion, palette);
-        } else {
-            state = Blocks.GRASS_BLOCK.defaultBlockState();
-        }
+        BlockState state = (info & 1) != 0
+                ? readBlockState(in, info, majorVersion, palette)
+                : Blocks.GRASS_BLOCK.defaultBlockState();
 
-        if ((info & 64) != 0) {
-            in.readUnsignedByte();
-        }
+        if ((info & 64) != 0) in.readUnsignedByte();
 
         if ((info & 2) != 0) {
             int amount = in.readUnsignedByte();
@@ -192,14 +187,12 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         }
 
         int colorType = (info >>> 2) & 3;
-        int color = 0xFF000000 | (state.getMapColor(BlockPos.ZERO).col & 0xFFFFFF);
+        int color = 0xFF000000 | (state.getBlock().defaultMapColor().col & 0xFFFFFF);
         if (colorType == 3) {
             int customColor = in.readInt();
             if (customColor != -1) color = 0xFF000000 | (customColor & 0xFFFFFF);
         }
-        if ((colorType != 0 && colorType != 3) || (info & 1048576) != 0) {
-            in.readUnsignedByte();
-        }
+        if ((colorType != 0 && colorType != 3) || (info & 1048576) != 0) in.readUnsignedByte();
         return color;
     }
 
@@ -227,13 +220,10 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
                              List<BlockState> palette) throws IOException {
         int info = in.readInt();
         if ((info & 1) != 0) readBlockState(in, info, majorVersion, palette);
-
         if (minorVersion < 1 && (info & 2) != 0) in.readInt();
-
         int colorType = (info >>> 8) & 3;
         if (colorType == 2 || (info & 4) != 0) in.readInt();
         if ((info & 8) != 0) in.readInt();
-        // Overlay light is encoded in the low four bits and needs no extra bytes.
     }
 
     private BlockState blockStateFromTag(CompoundTag tag) {
