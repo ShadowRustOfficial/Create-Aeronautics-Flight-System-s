@@ -39,7 +39,7 @@ public record FlightControllerState(
                     altitudeHold, headingHold, positionHold, velocityHold, true, true);
             case ABORT_ROUTE -> new FlightControllerState(engaged, stabiliser, flightMode,
                     altitudeHold, headingHold, positionHold, velocityHold, false, false);
-            case PULSE_DISPLAY -> this;
+            case PULSE_DISPLAY, TOGGLE_TERRAIN -> this;
         };
     }
 
