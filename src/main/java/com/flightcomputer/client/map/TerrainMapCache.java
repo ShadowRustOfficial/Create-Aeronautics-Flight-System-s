@@ -18,8 +18,9 @@ import java.util.Set;
 
 /**
  * Normalized client-side map cache. It prefers persisted Flight Computer tiles,
- * then Xaero's explored map data, and finally samples only already-loaded chunks.
- * Rendering never performs disk reads or queues work; preparation happens from tick().
+ * then Xaero's explored map data. Rendering never performs disk reads or queues work;
+ * map preparation happens from tick(). The Flight Controller map intentionally does not
+ * fall back to loading/sampling live Minecraft chunks.
  */
 public final class TerrainMapCache {
     private static final int CHUNKS_PER_TICK = 12;
@@ -55,10 +56,7 @@ public final class TerrainMapCache {
         return grid[Math.floorMod(worldZ, 16) * 16 + Math.floorMod(worldX, 16)];
     }
 
-    /**
-     * Fast render-only lookup. It never touches disk, scans chunks, or queues work.
-     * A missing tile is intentionally rendered as unexplored until the tick queue supplies it.
-     */
+    /** Fast render-only lookup. Never touches disk, chunks, or the Xaero decoder. */
     public static int cachedColorAt(ClientLevel level, int worldX, int worldZ) {
         ensureLevel(level);
         long key = ChunkPos.asLong(Math.floorDiv(worldX, 16), Math.floorDiv(worldZ, 16));
@@ -67,10 +65,7 @@ public final class TerrainMapCache {
         return grid[Math.floorMod(worldZ, 16) * 16 + Math.floorMod(worldX, 16)];
     }
 
-    /**
-     * Prepares the visible map area without doing the work from the render thread.
-     * Xaero data is preferred; live-world sampling is only a fallback for already-loaded chunks.
-     */
+    /** Prepares visible map data without doing work from render(). */
     public static void requestViewport(ClientLevel level, int centerWorldX, int centerWorldZ, int radiusBlocks) {
         ensureLevel(level);
         int minChunkX = Math.floorDiv(centerWorldX - radiusBlocks, 16);
@@ -99,6 +94,8 @@ public final class TerrainMapCache {
         ensureLevel(level);
         XAERO_PROVIDER.tick(level);
 
+        // Keep the fallback provider available for future use, but do not invoke it here.
+        // The controller map must never generate/load live terrain as a side effect of opening it.
         int processed = 0;
         while (processed < CHUNKS_PER_TICK && !QUEUE.isEmpty()) {
             long key = QUEUE.pollFirst();
@@ -125,12 +122,8 @@ public final class TerrainMapCache {
             CACHE.put(key, xaeroTile);
             writeTile(key, xaeroTile);
             DISK_CHECKED.add(key);
-            return;
         }
-
-        if (!level.hasChunk(chunkX, chunkZ)) return;
-        QUEUED.add(key);
-        QUEUE.addLast(key);
+        // If Xaero has no data yet, leave this cell unexplored. Do not load/sample a Minecraft chunk.
     }
 
     private static void ensureLevel(ClientLevel level) {
