@@ -1,5 +1,6 @@
 package com.flightcomputer.client.map;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
@@ -7,6 +8,11 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashMap;
@@ -15,35 +21,34 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Client-side, per-chunk terrain color cache for the Flight Map's terrain layer.
- * This mirrors the approach minimap mods (and vanilla's own map item) use: each
- * chunk's 16x16 surface color grid is computed once and cached, rather than
- * re-scanning blocks every frame. Newly-visible chunks are queued and processed
- * a few at a time per tick, so opening the map in a fresh area doesn't cause a
- * hitch from suddenly sampling dozens of chunks at once.
- *
- * Static/singleton by design - there's exactly one client level at a time, and
- * this cache should persist for as long as the game session does (chunks that
- * scroll out of view stay cached in case the player scrolls back).
+ * Client-side persistent terrain cache. It only samples chunks that Minecraft has
+ * already loaded; it never requests a chunk solely for the Flight Computer map.
+ * Cached 16x16 surface-color tiles survive closing the map and restarting the game.
  */
 public final class TerrainMapCache {
-
     private static final int CHUNKS_PER_TICK = 6;
+    private static final int FORMAT_VERSION = 1;
 
     private static final Map<Long, int[]> CACHE = new HashMap<>();
     private static final Set<Long> QUEUED = new HashSet<>();
+    private static final Set<Long> DISK_CHECKED = new HashSet<>();
     private static final Deque<Long> QUEUE = new ArrayDeque<>();
+
+    private static String activeIdentity;
+    private static Path activeCacheDirectory;
 
     private TerrainMapCache() {}
 
-    /**
-     * ARGB color for one world block column. Returns 0 (fully transparent) if
-     * that column's chunk isn't cached yet - the caller should treat 0 as
-     * "unknown/not loaded" and skip drawing it, or draw a placeholder.
-     */
+    /** Returns the cached color, or 0 when the tile is not known yet. */
     public static int colorAt(ClientLevel level, int worldX, int worldZ) {
+        ensureLevel(level);
         long key = ChunkPos.asLong(worldX >> 4, worldZ >> 4);
         int[] grid = CACHE.get(key);
+        if (grid == null && !DISK_CHECKED.contains(key)) {
+            DISK_CHECKED.add(key);
+            grid = readTile(key);
+            if (grid != null) CACHE.put(key, grid);
+        }
         if (grid == null) {
             enqueue(level, key);
             return 0;
@@ -53,21 +58,9 @@ public final class TerrainMapCache {
         return grid[localZ * 16 + localX];
     }
 
-    private static void enqueue(ClientLevel level, long key) {
-        if (QUEUED.contains(key)) {
-            return;
-        }
-        int chunkX = ChunkPos.getX(key);
-        int chunkZ = ChunkPos.getZ(key);
-        if (!level.hasChunk(chunkX, chunkZ)) {
-            return; // not loaded yet - try again next time colorAt() is called for it
-        }
-        QUEUED.add(key);
-        QUEUE.addLast(key);
-    }
-
-    /** Call once per client tick while the map screen is open. */
+    /** Call once per client tick while the map is open. */
     public static void tick(ClientLevel level) {
+        ensureLevel(level);
         int processed = 0;
         while (processed < CHUNKS_PER_TICK && !QUEUE.isEmpty()) {
             long key = QUEUE.pollFirst();
@@ -75,10 +68,22 @@ public final class TerrainMapCache {
             int chunkX = ChunkPos.getX(key);
             int chunkZ = ChunkPos.getZ(key);
             if (level.hasChunk(chunkX, chunkZ)) {
-                CACHE.put(key, computeChunk(level, chunkX, chunkZ));
+                int[] grid = computeChunk(level, chunkX, chunkZ);
+                CACHE.put(key, grid);
+                DISK_CHECKED.add(key);
+                writeTile(key, grid);
                 processed++;
             }
         }
+    }
+
+    private static void enqueue(ClientLevel level, long key) {
+        if (QUEUED.contains(key) || CACHE.containsKey(key)) return;
+        int chunkX = ChunkPos.getX(key);
+        int chunkZ = ChunkPos.getZ(key);
+        if (!level.hasChunk(chunkX, chunkZ)) return;
+        QUEUED.add(key);
+        QUEUE.addLast(key);
     }
 
     private static int[] computeChunk(ClientLevel level, int chunkX, int chunkZ) {
@@ -102,14 +107,81 @@ public final class TerrainMapCache {
         return grid;
     }
 
-    /** Drops cached chunks that are no longer loaded, so re-entering an area re-samples it. */
-    public static void invalidateUnloaded(ClientLevel level) {
-        CACHE.keySet().removeIf(key -> !level.hasChunk(ChunkPos.getX(key), ChunkPos.getZ(key)));
+    private static void ensureLevel(ClientLevel level) {
+        String identity = buildIdentity(level);
+        if (identity.equals(activeIdentity)) return;
+        CACHE.clear();
+        QUEUED.clear();
+        DISK_CHECKED.clear();
+        QUEUE.clear();
+        activeIdentity = identity;
+        activeCacheDirectory = cacheDirectory(level, identity);
+        try { Files.createDirectories(activeCacheDirectory); } catch (IOException ignored) { }
     }
 
+    private static String buildIdentity(ClientLevel level) {
+        Minecraft minecraft = Minecraft.getInstance();
+        String server = minecraft.getCurrentServer() != null
+                ? minecraft.getCurrentServer().ip
+                : "singleplayer:" + level.getLevelData().getLevelName();
+        String dimension = level.dimension().location().toString();
+        return sanitize(server) + "__" + sanitize(dimension);
+    }
+
+    private static Path cacheDirectory(ClientLevel level, String identity) {
+        Path root = Minecraft.getInstance().gameDirectory.toPath()
+                .resolve("config").resolve("flightcomputer").resolve("map_cache");
+        return root.resolve(identity);
+    }
+
+    private static Path tilePath(long key) {
+        return activeCacheDirectory.resolve("c_" + ChunkPos.getX(key) + "_" + ChunkPos.getZ(key) + ".fct");
+    }
+
+    private static int[] readTile(long key) {
+        if (activeCacheDirectory == null) return null;
+        Path path = tilePath(key);
+        if (!Files.isRegularFile(path)) return null;
+        try (DataInputStream in = new DataInputStream(Files.newInputStream(path))) {
+            if (in.readInt() != FORMAT_VERSION) return null;
+            int[] grid = new int[256];
+            for (int i = 0; i < grid.length; i++) grid[i] = in.readInt();
+            return grid;
+        } catch (IOException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private static void writeTile(long key, int[] grid) {
+        if (activeCacheDirectory == null) return;
+        Path path = tilePath(key);
+        Path temp = path.resolveSibling(path.getFileName() + ".tmp");
+        try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(temp))) {
+            out.writeInt(FORMAT_VERSION);
+            for (int color : grid) out.writeInt(color);
+        } catch (IOException ignored) {
+            return;
+        }
+        try {
+            Files.move(temp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException ignored) {
+            try { Files.move(temp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING); }
+            catch (IOException ignoredAgain) { }
+        }
+    }
+
+    private static String sanitize(String value) {
+        return value.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    /** Clears only the in-memory state; persisted tiles remain available next session. */
     public static void clear() {
         CACHE.clear();
         QUEUE.clear();
         QUEUED.clear();
+        DISK_CHECKED.clear();
+        activeIdentity = null;
+        activeCacheDirectory = null;
     }
 }
