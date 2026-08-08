@@ -30,12 +30,12 @@ public final class FlightComputerConfig {
     static {
         ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
         builder.push("flight_controller");
-        ENERGY_CAPACITY = builder.comment("Maximum FE stored by one Flight Controller.").defineInRange("energyCapacity", 5000000, 1, Integer.MAX_VALUE);
-        ENERGY_INPUT_PER_TICK = builder.comment("Maximum FE received per tick.").defineInRange("energyInputPerTick", 12000, 1, Integer.MAX_VALUE);
-        IDLE_OPERATION_COST = builder.comment("FE consumed per tick while the Flight Controller is powered but not actively engaged. Tuned around ten Mekanism Advanced Solar Generators at default output.").defineInRange("idleOperationCost", 1200, 0, Integer.MAX_VALUE);
-        BASE_OPERATION_COST = builder.comment("Additional FE consumed per tick while the controller is actively engaged.").defineInRange("baseOperationCost", 2400, 0, Integer.MAX_VALUE);
-        TERRAIN_OPERATION_COST = builder.comment("Additional FE/t consumed while terrain rendering is enabled. Turning terrain off reduces the controller load.").defineInRange("terrainOperationCost", 600, 0, Integer.MAX_VALUE);
-        ADVANCED_COOLING_EXTRA_COST = builder.comment("Additional FE/t consumed by Advanced Cooling while operating.").defineInRange("advancedCoolingExtraCost", 1200, 0, Integer.MAX_VALUE);
+        ENERGY_CAPACITY = builder.comment("Maximum FE stored by one Flight Controller. Default: 5,000,000 FE.").defineInRange("energyCapacity", 5000000, 1, Integer.MAX_VALUE);
+        ENERGY_INPUT_PER_TICK = builder.comment("Maximum FE received per tick from the rear-face energy capability.").defineInRange("energyInputPerTick", 12000, 1, Integer.MAX_VALUE);
+        IDLE_OPERATION_COST = builder.comment("FE/t consumed while the Flight Controller is powered. Tuned to require roughly ten Mekanism Advanced Solar Generators at their default direct-sun output just to cover the powered idle load.").defineInRange("idleOperationCost", 3000, 0, Integer.MAX_VALUE);
+        BASE_OPERATION_COST = builder.comment("Additional FE/t consumed while the controller is actively engaged.").defineInRange("baseOperationCost", 1500, 0, Integer.MAX_VALUE);
+        TERRAIN_OPERATION_COST = builder.comment("Additional FE/t consumed while MAP: ON terrain rendering is enabled. MAP: OFF removes this load.").defineInRange("terrainOperationCost", 1000, 0, Integer.MAX_VALUE);
+        ADVANCED_COOLING_EXTRA_COST = builder.comment("Additional FE/t consumed by Advanced Cooling while operating continuously.").defineInRange("advancedCoolingExtraCost", 2500, 0, Integer.MAX_VALUE);
         MEDIUM_THRESHOLD = builder.comment("Percent energy remaining at which the Medium warning begins.").defineInRange("mediumThresholdPercent", 50, 1, 99);
         LOW_THRESHOLD = builder.comment("Percent energy remaining at which Low power begins.").defineInRange("lowThresholdPercent", 25, 1, 98);
         CRITICAL_THRESHOLD = builder.comment("Percent energy remaining at which Critical power begins.").defineInRange("criticalThresholdPercent", 10, 1, 97);
