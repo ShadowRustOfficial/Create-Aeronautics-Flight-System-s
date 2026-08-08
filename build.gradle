@@ -27,6 +27,13 @@ repositories {
             includeGroup "software.bernie.geckolib"
         }
     }
+    maven {
+        name = "Twelve Iterations"
+        url = "https://maven.twelveiterations.com/repository/maven-public/"
+        content {
+            includeGroup "net.blay09.mods"
+        }
+    }
 }
 
 runs {
@@ -63,6 +70,11 @@ dependencies {
     // GeckoLib - block/entity animation engine. Replaces hand-coded ModelPart rotation for
     // the Flight Controller's buttons/dials with real keyframe animations authored in Blockbench.
     implementation "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
+
+    // Waystones 1.21.1 API. Compile-only: the user's existing Waystones jar remains the
+    // runtime provider. The integration is guarded at runtime so the base mod still works
+    // when Waystones is absent.
+    compileOnly "net.blay09.mods:waystones-common:21.1.40"
 }
 
 tasks.withType(ProcessResources).configureEach {
