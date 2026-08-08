@@ -62,6 +62,10 @@ public final class TerrainMapCache {
         int minChunkZ = Math.floorDiv(centerWorldZ - radiusBlocks, 16);
         int maxChunkZ = Math.floorDiv(centerWorldZ + radiusBlocks, 16);
 
+        // Always queue the player's current region first so the first known-good Xaero tile
+        // can reach the renderer before the rest of the viewport is populated.
+        requestChunk(level, ChunkPos.asLong(Math.floorDiv(centerWorldX, 16), Math.floorDiv(centerWorldZ, 16)));
+
         for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
             for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
                 long key = ChunkPos.asLong(chunkX, chunkZ);
@@ -79,6 +83,17 @@ public final class TerrainMapCache {
         ensureLevel(level);
         XAERO_PROVIDER.tick(level);
 
+        // The provider decodes asynchronously from the renderer's perspective: decoding occurs
+        // during tick(), then the newly decoded chunk tiles are transferred into our normalized
+        // cache here. The old implementation never performed this transfer, so REQUESTED tiles
+        // could remain permanently absent even after a successful Xaero decode.
+        for (Map.Entry<Long, int[]> entry : XAERO_PROVIDER.drainDecodedTiles().entrySet()) {
+            long key = entry.getKey();
+            CACHE.put(key, entry.getValue());
+            REQUESTED.remove(key);
+            writeTile(key, entry.getValue());
+        }
+
         int promoted = 0;
         Iterator<Long> iterator = REQUESTED.iterator();
         while (iterator.hasNext() && promoted < MAX_PENDING_PROMOTIONS_PER_TICK) {
@@ -90,6 +105,11 @@ public final class TerrainMapCache {
             iterator.remove();
             promoted++;
         }
+    }
+
+    /** Current Xaero integration diagnostics, primarily for troubleshooting/logging. */
+    public static String xaeroDiagnostics() {
+        return XAERO_PROVIDER.diagnostics();
     }
 
     private static void requestChunk(ClientLevel level, long key) {
