@@ -84,7 +84,6 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         Minecraft minecraft = Minecraft.getInstance();
         String identity = buildIdentity(minecraft, level);
         if (identity.equals(activeIdentity)) return;
-
         clear();
         activeIdentity = identity;
         activeMap = XaeroWorldMapLocator.locate(level).orElse(null);
@@ -132,7 +131,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         if (firstByte < 0) return false;
 
         int majorVersion = 0;
-        int minorVersion = 0;
+        int minorVersion = -1;
         if (firstByte == 255) {
             int fullVersion = in.readInt();
             minorVersion = fullVersion & 0xFFFF;
@@ -145,7 +144,6 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             int sectionCoords = firstByte == -1 ? in.read() : firstByte;
             if (sectionCoords < 0) break;
             firstByte = -1;
-
             int sectionX = sectionCoords >>> 4;
             int sectionZ = sectionCoords & 15;
             if (sectionX >= 8 || sectionZ >= 8) break;
@@ -154,11 +152,9 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
                 for (int chunkZ = 0; chunkZ < CHUNKS_PER_SECTION; chunkZ++) {
                     int firstPixelInfo = in.readInt();
                     if (firstPixelInfo == -1) continue;
-
                     int worldChunkX = regionX * REGION_CHUNKS + sectionX * CHUNKS_PER_SECTION + chunkX;
                     int worldChunkZ = regionZ * REGION_CHUNKS + sectionZ * CHUNKS_PER_SECTION + chunkZ;
                     int[] tile = new int[256];
-
                     for (int x = 0; x < 16; x++) {
                         for (int z = 0; z < 16; z++) {
                             int info = (x == 0 && z == 0) ? firstPixelInfo : in.readInt();
@@ -179,7 +175,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
                 ? readBlockState(in, info, majorVersion, palette)
                 : Blocks.GRASS_BLOCK.defaultBlockState();
 
-        if ((info & 64) != 0) in.readUnsignedByte();
+        if ((info & 64) != 0) in.readUnsignedByte(); // legacy height byte
 
         if ((info & 2) != 0) {
             int amount = in.readUnsignedByte();
@@ -192,8 +188,14 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             int customColor = in.readInt();
             if (customColor != -1) color = 0xFF000000 | (customColor & 0xFFFFFF);
         }
-        if ((colorType != 0 && colorType != 3) || (info & 1048576) != 0) in.readUnsignedByte();
+        if ((colorType != 0 && colorType != 3) || (info & 1048576) != 0) readBiome(in, majorVersion, minorVersion);
         return color;
+    }
+
+    private void readBiome(DataInputStream in, int majorVersion, int minorVersion) throws IOException {
+        // Xaero switched multiplayer map biome IDs to strings in the 1.16.2-era format.
+        if (majorVersion >= 3 && minorVersion >= 1) in.readUTF();
+        else in.readUnsignedByte();
     }
 
     private BlockState readBlockState(DataInputStream in, int info, int majorVersion,
@@ -202,7 +204,6 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             in.readInt();
             return Blocks.GRASS_BLOCK.defaultBlockState();
         }
-
         boolean paletteNew = (info & 2097152) != 0;
         if (paletteNew) {
             CompoundTag nbt = NbtIo.read(in, NbtAccounter.unlimitedHeap());
@@ -210,7 +211,6 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
             palette.add(state);
             return state;
         }
-
         int paletteIndex = in.readInt();
         if (paletteIndex < 0 || paletteIndex >= palette.size()) return Blocks.GRASS_BLOCK.defaultBlockState();
         return palette.get(paletteIndex);
@@ -219,7 +219,19 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
     private void readOverlay(DataInputStream in, int majorVersion, int minorVersion,
                              List<BlockState> palette) throws IOException {
         int info = in.readInt();
-        if ((info & 1) != 0) readBlockState(in, info, majorVersion, palette);
+        if ((info & 1) != 0) {
+            boolean paletteNew = majorVersion == 0 ? false : (info & 1024) != 0;
+            if (majorVersion == 0) {
+                in.readInt();
+            } else if (paletteNew) {
+                CompoundTag nbt = NbtIo.read(in, NbtAccounter.unlimitedHeap());
+                palette.add(blockStateFromTag(nbt));
+            } else {
+                int paletteIndex = in.readInt();
+                if (paletteIndex < 0 || paletteIndex >= palette.size()) return;
+            }
+        }
+
         if (minorVersion < 1 && (info & 2) != 0) in.readInt();
         int colorType = (info >>> 8) & 3;
         if (colorType == 2 || (info & 4) != 0) in.readInt();
@@ -238,8 +250,7 @@ public final class XaeroMapDataProvider implements FlightMapDataProvider {
         }
     }
 
-    @Override
-    public void clear() {
+    @Override public void clear() {
         chunkTiles.clear();
         queuedRegions.clear();
         attemptedRegions.clear();
