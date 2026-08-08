@@ -3,6 +3,7 @@ package com.flightcomputer.client.gui;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.avionics.FlightControllerAction;
 import com.flightcomputer.avionics.FlightControllerState;
+import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.client.map.TerrainMapCache;
 import com.flightcomputer.map.MapMarker;
 import com.flightcomputer.map.MarkerCategory;
@@ -24,6 +25,8 @@ public final class NavigationConsoleScreen extends Screen {
     /** Screen-pixel spacing between terrain samples - see TerrainMapCache for the actual cache. */
     private static final int TERRAIN_STEP = 3;
     private static final int UNLOADED_COLOR = 0xFF16202A;
+    private static final int STATUS_ON_COLOR = 0xFF55FF55;
+    private static final int STATUS_OFFLINE_COLOR = 0xFFFF5555;
 
     private final BlockPos controllerPos;
     private Tab tab = Tab.MAP;
@@ -86,13 +89,32 @@ public final class NavigationConsoleScreen extends Screen {
         return be instanceof FlightControllerBlockEntity fc ? fc : null;
     }
 
+    private boolean controllerPowered() {
+        if (controller == null) return false;
+        return controller.getEnergyStorage().getEnergyStored() > 0
+                && controller.getPowerState() != PowerState.NO_POWER;
+    }
+
+    private String linkStatus() {
+        if (!controllerPowered()) return "OFFLINE";
+        return controller != null && controller.getLinkedControllerId() != null ? "CONNECTED" : "NOT LINKED";
+    }
+
+    private int statusColor(boolean online) {
+        return online ? STATUS_ON_COLOR : STATUS_OFFLINE_COLOR;
+    }
+
     @Override public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         int left = Math.max(10, (width - 640) / 2);
         int top = 20;
         g.fill(left - 8, top - 8, left + 648, Math.min(height - 20, top + 340), 0xE610141A);
         g.fill(left - 8, top + 24, left + 648, Math.min(height - 20, top + 340), 0xE30B0E13);
+
+        boolean powered = controllerPowered();
+        String linkStatus = linkStatus();
         g.drawString(font, "◈ NAVIGATION CONSOLE", left, top - 2, 0xFFFFFFFF);
-        g.drawString(font, "LINK: FLT-01  ●", left + 500, top - 2, 0xFF55FFAA);
+        g.drawString(font, "LINK: " + (powered ? linkStatus : "OFFLINE"), left + 500, top - 2,
+                statusColor(powered));
 
         switch (tab) {
             case MAP -> renderMap(g, left, top + 42);
@@ -201,9 +223,13 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void renderDiagnostics(GuiGraphics g, int left, int top) {
+        boolean powered = controllerPowered();
+        String linkStatus = linkStatus();
+        int statusColor = statusColor(powered);
+
         g.drawString(font, "DIAGNOSTICS", left + 20, top + 10, 0xFFFFFFFF);
-        g.drawString(font, "FLIGHT COMPUTER     ● OPERATIONAL", left + 20, top + 40, 0xFF55FF55);
-        g.drawString(font, "LINK                ● CONNECTED", left + 20, top + 62, 0xFF55FF55);
+        g.drawString(font, "FLIGHT COMPUTER     ● " + (powered ? "OPERATIONAL" : "OFFLINE"), left + 20, top + 40, statusColor);
+        g.drawString(font, "LINK                ● " + (powered ? linkStatus : "OFFLINE"), left + 20, top + 62, statusColor);
         if (minecraft != null && minecraft.player != null) {
             g.drawString(font, "POSITION", left + 20, top + 100, 0xFFFFFFFF);
             g.drawString(font, String.format("X %8.2f", minecraft.player.getX()), left + 20, top + 120, 0xFFBFC8CC);
