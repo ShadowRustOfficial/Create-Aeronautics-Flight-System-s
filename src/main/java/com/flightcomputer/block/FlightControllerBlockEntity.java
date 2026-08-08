@@ -85,7 +85,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
      * layered on top later without allowing a client to bypass power or thermal protection.
      */
     public boolean isOperationPermitted(FlightControllerAction action) {
-        if (thermalShutdown || powerState == PowerState.NO_POWER) return false;
+        if (thermalShutdown || powerState == PowerState.NO_POWER || energyStorage.getEnergyStored() <= 0) return false;
         // LOW/CRITICAL restrictions intentionally remain extensible rather than hard-coding
         // future nonessential-function policy into every action handler.
         return true;
