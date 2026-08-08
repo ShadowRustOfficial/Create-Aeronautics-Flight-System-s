@@ -10,4 +10,8 @@ public record FlightControllerActionResult(
     public static FlightControllerActionResult accepted(FlightControllerState state, FlightControllerAction action, String animationKey) {
         return new FlightControllerActionResult(true, state, action, animationKey);
     }
+
+    public static FlightControllerActionResult rejected(FlightControllerState state, FlightControllerAction action, String reason) {
+        return new FlightControllerActionResult(false, state, action, reason);
+    }
 }

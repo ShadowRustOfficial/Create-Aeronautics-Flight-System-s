@@ -4,7 +4,7 @@ import net.minecraft.world.item.Item;
 
 /** Marker item for Flight Controller cooling upgrade tiers. */
 public class CoolingUpgradeItem extends Item {
-    public enum Tier { BASIC, IMPROVED, ADVANCED }
+    public enum Tier { NONE, BASIC, IMPROVED, ADVANCED }
 
     private final Tier tier;
 
