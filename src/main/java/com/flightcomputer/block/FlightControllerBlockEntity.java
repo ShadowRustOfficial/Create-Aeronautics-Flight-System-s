@@ -48,6 +48,8 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     private UUID controllerId = UUID.randomUUID();
     /** Explicit future link target. Never populated automatically. */
     private UUID linkedControllerId;
+    /** Per-controller terrain rendering preference. */
+    private boolean terrainEnabled = true;
 
     private FlightControllerState controllerState = FlightControllerState.DEFAULT;
     private FlightControllerAction lastAction = FlightControllerAction.PULSE_DISPLAY;
@@ -67,6 +69,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     public FlightControllerBlockEntity(BlockPos pos, BlockState state) { super(ModBlockEntities.FLIGHT_CONTROLLER.get(), pos, state); }
     public UUID getControllerId() { return controllerId; }
     public UUID getLinkedControllerId() { return linkedControllerId; }
+    public boolean isTerrainEnabled() { return terrainEnabled; }
     public FlightControllerState getControllerState() { return controllerState; }
     public boolean isEngaged() { return controllerState.engaged(); }
     public boolean isStabiliser() { return controllerState.stabiliser(); }
@@ -80,14 +83,8 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     public boolean isThermalShutdown() { return thermalShutdown; }
     public boolean isFunctionalityReduced() { return powerState == PowerState.LOW || powerState == PowerState.CRITICAL; }
 
-    /**
-     * Server-authoritative gate for actual controller operations. Animation/UI feedback can be
-     * layered on top later without allowing a client to bypass power or thermal protection.
-     */
     public boolean isOperationPermitted(FlightControllerAction action) {
         if (thermalShutdown || powerState == PowerState.NO_POWER || energyStorage.getEnergyStored() <= 0) return false;
-        // LOW/CRITICAL restrictions intentionally remain extensible rather than hard-coding
-        // future nonessential-function policy into every action handler.
         return true;
     }
 
@@ -99,7 +96,11 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
                     thermalShutdown ? "THERMAL_SHUTDOWN" : "NO_POWER");
         }
 
-        controllerState = controllerState.apply(action);
+        if (action == FlightControllerAction.TOGGLE_TERRAIN) {
+            terrainEnabled = !terrainEnabled;
+        } else {
+            controllerState = controllerState.apply(action);
+        }
         lastAction = action;
         switch (action) {
             case CYCLE_MODE -> modePulseId++;
@@ -110,7 +111,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         return FlightControllerActionResult.accepted(controllerState, action, FlightControllerAnimationBridge.forAction(action, controllerState));
     }
 
-    /** Server ticker: consumes FE, updates power state, temperature and thermal protection. */
+    /** Server ticker: consumes FE continuously, updates power state, temperature and thermal protection. */
     public void serverTick() {
         if (level == null || level.isClientSide) return;
 
@@ -118,28 +119,32 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         CoolingUpgradeItem.Tier cooling = getCoolingTier();
         boolean advancedCooling = cooling == CoolingUpgradeItem.Tier.ADVANCED;
         boolean operating = controllerState.engaged() && !thermalShutdown;
-        int cost = FlightComputerConfig.BASE_OPERATION_COST.get()
-                + (advancedCooling ? FlightComputerConfig.ADVANCED_COOLING_EXTRA_COST.get() : 0);
+        int cost = FlightComputerConfig.IDLE_OPERATION_COST.get()
+                + (terrainEnabled ? FlightComputerConfig.TERRAIN_OPERATION_COST.get() : 0)
+                + (operating ? FlightComputerConfig.BASE_OPERATION_COST.get() : 0)
+                + (operating && advancedCooling ? FlightComputerConfig.ADVANCED_COOLING_EXTRA_COST.get() : 0);
 
-        if (operating) {
-            if (energyStorage.getEnergyStored() >= cost) {
-                energyStorage.extractEnergy(cost, false);
-                temperature += FlightComputerConfig.BASE_HEAT_PER_TICK.get();
-                temperature = Math.max(0.0D, temperature - coolingRate(cooling));
-                if (advancedCooling) {
-                    temperature = Math.min(temperature,
-                            FlightComputerConfig.HEAT_CAPACITY.get() * FlightComputerConfig.ADVANCED_COOLING_MAX_TEMPERATURE.get());
-                }
-                if (energyStorage.getEnergyStored() <= 0) {
-                    controllerState = controllerState.apply(FlightControllerAction.TOGGLE_ENGAGED);
-                }
-            } else {
+        if (energyStorage.getEnergyStored() >= cost) {
+            energyStorage.extractEnergy(cost, false);
+        } else {
+            energyStorage.extractEnergy(energyStorage.getEnergyStored(), false);
+            if (controllerState.engaged()) {
                 controllerState = controllerState.apply(FlightControllerAction.TOGGLE_ENGAGED);
+            }
+        }
+
+        if (operating && energyStorage.getEnergyStored() > 0) {
+            temperature += FlightComputerConfig.BASE_HEAT_PER_TICK.get();
+            temperature = Math.max(0.0D, temperature - coolingRate(cooling));
+            if (advancedCooling) {
+                temperature = Math.min(temperature,
+                        FlightComputerConfig.HEAT_CAPACITY.get() * FlightComputerConfig.ADVANCED_COOLING_MAX_TEMPERATURE.get());
             }
         } else {
             temperature = Math.max(0.0D, temperature - coolingRate(cooling));
         }
 
+        updatePowerState();
         updateThermalState();
         if (!advancedCooling && temperature >= FlightComputerConfig.HEAT_CAPACITY.get() * FlightComputerConfig.THERMAL_SHUTDOWN_THRESHOLD.get()) {
             thermalShutdown = true;
@@ -196,7 +201,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         }
     }
 
-    /** Transition hook: alarms/UI are invoked once per actual state change, never every tick. */
     protected void onPowerStateChanged(PowerState previous, PowerState current) {
         switch (current) {
             case MEDIUM -> onMediumPowerWarning();
@@ -232,7 +236,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         }
     }
 
-    /** Thermal transition hook: warning/alarm/shutdown/recovery are event-driven. */
     protected void onThermalStateChanged(ThermalState previous, ThermalState current) {
         switch (current) {
             case OVERHEAT_WARNING -> onOverheatWarning();
@@ -246,7 +249,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     protected void onThermalShutdown() { }
     protected void onThermalRecovery() { }
 
-    /** Explicit-link foundation for the Flight Link Tool. No automatic/proximity linking occurs. */
     public boolean linkTo(UUID targetControllerId) {
         if (targetControllerId == null || controllerId.equals(targetControllerId)) return false;
         linkedControllerId = targetControllerId;
@@ -270,6 +272,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         super.saveAdditional(tag, registries);
         tag.putUUID("ControllerId", controllerId);
         if (linkedControllerId != null) tag.putUUID("LinkedControllerId", linkedControllerId);
+        tag.putBoolean("TerrainEnabled", terrainEnabled);
         controllerState.save(tag);
         tag.putString("LastAction", lastAction.name());
         tag.putInt("ModePulseId", modePulseId);
@@ -288,6 +291,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         if (tag.hasUUID("ControllerId")) controllerId = tag.getUUID("ControllerId");
         else controllerId = UUID.randomUUID();
         linkedControllerId = tag.hasUUID("LinkedControllerId") ? tag.getUUID("LinkedControllerId") : null;
+        terrainEnabled = !tag.contains("TerrainEnabled") || tag.getBoolean("TerrainEnabled");
         controllerState = FlightControllerState.load(tag);
         try { lastAction = FlightControllerAction.valueOf(tag.getString("LastAction")); } catch (IllegalArgumentException ignored) { lastAction = FlightControllerAction.PULSE_DISPLAY; }
         try { powerState = PowerState.valueOf(tag.getString("PowerState")); } catch (IllegalArgumentException ignored) { powerState = PowerState.NORMAL; }
