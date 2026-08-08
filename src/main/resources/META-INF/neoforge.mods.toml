@@ -27,3 +27,13 @@ displayName="${mod_name}"
     versionRange="[4.8.4,)"
     ordering="AFTER"
     side="BOTH"
+
+# Flight Computer's map terrain integration consumes Xaero World Map's native
+# in-memory MapProcessor/MapTile textures. Keep this exact client dependency
+# aligned with the supplied 1.21.1 / 1.44.2 Xaero World Map build.
+[[dependencies.'${mod_id}']]
+    modId="xaeroworldmap"
+    type="required"
+    versionRange="[1.44.2,1.44.3)"
+    ordering="AFTER"
+    side="CLIENT"
