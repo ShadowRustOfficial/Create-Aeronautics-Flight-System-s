@@ -46,11 +46,16 @@ public final class XaeroMapHost {
         graphics.enableScissor(left, top, left + width, top + height);
         graphics.pose().pushPose();
         graphics.pose().translate(left - offsetX, top - offsetY, 0.0D);
-        try { delegate.render(graphics, delegateMouseX, delegateMouseY, partialTick); }
-        catch (RuntimeException exception) {
+        try {
+            delegate.render(graphics, delegateMouseX, delegateMouseY, partialTick);
+        } catch (RuntimeException exception) {
             status = "Xaero native map render failed: " + exception.getClass().getSimpleName() + " - " + safeMessage(exception);
         } finally {
             graphics.pose().popPose();
+            // Xaero owns its internal rendering state. Always restore the host viewport's
+            // scissor immediately after the delegate so later Flight Computer elements
+            // cannot inherit an altered scissor state.
+            graphics.enableScissor(left, top, left + width, top + height);
             graphics.disableScissor();
         }
     }
@@ -74,11 +79,10 @@ public final class XaeroMapHost {
         return delegate != null && delegate.mouseDragged(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), button, dragX, dragY);
     }
 
+    /** Zoom is intentionally disabled in the Flight Computer. The map is fixed at 1x. */
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY,
                                  int left, int top, int width, int height) {
-        if (!inside(mouseX, mouseY, left, top, width, height)) return false;
-        ensureDelegate(width, height);
-        return delegate != null && delegate.mouseScrolled(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), scrollX, scrollY);
+        return false;
     }
 
     // Shared static forwarding API used by XaeroNavigationInputBridge. Keep this separate
@@ -104,11 +108,10 @@ public final class XaeroMapHost {
                 toDelegateYStatic(mouseY, top, height, screen.height), button, dragX, dragY);
     }
 
+    /** Zoom input is deliberately consumed by the host layer and never reaches Xaero. */
     public static boolean forwardMouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY,
                                                int left, int top, int width, int height) {
-        Screen screen = nativeScreen;
-        return screen != null && screen.mouseScrolled(toDelegateXStatic(mouseX, left, width, screen.width),
-                toDelegateYStatic(mouseY, top, height, screen.height), scrollX, scrollY);
+        return false;
     }
 
     /** Recenters Xaero's live camera using its normal drag operation. */
