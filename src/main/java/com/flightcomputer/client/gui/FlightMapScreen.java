@@ -90,7 +90,6 @@ public final class FlightMapScreen extends Screen {
         String label = switch (category) {
             case XAERO_WAYPOINT -> "XAERO WP";
             case FLIGHT_WAYPOINT -> "FLIGHT WP";
-            case WAYSTONE -> "WAYSTONES";
             case CLAIMED_SUBLEVEL -> "CLAIMS";
             case LANDING_PAD -> "PADS";
         };
