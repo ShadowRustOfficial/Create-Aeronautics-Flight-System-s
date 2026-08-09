@@ -3,45 +3,51 @@ package com.flightcomputer.client.map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.network.chat.Component;
 import xaero.map.MapProcessor;
-import xaero.map.WorldMap;
 import xaero.map.WorldMapSession;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.net.URI;
-import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.Enumeration;
-import java.util.List;
-import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
-
 /**
- * Hosts Xaero's own World Map screen inside the Flight Computer map viewport.
+ * Hosts the actual GuiMap instance created by Xaero inside the Flight Computer viewport.
  *
- * Flight Computer does not recreate Xaero terrain. Xaero remains responsible for
- * selecting the active map, loading its map tiles, camera state and rendering the
- * terrain. This class only supplies Xaero's live session/processor to the native
- * screen and forwards the screen lifecycle/input calls into the viewport.
+ * No Xaero screen is constructed here. Xaero creates its normal native GuiMap through
+ * its own key/opening path; the bridge captures that live instance and the Flight Computer
+ * renders the real screen into a scissored viewport. This keeps Xaero responsible for
+ * terrain, map tiles, camera state, zoom, pan and dimension handling.
  */
 public final class XaeroMapHost {
+    private static volatile Screen nativeScreen;
+
     private Screen delegate;
-    private Class<? extends Screen> delegateType;
-    private String status = "Xaero map host not initialised.";
-    private int viewportWidth;
-    private int viewportHeight;
+    private boolean initialized;
+    private int delegateWidth;
+    private int delegateHeight;
+    private String status = "Waiting for Xaero World Map native screen.";
+
+    public static void captureNativeScreen(Screen screen) {
+        if (screen == null) return;
+        String name = screen.getClass().getName();
+        if ("xaero.map.gui.GuiMap".equals(name)) {
+            nativeScreen = screen;
+        }
+    }
+
+    public static void clearNativeScreen() {
+        nativeScreen = null;
+    }
+
+    public static Screen getCapturedNativeScreen() {
+        return nativeScreen;
+    }
 
     public void tick(int width, int height) {
         ensureDelegate(width, height);
-        if (delegate != null) delegate.tick();
+        if (delegate != null) {
+            try {
+                delegate.tick();
+            } catch (RuntimeException exception) {
+                status = "Xaero native map tick failed: " + exception.getClass().getSimpleName();
+            }
+        }
     }
 
     public void render(GuiGraphics graphics, int left, int top, int width, int height,
@@ -49,11 +55,21 @@ public final class XaeroMapHost {
         ensureDelegate(width, height);
         if (delegate == null) return;
 
+        int fullWidth = Math.max(1, delegate.width);
+        int fullHeight = Math.max(1, delegate.height);
+        double offsetX = (fullWidth - width) / 2.0D;
+        double offsetY = (fullHeight - height) / 2.0D;
+        int delegateMouseX = (int) Math.round(mouseX - left + offsetX);
+        int delegateMouseY = (int) Math.round(mouseY - top + offsetY);
+
         graphics.enableScissor(left, top, left + width, top + height);
         graphics.pose().pushPose();
-        graphics.pose().translate(left, top, 0.0D);
+        graphics.pose().translate(left - offsetX, top - offsetY, 0.0D);
         try {
-            delegate.render(graphics, mouseX - left, mouseY - top, partialTick);
+            delegate.render(graphics, delegateMouseX, delegateMouseY, partialTick);
+        } catch (RuntimeException exception) {
+            status = "Xaero native map render failed: " + exception.getClass().getSimpleName()
+                    + " - " + safeMessage(exception);
         } finally {
             graphics.pose().popPose();
             graphics.disableScissor();
@@ -64,14 +80,16 @@ public final class XaeroMapHost {
                                 int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseClicked(mouseX - left, mouseY - top, button);
+        return delegate != null && delegate.mouseClicked(toDelegateX(mouseX, left, width),
+                toDelegateY(mouseY, top, height), button);
     }
 
     public boolean mouseReleased(double mouseX, double mouseY, int button,
                                  int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseReleased(mouseX - left, mouseY - top, button);
+        return delegate != null && delegate.mouseReleased(toDelegateX(mouseX, left, width),
+                toDelegateY(mouseY, top, height), button);
     }
 
     public boolean mouseDragged(double mouseX, double mouseY, int button,
@@ -79,46 +97,89 @@ public final class XaeroMapHost {
                                 int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseDragged(mouseX - left, mouseY - top, button, dragX, dragY);
+        return delegate != null && delegate.mouseDragged(toDelegateX(mouseX, left, width),
+                toDelegateY(mouseY, top, height), button, dragX, dragY);
     }
 
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY,
                                  int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseScrolled(mouseX - left, mouseY - top, scrollX, scrollY);
+        return delegate != null && delegate.mouseScrolled(toDelegateX(mouseX, left, width),
+                toDelegateY(mouseY, top, height), scrollX, scrollY);
+    }
+
+    public static boolean forwardMouseClicked(double mouseX, double mouseY, int button,
+                                              int left, int top, int width, int height) {
+        Screen screen = nativeScreen;
+        return screen != null && screen.mouseClicked(
+                toDelegateXStatic(mouseX, left, width, screen.width),
+                toDelegateYStatic(mouseY, top, height, screen.height), button);
+    }
+
+    public static boolean forwardMouseReleased(double mouseX, double mouseY, int button,
+                                               int left, int top, int width, int height) {
+        Screen screen = nativeScreen;
+        return screen != null && screen.mouseReleased(
+                toDelegateXStatic(mouseX, left, width, screen.width),
+                toDelegateYStatic(mouseY, top, height, screen.height), button);
+    }
+
+    public static boolean forwardMouseDragged(double mouseX, double mouseY, int button,
+                                              double dragX, double dragY,
+                                              int left, int top, int width, int height) {
+        Screen screen = nativeScreen;
+        return screen != null && screen.mouseDragged(
+                toDelegateXStatic(mouseX, left, width, screen.width),
+                toDelegateYStatic(mouseY, top, height, screen.height), button, dragX, dragY);
+    }
+
+    public static boolean forwardMouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY,
+                                               int left, int top, int width, int height) {
+        Screen screen = nativeScreen;
+        return screen != null && screen.mouseScrolled(
+                toDelegateXStatic(mouseX, left, width, screen.width),
+                toDelegateYStatic(mouseY, top, height, screen.height), scrollX, scrollY);
     }
 
     public String diagnostics() {
         StringBuilder result = new StringBuilder(status);
-        if (delegateType != null) result.append("\nclass=").append(delegateType.getName());
+        result.append("\nbridge=").append(XaeroNativeMapBridge.status());
+        result.append("\nnativeScreen=").append(nativeScreen == null ? "<none>" : nativeScreen.getClass().getName());
+        result.append("\ninitialized=").append(initialized);
 
         WorldMapSession session = WorldMapSession.getCurrentSession();
-        if (session != null) {
-            result.append("\nsessionUsable=").append(session.isUsable());
-            MapProcessor processor = session.getMapProcessor();
-            if (processor != null) {
-                result.append("\nworld=").append(safe(processor.getCurrentWorldId()));
-                result.append("\ndimension=").append(safe(processor.getCurrentDimId()));
-                result.append("\nmap=").append(safe(processor.getCurrentMWId()));
-            }
+        if (session == null) {
+            result.append("\nsession=<none>");
+            return result.toString();
         }
+
+        result.append("\nsessionUsable=").append(session.isUsable());
+        MapProcessor processor = session.getMapProcessor();
+        if (processor == null) {
+            result.append("\nmapProcessor=<none>");
+            return result.toString();
+        }
+
+        result.append("\nworld=").append(safe(processor.getCurrentWorldId()));
+        result.append("\ndimension=").append(safe(processor.getCurrentDimId()));
+        result.append("\nmap=").append(safe(processor.getCurrentMWId()));
         return result.toString();
     }
 
     public boolean isActive() {
-        return delegate != null;
+        return delegate != null && initialized;
     }
 
+    /** Reinitialises the captured native screen without discarding the live Xaero instance. */
     public void clear() {
-        delegate = null;
-        delegateType = null;
-        viewportWidth = 0;
-        viewportHeight = 0;
-        status = "Xaero map host cleared.";
+        initialized = false;
+        delegateWidth = 0;
+        delegateHeight = 0;
+        status = "Reinitialising captured Xaero native map screen.";
     }
 
-    private void ensureDelegate(int width, int height) {
+    private void ensureDelegate(int viewportWidth, int viewportHeight) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.level == null) {
             status = "Waiting for Minecraft client world.";
@@ -127,192 +188,57 @@ public final class XaeroMapHost {
 
         WorldMapSession session = WorldMapSession.getCurrentSession();
         MapProcessor processor = session == null ? null : session.getMapProcessor();
-        if (session == null || !session.isUsable() || processor == null || processor.getWorld() != minecraft.level) {
+        if (session == null || !session.isUsable() || processor == null) {
             status = "Waiting for Xaero World Map session/processor for the current world.";
             return;
         }
 
-        if (delegate != null && viewportWidth == width && viewportHeight == height) return;
-
-        if (delegate == null) {
-            delegateType = findWorldMapScreen();
-            if (delegateType == null) {
-                status = "Xaero World Map detected, but no concrete World Map Screen class was found.";
-                return;
-            }
-            delegate = instantiate(delegateType, session, processor);
-            if (delegate == null) {
-                status = "Found Xaero World Map screen " + delegateType.getName()
-                        + " but could not construct it with the live Xaero WorldMapSession/MapProcessor.";
-                delegateType = null;
-                return;
-            }
+        Screen captured = nativeScreen;
+        if (captured == null || !"xaero.map.gui.GuiMap".equals(captured.getClass().getName())) {
+            status = "Xaero World Map detected, but no live GuiMap instance has been captured yet.";
+            return;
         }
 
-        viewportWidth = width;
-        viewportHeight = height;
-        try {
-            delegate.init(minecraft, width, height);
-            status = "Xaero native World Map screen active.";
-        } catch (RuntimeException exception) {
-            status = "Xaero World Map screen initialisation failed: " + exception.getClass().getSimpleName()
-                    + " - " + safeMessage(exception);
-            delegate = null;
+        if (delegate != captured) {
+            delegate = captured;
+            initialized = false;
         }
-    }
 
-    private static Screen instantiate(Class<? extends Screen> type, WorldMapSession session,
-                                      MapProcessor processor) {
-        Minecraft minecraft = Minecraft.getInstance();
-        List<Object> context = List.of(minecraft, session, processor,
-                minecraft.level, Component.literal("Flight Computer Map"));
-
-        // Prefer explicit static factories if this Xaero build exposes one.
-        for (Method method : type.getDeclaredMethods()) {
-            if (!Modifier.isStatic(method.getModifiers()) || !Screen.class.isAssignableFrom(method.getReturnType())) continue;
-            String lowerName = method.getName().toLowerCase();
-            if (!lowerName.contains("map") && !lowerName.contains("screen")) continue;
-            Object[] args = resolveArguments(method.getParameterTypes(), context);
-            if (args == null) continue;
+        int fullWidth = minecraft.getWindow().getGuiScaledWidth();
+        int fullHeight = minecraft.getWindow().getGuiScaledHeight();
+        if (!initialized || delegateWidth != fullWidth || delegateHeight != fullHeight) {
             try {
-                method.setAccessible(true);
-                Object value = method.invoke(null, args);
-                if (value instanceof Screen screen) return screen;
-            } catch (ReflectiveOperationException | RuntimeException ignored) {
-                // Try the next compatible factory/constructor.
+                delegate.init(minecraft, fullWidth, fullHeight);
+                delegateWidth = fullWidth;
+                delegateHeight = fullHeight;
+                initialized = true;
+                status = "Xaero native World Map screen active; Flight Computer is hosting its live renderer.";
+            } catch (RuntimeException exception) {
+                initialized = false;
+                status = "Xaero native World Map initialisation failed: "
+                        + exception.getClass().getSimpleName() + " - " + safeMessage(exception);
             }
         }
-
-        List<Constructor<?>> constructors = new ArrayList<>();
-        for (Constructor<?> constructor : type.getDeclaredConstructors()) constructors.add(constructor);
-        constructors.sort(Comparator.comparingInt(Constructor::getParameterCount));
-
-        for (Constructor<?> constructor : constructors) {
-            Object[] args = resolveArguments(constructor.getParameterTypes(), context);
-            if (args == null) continue;
-            try {
-                constructor.setAccessible(true);
-                Object value = constructor.newInstance(args);
-                if (value instanceof Screen screen) return screen;
-            } catch (ReflectiveOperationException | RuntimeException ignored) {
-                // Xaero point releases can change the exact constructor signature.
-            }
-        }
-        return null;
     }
 
-    private static Object[] resolveArguments(Class<?>[] parameterTypes, List<Object> context) {
-        Object[] args = new Object[parameterTypes.length];
-        for (int i = 0; i < parameterTypes.length; i++) {
-            Class<?> parameter = parameterTypes[i];
-            Object value = context.stream()
-                    .filter(candidate -> candidate != null && parameter.isInstance(candidate))
-                    .findFirst().orElse(null);
-            if (value != null) {
-                args[i] = value;
-                continue;
-            }
-
-            if (parameter == boolean.class || parameter == Boolean.class) {
-                args[i] = false;
-            } else if (parameter == byte.class || parameter == Byte.class) {
-                args[i] = (byte) 0;
-            } else if (parameter == short.class || parameter == Short.class) {
-                args[i] = (short) 0;
-            } else if (parameter == int.class || parameter == Integer.class) {
-                args[i] = 0;
-            } else if (parameter == long.class || parameter == Long.class) {
-                args[i] = 0L;
-            } else if (parameter == float.class || parameter == Float.class) {
-                args[i] = 0.0F;
-            } else if (parameter == double.class || parameter == Double.class) {
-                args[i] = 0.0D;
-            } else if (parameter == char.class || parameter == Character.class) {
-                args[i] = '\0';
-            } else if (parameter == String.class) {
-                args[i] = "";
-            } else if (!parameter.isPrimitive()) {
-                // Only nullable arguments are allowed to fall through to null.
-                args[i] = null;
-            } else {
-                return null;
-            }
-        }
-        return args;
+    private double toDelegateX(double x, int left, int width) {
+        return toDelegateXStatic(x, left, width, delegate == null ? width : delegate.width);
     }
 
-    @SuppressWarnings("unchecked")
-    private static Class<? extends Screen> findWorldMapScreen() {
-        // Xaero 1.21.1 uses GuiMap as the concrete fullscreen map screen. ScreenBase is
-        // an abstract/base rendering class and must never be selected as the delegate.
-        List<String> names = new ArrayList<>();
-        names.add("xaero.map.gui.GuiMap");
-        names.add("xaero.map.gui.WorldMapScreen");
-        names.add("xaero.map.gui.GuiWorldMap");
-        names.add("xaero.map.gui.GuiWorldMapScreen");
-
-        try {
-            URL source = WorldMap.class.getProtectionDomain().getCodeSource().getLocation();
-            Path sourcePath = Path.of(URI.create(source.toString()));
-            if (Files.isDirectory(sourcePath)) {
-                Path guiRoot = sourcePath.resolve("xaero/map/gui");
-                if (Files.isDirectory(guiRoot)) {
-                    try (var stream = Files.walk(guiRoot)) {
-                        stream.filter(path -> path.toString().endsWith(".class"))
-                                .forEach(path -> names.add(toClassName(sourcePath, path)));
-                    }
-                }
-            } else {
-                try (JarFile jar = new JarFile(sourcePath.toFile())) {
-                    Enumeration<JarEntry> entries = jar.entries();
-                    while (entries.hasMoreElements()) {
-                        String name = entries.nextElement().getName();
-                        if (name.startsWith("xaero/map/gui/") && name.endsWith(".class")) {
-                            names.add(name.substring(0, name.length() - 6).replace('/', '.'));
-                        }
-                    }
-                }
-            }
-        } catch (Exception ignored) {
-            // Known candidates remain as the compatibility path.
-        }
-
-        ClassLoader loader = WorldMap.class.getClassLoader();
-        List<Class<? extends Screen>> candidates = new ArrayList<>();
-        for (String name : names) {
-            if (!name.startsWith("xaero.map.gui.") || !name.toLowerCase().contains("map")) continue;
-            String lower = name.toLowerCase();
-            if (lower.contains("screenbase") || lower.contains("settings") || lower.contains("options")
-                    || lower.contains("select") || lower.contains("confirm") || lower.contains("help")) continue;
-            try {
-                Class<?> type = Class.forName(name, false, loader);
-                if (Screen.class.isAssignableFrom(type) && !Modifier.isAbstract(type.getModifiers())) {
-                    candidates.add((Class<? extends Screen>) type);
-                }
-            } catch (LinkageError | ClassNotFoundException ignored) {
-                // Continue scanning other Xaero GUI classes.
-            }
-        }
-
-        return candidates.stream()
-                .distinct()
-                .sorted(Comparator.comparingInt(XaeroMapHost::screenPriority))
-                .findFirst().orElse(null);
+    private double toDelegateY(double y, int top, int height) {
+        return toDelegateYStatic(y, top, height, delegate == null ? height : delegate.height);
     }
 
-    private static int screenPriority(Class<? extends Screen> type) {
-        String name = type.getSimpleName().toLowerCase();
-        if (name.equals("guimap")) return 0;
-        if (name.equals("worldmapscreen")) return 1;
-        if (name.equals("guiworldmap")) return 2;
-        if (name.contains("worldmap")) return 3;
-        return 10;
+    private static double toDelegateXStatic(double x, int left, int width, int fullWidth) {
+        return x - left + (fullWidth - width) / 2.0D;
     }
 
-    private static String toClassName(Path root, Path classFile) {
-        String relative = root.relativize(classFile).toString();
-        relative = relative.substring(0, relative.length() - 6);
-        return relative.replace('/', '.').replace('\\', '.');
+    private static double toDelegateYStatic(double y, int top, int height, int fullHeight) {
+        return y - top + (fullHeight - height) / 2.0D;
+    }
+
+    private static boolean inside(double x, double y, int left, int top, int width, int height) {
+        return x >= left && x < left + width && y >= top && y < top + height;
     }
 
     private static String safeMessage(Throwable throwable) {
@@ -322,9 +248,5 @@ public final class XaeroMapHost {
 
     private static String safe(String value) {
         return value == null || value.isBlank() ? "<none>" : value;
-    }
-
-    private static boolean inside(double x, double y, int left, int top, int width, int height) {
-        return x >= left && x < left + width && y >= top && y < top + height;
     }
 }
