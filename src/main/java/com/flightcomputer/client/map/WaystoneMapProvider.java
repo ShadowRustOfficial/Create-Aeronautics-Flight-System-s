@@ -2,6 +2,7 @@ package com.flightcomputer.client.map;
 
 import com.flightcomputer.map.MapMarker;
 import com.flightcomputer.map.MarkerCategory;
+import com.flightcomputer.map.MarkerRegistry;
 import net.blay09.mods.waystones.api.Waystone;
 import net.blay09.mods.waystones.api.WaystonesAPI;
 import net.neoforged.fml.ModList;
