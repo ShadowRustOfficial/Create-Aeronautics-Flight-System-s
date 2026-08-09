@@ -5,17 +5,21 @@ import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.client.map.FlightMapOverlayManager;
+import com.flightcomputer.client.map.WaystoneMapProvider;
 import com.flightcomputer.client.map.XaeroMapHost;
 import com.flightcomputer.client.map.XaeroMapViewport;
+import com.flightcomputer.client.map.XaeroWaypointProvider;
 import com.flightcomputer.map.MarkerCategory;
 import com.flightcomputer.map.MarkerRegistry;
 import com.flightcomputer.network.FlightComputerNetwork;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.neoforged.fml.ModList;
 
 /** Navigation Console: Xaero terrain with Flight Computer navigation controls and overlays. */
 public final class NavigationConsoleScreen extends Screen {
@@ -33,6 +37,8 @@ public final class NavigationConsoleScreen extends Screen {
     private final BlockPos controllerPos;
     private final XaeroMapHost xaeroMap = new XaeroMapHost();
     private final FlightMapOverlayManager overlays = new FlightMapOverlayManager();
+    private final XaeroWaypointProvider xaeroWaypoints = new XaeroWaypointProvider();
+    private WaystoneMapProvider waystones;
     private Tab tab = Tab.MAP;
     private FlightControllerBlockEntity controller;
     private boolean showTerrain = true;
@@ -110,15 +116,8 @@ public final class NavigationConsoleScreen extends Screen {
         return Component.literal(label + ": " + (MarkerRegistry.isVisible(c) ? "ON" : "OFF"));
     }
 
-    private void zoomIn() {
-        xaeroMap.mouseScrolled(mapLeft() + 300, mapTop() + 130, 0, 1,
-                mapLeft(), mapTop(), mapWidth(), mapHeight());
-    }
-
-    private void zoomOut() {
-        xaeroMap.mouseScrolled(mapLeft() + 300, mapTop() + 130, 0, -1,
-                mapLeft(), mapTop(), mapWidth(), mapHeight());
-    }
+    private void zoomIn() { xaeroMap.mouseScrolled(mapLeft() + 300, mapTop() + 130, 0, 1, mapLeft(), mapTop(), mapWidth(), mapHeight()); }
+    private void zoomOut() { xaeroMap.mouseScrolled(mapLeft() + 300, mapTop() + 130, 0, -1, mapLeft(), mapTop(), mapWidth(), mapHeight()); }
 
     private void centrePlayer() {
         if (minecraft != null && minecraft.player != null) xaeroMap.centerOn(minecraft.player.getX(), minecraft.player.getZ());
@@ -142,13 +141,11 @@ public final class NavigationConsoleScreen extends Screen {
 
     private boolean controllerPowered() {
         if (controller == null) controller = getController();
-        return controller != null && controller.getEnergyStorage().getEnergyStored() > 0
-                && controller.getPowerState() != PowerState.NO_POWER;
+        return controller != null && controller.getEnergyStorage().getEnergyStored() > 0 && controller.getPowerState() != PowerState.NO_POWER;
     }
 
     private String linkStatus() {
-        return !controllerPowered() ? "OFFLINE"
-                : (controller != null && controller.getLinkedControllerId() != null ? "CONNECTED" : "NOT LINKED");
+        return !controllerPowered() ? "OFFLINE" : (controller != null && controller.getLinkedControllerId() != null ? "CONNECTED" : "NOT LINKED");
     }
 
     @Override
@@ -157,6 +154,9 @@ public final class NavigationConsoleScreen extends Screen {
         if (minecraft == null || minecraft.level == null) return;
         if (!controllerPowered()) { minecraft.setScreen(null); return; }
         xaeroMap.tick(mapWidth(), mapHeight());
+        xaeroWaypoints.tick(minecraft.level);
+        if (waystones == null && ModList.get().isLoaded("waystones")) waystones = new WaystoneMapProvider();
+        if (waystones != null) waystones.tick(minecraft.level);
     }
 
     @Override
@@ -207,11 +207,8 @@ public final class NavigationConsoleScreen extends Screen {
 
         g.drawString(font, "XAERO TERRAIN: " + (online ? "ONLINE" : "OFFLINE"), mapL + 8, mapT + 8, online ? GREEN : RED);
         g.drawString(font, "XAERO NATIVE MAP", mapR - 122, mapT + 8, CYAN_BRIGHT);
-        if (view != null && view.finite()) {
-            g.drawString(font, String.format("CENTRE X %.2f   Z %.2f", view.cameraX(), view.cameraZ()), mapL + 8, mapB - 30, MUTED);
-        } else {
-            g.drawString(font, "CENTRE X —   Z —", mapL + 8, mapB - 30, MUTED);
-        }
+        if (view != null && view.finite()) g.drawString(font, String.format("CENTRE X %.2f   Z %.2f", view.cameraX(), view.cameraZ()), mapL + 8, mapB - 30, MUTED);
+        else g.drawString(font, "CENTRE X —   Z —", mapL + 8, mapB - 30, MUTED);
         g.drawString(font, "DRAG TO PAN | SCROLL TO ZOOM", mapL + 8, mapB - 14, MUTED);
     }
 
@@ -270,9 +267,7 @@ public final class NavigationConsoleScreen extends Screen {
         String[] lines = xaeroMap.diagnostics().split("\\n");
         int diagnosticY = top + 312;
         for (int i = 0; i < Math.min(5, lines.length); i++) g.drawString(font, lines[i], left + 20, diagnosticY + i * 16, MUTED);
-        if (view != null && view.finite()) {
-            g.drawString(font, String.format("centre=%.2f, %.2f  scale=%.5f px/block", view.cameraX(), view.cameraZ(), view.pixelsPerBlock()), left + 405, top + 284, MUTED);
-        }
+        if (view != null && view.finite()) g.drawString(font, String.format("centre=%.2f, %.2f  scale=%.5f px/block", view.cameraX(), view.cameraZ(), view.pixelsPerBlock()), left + 405, top + 284, MUTED);
     }
 
     private void drawSourceLine(GuiGraphics g, int x, int y, MarkerCategory category) {
@@ -282,7 +277,6 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private String formatEnergy(long value) { return String.format("%,d", Math.max(0L, value)); }
-
     private int mapLeft() { return Math.max(10, (width - 640) / 2) + 20; }
     private int mapTop() { return 70; }
     private int mapWidth() { return 600; }
