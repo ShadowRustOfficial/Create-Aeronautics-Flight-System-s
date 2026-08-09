@@ -19,6 +19,8 @@ import net.neoforged.neoforge.client.event.ScreenEvent;
 @EventBusSubscriber(modid = FlightComputer.MOD_ID, value = Dist.CLIENT)
 public final class XaeroNativeMapBridge {
     private static BlockPos pendingController;
+    private static BlockPos activeController;
+    private static boolean navigationConsoleActive;
     private static String status = "Bridge loaded; waiting for Xaero World Map.";
 
     private XaeroNativeMapBridge() {}
@@ -29,6 +31,9 @@ public final class XaeroNativeMapBridge {
             status = "Cannot request Xaero map: client world is unavailable.";
             return;
         }
+
+        activeController = controllerPos;
+        navigationConsoleActive = true;
 
         KeyMapping mapKey = findXaeroWorldMapKey(minecraft);
         if (mapKey == null) {
@@ -43,6 +48,27 @@ public final class XaeroNativeMapBridge {
         KeyMapping.click(mapKey.getKey());
     }
 
+    /** Called by NavigationConsoleScreen when Minecraft removes the console. */
+    public static void onNavigationClosed() {
+        navigationConsoleActive = false;
+        pendingController = null;
+        activeController = null;
+    }
+
+    /**
+     * Prevent Xaero's normal World Map key from replacing the Navigation Console while
+     * it is already hosting the captured GuiMap. The real Xaero key remains usable once
+     * the console is closed.
+     */
+    @SubscribeEvent
+    public static void onNavigationKeyPressed(ScreenEvent.KeyPressed.Pre event) {
+        if (!navigationConsoleActive || !(event.getScreen() instanceof NavigationConsoleScreen)) return;
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft != null && isXaeroWorldMapKey(minecraft, event.getKeyCode(), event.getScanCode())) {
+            event.setCanceled(true);
+        }
+    }
+
     @SubscribeEvent
     public static void onScreenOpening(ScreenEvent.Opening event) {
         Screen screen = event.getNewScreen();
@@ -52,8 +78,23 @@ public final class XaeroNativeMapBridge {
         status = "Captured live Xaero GuiMap instance.";
 
         BlockPos controllerPos = pendingController;
-        if (controllerPos == null) return;
+        if (controllerPos != null) {
+            initialiseAndReturnToConsole(event, screen, controllerPos);
+            return;
+        }
 
+        // If the player presses Xaero's map key while our console is already open,
+        // Xaero would otherwise replace the console with its full-screen GuiMap. That
+        // leaves the native map/background visible outside our intended viewport and can
+        // produce the black/map strip seen after repeated M presses. Keep the console
+        // active and retain the newly captured native instance for rendering only.
+        if (navigationConsoleActive && activeController != null) {
+            event.setNewScreen(new NavigationConsoleScreen(activeController));
+            status = "Blocked Xaero full-screen map takeover; retained native map renderer.";
+        }
+    }
+
+    private static void initialiseAndReturnToConsole(ScreenEvent.Opening event, Screen screen, BlockPos controllerPos) {
         Minecraft minecraft = Minecraft.getInstance();
         try {
             // Xaero created this object itself. We only initialise the real instance using
@@ -62,6 +103,8 @@ public final class XaeroNativeMapBridge {
                     minecraft.getWindow().getGuiScaledHeight());
             event.setNewScreen(new NavigationConsoleScreen(controllerPos));
             pendingController = null;
+            navigationConsoleActive = true;
+            activeController = controllerPos;
             status = "Xaero native map captured; Flight Computer Navigation Console is now hosting it.";
         } catch (RuntimeException exception) {
             pendingController = null;
@@ -73,6 +116,12 @@ public final class XaeroNativeMapBridge {
 
     public static String status() {
         return status;
+    }
+
+    private static boolean isXaeroWorldMapKey(Minecraft minecraft, int keyCode, int scanCode) {
+        KeyMapping mapping = findXaeroWorldMapKey(minecraft);
+        return mapping != null && mapping.isActiveAndMatches(
+                net.minecraft.client.KeyMapping.getKey(keyCode, scanCode));
     }
 
     private static KeyMapping findXaeroWorldMapKey(Minecraft minecraft) {
