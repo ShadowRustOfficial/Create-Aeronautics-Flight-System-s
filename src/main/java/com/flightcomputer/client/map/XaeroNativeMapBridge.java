@@ -2,11 +2,11 @@ package com.flightcomputer.client.map;
 
 import com.flightcomputer.FlightComputer;
 import com.flightcomputer.client.gui.NavigationConsoleScreen;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
-import net.minecraft.util.InputConstants;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
