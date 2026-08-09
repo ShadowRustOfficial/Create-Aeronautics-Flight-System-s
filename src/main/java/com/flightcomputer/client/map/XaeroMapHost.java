@@ -26,18 +26,12 @@ public final class XaeroMapHost {
     public static void captureNativeScreen(Screen screen) {
         if (screen == null) return;
         String name = screen.getClass().getName();
-        if ("xaero.map.gui.GuiMap".equals(name)) {
-            nativeScreen = screen;
-        }
+        if ("xaero.map.gui.GuiMap".equals(name)) nativeScreen = screen;
     }
 
-    public static void clearNativeScreen() {
-        nativeScreen = null;
-    }
+    public static void clearNativeScreen() { nativeScreen = null; }
 
-    public static Screen getCapturedNativeScreen() {
-        return nativeScreen;
-    }
+    public static Screen getCapturedNativeScreen() { return nativeScreen; }
 
     public void tick(int width, int height) {
         ensureDelegate(width, height);
@@ -109,37 +103,34 @@ public final class XaeroMapHost {
                 toDelegateY(mouseY, top, height), scrollX, scrollY);
     }
 
-    public static boolean forwardMouseClicked(double mouseX, double mouseY, int button,
-                                              int left, int top, int width, int height) {
-        Screen screen = nativeScreen;
-        return screen != null && screen.mouseClicked(
-                toDelegateXStatic(mouseX, left, width, screen.width),
-                toDelegateYStatic(mouseY, top, height, screen.height), button);
-    }
+    /**
+     * Recenters Xaero's live camera by using the same drag operation that its map screen
+     * normally receives. No replacement camera or terrain renderer is created.
+     */
+    public boolean centerOn(double worldX, double worldZ) {
+        if (delegate == null || !initialized) return false;
+        XaeroMapViewport.Snapshot view = XaeroMapViewport.read();
+        if (view == null || !view.finite()) return false;
 
-    public static boolean forwardMouseReleased(double mouseX, double mouseY, int button,
-                                               int left, int top, int width, int height) {
-        Screen screen = nativeScreen;
-        return screen != null && screen.mouseReleased(
-                toDelegateXStatic(mouseX, left, width, screen.width),
-                toDelegateYStatic(mouseY, top, height, screen.height), button);
-    }
+        double dragX = -(worldX - view.cameraX()) * view.pixelsPerBlock();
+        double dragY = -(worldZ - view.cameraZ()) * view.pixelsPerBlock();
+        if (!Double.isFinite(dragX) || !Double.isFinite(dragY)) return false;
+        if (Math.abs(dragX) < 0.25D && Math.abs(dragY) < 0.25D) return true;
 
-    public static boolean forwardMouseDragged(double mouseX, double mouseY, int button,
-                                              double dragX, double dragY,
-                                              int left, int top, int width, int height) {
-        Screen screen = nativeScreen;
-        return screen != null && screen.mouseDragged(
-                toDelegateXStatic(mouseX, left, width, screen.width),
-                toDelegateYStatic(mouseY, top, height, screen.height), button, dragX, dragY);
-    }
-
-    public static boolean forwardMouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY,
-                                               int left, int top, int width, int height) {
-        Screen screen = nativeScreen;
-        return screen != null && screen.mouseScrolled(
-                toDelegateXStatic(mouseX, left, width, screen.width),
-                toDelegateYStatic(mouseY, top, height, screen.height), scrollX, scrollY);
+        double startX = delegate.width / 2.0D;
+        double startY = delegate.height / 2.0D;
+        double endX = startX + dragX;
+        double endY = startY + dragY;
+        try {
+            delegate.mouseClicked(startX, startY, 0);
+            delegate.mouseDragged(endX, endY, 0, dragX, dragY);
+            delegate.mouseReleased(endX, endY, 0);
+            return true;
+        } catch (RuntimeException exception) {
+            status = "Xaero recenter failed: " + exception.getClass().getSimpleName()
+                    + " - " + safeMessage(exception);
+            return false;
+        }
     }
 
     public String diagnostics() {
@@ -167,9 +158,7 @@ public final class XaeroMapHost {
         return result.toString();
     }
 
-    public boolean isActive() {
-        return delegate != null && initialized;
-    }
+    public boolean isActive() { return delegate != null && initialized; }
 
     /** Reinitialises the captured native screen without discarding the live Xaero instance. */
     public void clear() {
