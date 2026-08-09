@@ -5,10 +5,7 @@ import net.minecraft.resources.ResourceKey;
 
 import java.lang.reflect.Field;
 
-/**
- * Reads the live Xaero GuiMap camera state without recreating Xaero's renderer.
- * The working native-screen host remains the source of truth for terrain, pan and zoom.
- */
+/** Reads the live Xaero GuiMap camera state without recreating Xaero's renderer. */
 public final class XaeroMapViewport {
     private XaeroMapViewport() {}
 
@@ -46,10 +43,7 @@ public final class XaeroMapViewport {
         if (!Double.isFinite(cameraX) || !Double.isFinite(cameraZ)
                 || !Double.isFinite(scale) || scale <= 0.0D) return null;
 
-        double guiScale = 1.0D;
-        if (net.minecraft.client.Minecraft.getInstance() != null) {
-            guiScale = Math.max(1.0D, net.minecraft.client.Minecraft.getInstance().getWindow().getGuiScale());
-        }
+        double guiScale = Math.max(1.0D, net.minecraft.client.Minecraft.getInstance().getWindow().getGuiScale());
         String dimension = readDimension(screen);
         return new Snapshot(cameraX, cameraZ, scale / guiScale,
                 Math.max(1, screen.width), Math.max(1, screen.height), dimension);
@@ -63,7 +57,7 @@ public final class XaeroMapViewport {
     private static String readDimension(Object instance) {
         Object value = readField(instance, "lastViewedDimensionId");
         if (value == null) value = readField(instance, "lastNonNullViewedDimensionId");
-        return value instanceof ResourceKey<?> key ? key.identifier().toString() : "unknown";
+        return value instanceof ResourceKey<?> key ? key.location().toString() : "unknown";
     }
 
     private static Object readField(Object instance, String name) {
