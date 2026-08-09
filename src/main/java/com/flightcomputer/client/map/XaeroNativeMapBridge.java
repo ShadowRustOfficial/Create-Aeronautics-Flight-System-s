@@ -49,7 +49,7 @@ public final class XaeroNativeMapBridge {
         KeyMapping.click(mapKey.getKey());
     }
 
-    /** Called by NavigationConsoleScreen when Minecraft removes the console. */
+    /** Called by the screen lifecycle when the navigation console is actually closed. */
     public static void onNavigationClosed() {
         navigationConsoleActive = false;
         pendingController = null;
@@ -70,6 +70,14 @@ public final class XaeroNativeMapBridge {
         }
     }
 
+    /** Clear the host state when the player leaves the Navigation Console. */
+    @SubscribeEvent
+    public static void onNavigationScreenClosing(ScreenEvent.Closing event) {
+        if (event.getScreen() instanceof NavigationConsoleScreen) {
+            onNavigationClosed();
+        }
+    }
+
     @SubscribeEvent
     public static void onScreenOpening(ScreenEvent.Opening event) {
         Screen screen = event.getNewScreen();
@@ -84,11 +92,8 @@ public final class XaeroNativeMapBridge {
             return;
         }
 
-        // If the player presses Xaero's map key while our console is already open,
-        // Xaero would otherwise replace the console with its full-screen GuiMap. That
-        // leaves the native map/background visible outside our intended viewport and can
-        // produce the black/map strip seen after repeated M presses. Keep the console
-        // active and retain the newly captured native instance for rendering only.
+        // Defensive fallback: if another route opens GuiMap while the console is active,
+        // do not allow Xaero's full-screen screen to take over the Flight Computer.
         if (navigationConsoleActive && activeController != null) {
             event.setNewScreen(new NavigationConsoleScreen(activeController));
             status = "Blocked Xaero full-screen map takeover; retained native map renderer.";
