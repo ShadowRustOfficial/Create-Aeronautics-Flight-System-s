@@ -7,7 +7,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.BlockPos;
 
-/** Owns Flight Computer markers drawn above Xaero's terrain. */
+/** Owns Flight Computer overlays drawn above Xaero's terrain. Xaero owns Xaero waypoint rendering. */
 public final class FlightMapOverlayManager {
     public void render(GuiGraphics graphics, XaeroMapViewport.Snapshot view,
                        int mapLeft, int mapTop, int mapWidth, int mapHeight,
@@ -17,6 +17,10 @@ public final class FlightMapOverlayManager {
         String dimension = minecraft.level.dimension().location().toString();
 
         for (MapMarker marker : MarkerRegistry.all()) {
+            // Xaero's native GuiMap already renders its own waypoint elements. Never draw a
+            // second copy from the parsed waypoint file; the file remains available as a
+            // data source for route selection on the ROUTE tab.
+            if (marker.category() == MarkerCategory.XAERO_WAYPOINT) continue;
             if (!dimension.equals(marker.dimensionId())) continue;
             if (!MarkerRegistry.isVisible(marker.category())) continue;
 
@@ -32,7 +36,7 @@ public final class FlightMapOverlayManager {
             switch (marker.category()) {
                 case FLIGHT_WAYPOINT -> drawCircle(graphics, x, y, radius, color);
                 case CLAIMED_SUBLEVEL -> drawDiamond(graphics, x, y, radius, color);
-                case XAERO_WAYPOINT -> drawCircle(graphics, x, y, radius, color);
+                case XAERO_WAYPOINT -> { /* Native Xaero renderer owns this layer. */ }
                 case LANDING_PAD -> drawCross(graphics, x, y, radius, color);
             }
 
