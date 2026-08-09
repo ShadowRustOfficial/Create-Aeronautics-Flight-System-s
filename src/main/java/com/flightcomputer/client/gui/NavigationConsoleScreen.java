@@ -10,7 +10,7 @@ import com.flightcomputer.client.map.XaeroMapViewport;
 import com.flightcomputer.map.MarkerCategory;
 import com.flightcomputer.map.MarkerRegistry;
 import com.flightcomputer.network.FlightComputerNetwork;
-import net.minecraft.client.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
@@ -121,14 +121,10 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void centrePlayer() {
-        if (minecraft != null && minecraft.player != null) {
-            xaeroMap.centerOn(minecraft.player.getX(), minecraft.player.getZ());
-        }
+        if (minecraft != null && minecraft.player != null) xaeroMap.centerOn(minecraft.player.getX(), minecraft.player.getZ());
     }
 
-    private void centreController() {
-        xaeroMap.centerOn(controllerPos.getX() + 0.5D, controllerPos.getZ() + 0.5D);
-    }
+    private void centreController() { xaeroMap.centerOn(controllerPos.getX() + 0.5D, controllerPos.getZ() + 0.5D); }
 
     private void switchTab(Tab next) {
         tab = next;
@@ -171,7 +167,6 @@ public final class NavigationConsoleScreen extends Screen {
         g.fill(left - 8, top - 8, right + 8, Math.min(height - 8, top + 355), PANEL);
         g.drawString(font, "◈ NAVIGATION CONSOLE", left, top - 2, TEXT);
         g.drawString(font, "LINK: " + linkStatus(), right - 140, top - 2, controllerPowered() ? GREEN : RED);
-
         switch (tab) {
             case MAP -> renderMap(g, left, top + 42, mouseX, mouseY, partialTick);
             case ROUTE -> renderRoute(g, left, top + 42);
@@ -182,8 +177,7 @@ public final class NavigationConsoleScreen extends Screen {
         drawAccents(g, left, top);
     }
 
-    @Override
-    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) { }
+    @Override public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) { }
 
     private void drawAccents(GuiGraphics g, int left, int top) {
         int activeX = switch (tab) {
@@ -202,30 +196,19 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void renderMap(GuiGraphics g, int left, int top, int mouseX, int mouseY, float partialTick) {
-        int mapL = left + 20;
-        int mapT = top + 8;
-        int mapR = left + 620;
-        int mapB = top + 268;
-        int mapWidth = mapR - mapL;
-        int mapHeight = mapB - mapT;
+        int mapL = left + 20, mapT = top + 8, mapR = left + 620, mapB = top + 268;
+        int mapWidth = mapR - mapL, mapHeight = mapB - mapT;
         g.fill(mapL, mapT, mapR, mapB, MAP_BG);
-
-        if (showTerrain) {
-            xaeroMap.render(g, mapL, mapT, mapWidth, mapHeight, mouseX, mouseY, partialTick);
-        }
+        if (showTerrain) xaeroMap.render(g, mapL, mapT, mapWidth, mapHeight, mouseX, mouseY, partialTick);
 
         XaeroMapViewport.Snapshot view = XaeroMapViewport.read();
         boolean online = showTerrain && xaeroMap.isActive() && view != null && view.finite();
-        if (view != null && view.finite()) {
-            overlays.render(g, view, mapL, mapT, mapWidth, mapHeight, controllerPos);
-        }
+        if (view != null && view.finite()) overlays.render(g, view, mapL, mapT, mapWidth, mapHeight, controllerPos);
 
-        g.drawString(font, "XAERO TERRAIN: " + (online ? "ONLINE" : "OFFLINE"),
-                mapL + 8, mapT + 8, online ? GREEN : RED);
+        g.drawString(font, "XAERO TERRAIN: " + (online ? "ONLINE" : "OFFLINE"), mapL + 8, mapT + 8, online ? GREEN : RED);
         g.drawString(font, "XAERO NATIVE MAP", mapR - 122, mapT + 8, CYAN_BRIGHT);
         if (view != null && view.finite()) {
-            g.drawString(font, String.format("CENTRE X %.2f   Z %.2f", view.cameraX(), view.cameraZ()),
-                    mapL + 8, mapB - 30, MUTED);
+            g.drawString(font, String.format("CENTRE X %.2f   Z %.2f", view.cameraX(), view.cameraZ()), mapL + 8, mapB - 30, MUTED);
         } else {
             g.drawString(font, "CENTRE X —   Z —", mapL + 8, mapB - 30, MUTED);
         }
@@ -243,10 +226,8 @@ public final class NavigationConsoleScreen extends Screen {
     private void renderFlightControl(GuiGraphics g, int left, int top) {
         FlightControllerState state = controller == null ? FlightControllerState.DEFAULT : controller.getControllerState();
         g.drawString(font, "FLIGHT CONTROL", left + 20, top + 10, TEXT);
-        g.drawString(font, "SYSTEM: " + (state.engaged() ? "ENGAGED" : "DISENGAGED"), left + 20, top + 42,
-                state.engaged() ? GREEN : MUTED);
-        g.drawString(font, "STABILIZER: " + (state.stabiliser() ? "ON" : "OFF"), left + 20, top + 65,
-                state.stabiliser() ? GREEN : MUTED);
+        g.drawString(font, "SYSTEM: " + (state.engaged() ? "ENGAGED" : "DISENGAGED"), left + 20, top + 42, state.engaged() ? GREEN : MUTED);
+        g.drawString(font, "STABILIZER: " + (state.stabiliser() ? "ON" : "OFF"), left + 20, top + 65, state.stabiliser() ? GREEN : MUTED);
         g.drawString(font, "FLIGHT MODE: " + state.flightMode(), left + 20, top + 88, TEXT);
     }
 
@@ -264,11 +245,9 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "LINK", left + 20, top + 65, TEXT);
         g.drawString(font, "• " + linkStatus(), left + 265, top + 65, powered ? GREEN : RED);
         g.drawString(font, "ENERGY", left + 20, top + 88, TEXT);
-        g.drawString(font, formatEnergy(energy) + " / " + formatEnergy(capacity) + " FE", left + 265, top + 88,
-                energy > 0 ? GREEN : RED);
+        g.drawString(font, formatEnergy(energy) + " / " + formatEnergy(capacity) + " FE", left + 265, top + 88, energy > 0 ? GREEN : RED);
         g.drawString(font, "POWER STATE", left + 20, top + 111, TEXT);
-        g.drawString(font, powerState.name(), left + 285, top + 111,
-                powerState == PowerState.NO_POWER ? RED : GREEN);
+        g.drawString(font, powerState.name(), left + 285, top + 111, powerState == PowerState.NO_POWER ? RED : GREEN);
 
         g.drawString(font, "MAP SOURCES", left + 20, top + 150, TEXT);
         drawSourceLine(g, left + 20, top + 174, MarkerCategory.FLIGHT_WAYPOINT);
@@ -287,24 +266,19 @@ public final class NavigationConsoleScreen extends Screen {
         }
 
         g.drawString(font, "XAERO", left + 20, top + 292, CYAN_BRIGHT);
-        g.drawString(font, xaeroOnline ? "STATUS: ONLINE" : "STATUS: OFFLINE", left + 90, top + 292,
-                xaeroOnline ? GREEN : RED);
+        g.drawString(font, xaeroOnline ? "STATUS: ONLINE" : "STATUS: OFFLINE", left + 90, top + 292, xaeroOnline ? GREEN : RED);
         String[] lines = xaeroMap.diagnostics().split("\\n");
         int diagnosticY = top + 312;
-        for (int i = 0; i < Math.min(5, lines.length); i++) {
-            g.drawString(font, lines[i], left + 20, diagnosticY + i * 16, MUTED);
-        }
+        for (int i = 0; i < Math.min(5, lines.length); i++) g.drawString(font, lines[i], left + 20, diagnosticY + i * 16, MUTED);
         if (view != null && view.finite()) {
-            g.drawString(font, String.format("centre=%.2f, %.2f  scale=%.5f px/block",
-                    view.cameraX(), view.cameraZ(), view.pixelsPerBlock()), left + 405, top + 284, MUTED);
+            g.drawString(font, String.format("centre=%.2f, %.2f  scale=%.5f px/block", view.cameraX(), view.cameraZ(), view.pixelsPerBlock()), left + 405, top + 284, MUTED);
         }
     }
 
     private void drawSourceLine(GuiGraphics g, int x, int y, MarkerCategory category) {
         long count = MarkerRegistry.all().stream().filter(marker -> marker.category() == category).count();
         long visible = MarkerRegistry.isVisible(category) ? count : 0L;
-        g.drawString(font, category.getLabel() + ": " + count + " " + (visible > 0 ? "VISIBLE" : "HIDDEN"),
-                x, y, MUTED);
+        g.drawString(font, category.getLabel() + ": " + count + " " + (visible > 0 ? "VISIBLE" : "HIDDEN"), x, y, MUTED);
     }
 
     private String formatEnergy(long value) { return String.format("%,d", Math.max(0L, value)); }
@@ -315,41 +289,31 @@ public final class NavigationConsoleScreen extends Screen {
     private int mapHeight() { return 260; }
     private int mapRight() { return mapLeft() + mapWidth(); }
     private int mapBottom() { return mapTop() + mapHeight(); }
-
-    private boolean isInsideMap(double x, double y) {
-        return x >= mapLeft() && x < mapRight() && y >= mapTop() && y < mapBottom();
-    }
+    private boolean isInsideMap(double x, double y) { return x >= mapLeft() && x < mapRight() && y >= mapTop() && y < mapBottom(); }
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        if (tab == Tab.MAP && isInsideMap(mouseX, mouseY)
-                && xaeroMap.mouseScrolled(mouseX, mouseY, scrollX, scrollY,
-                mapLeft(), mapTop(), mapWidth(), mapHeight())) return true;
+        if (tab == Tab.MAP && isInsideMap(mouseX, mouseY) && xaeroMap.mouseScrolled(mouseX, mouseY, scrollX, scrollY, mapLeft(), mapTop(), mapWidth(), mapHeight())) return true;
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
     }
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (tab == Tab.MAP && isInsideMap(mouseX, mouseY)
-                && xaeroMap.mouseClicked(mouseX, mouseY, button,
-                mapLeft(), mapTop(), mapWidth(), mapHeight())) return true;
+        if (tab == Tab.MAP && isInsideMap(mouseX, mouseY) && xaeroMap.mouseClicked(mouseX, mouseY, button, mapLeft(), mapTop(), mapWidth(), mapHeight())) return true;
         return super.mouseClicked(mouseX, mouseY, button);
     }
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        if (tab == Tab.MAP && xaeroMap.mouseReleased(mouseX, mouseY, button,
-                mapLeft(), mapTop(), mapWidth(), mapHeight())) return true;
+        if (tab == Tab.MAP && xaeroMap.mouseReleased(mouseX, mouseY, button, mapLeft(), mapTop(), mapWidth(), mapHeight())) return true;
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
-        if (tab == Tab.MAP && xaeroMap.mouseDragged(mouseX, mouseY, button, dragX, dragY,
-                mapLeft(), mapTop(), mapWidth(), mapHeight())) return true;
+        if (tab == Tab.MAP && xaeroMap.mouseDragged(mouseX, mouseY, button, dragX, dragY, mapLeft(), mapTop(), mapWidth(), mapHeight())) return true;
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
-    @Override
-    public boolean isPauseScreen() { return false; }
+    @Override public boolean isPauseScreen() { return false; }
 }
