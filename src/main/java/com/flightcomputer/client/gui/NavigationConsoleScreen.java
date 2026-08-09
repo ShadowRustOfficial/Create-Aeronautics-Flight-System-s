@@ -5,6 +5,7 @@ import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.client.map.XaeroMapHost;
+import com.flightcomputer.map.MapMarker;
 import com.flightcomputer.map.MarkerCategory;
 import com.flightcomputer.map.MarkerRegistry;
 import com.flightcomputer.network.FlightComputerNetwork;
@@ -217,14 +218,53 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void renderDiagnostics(GuiGraphics g, int left, int top) {
+        boolean powered = controllerPowered();
+        long energy = controller == null ? 0L : controller.getEnergyStorage().getEnergyStored();
+        long capacity = controller == null ? 0L : controller.getEnergyStorage().getMaxEnergyStored();
+        PowerState powerState = controller == null ? PowerState.NO_POWER : controller.getPowerState();
+
         g.drawString(font, "DIAGNOSTICS", left + 20, top + 10, TEXT);
-        g.drawString(font, "FLIGHT COMPUTER: " + (controllerPowered() ? "OPERATIONAL" : "OFFLINE"), left + 20, top + 40, controllerPowered() ? GREEN : RED);
-        g.drawString(font, "LINK: " + linkStatus(), left + 20, top + 62, controllerPowered() ? GREEN : RED);
-        g.drawString(font, "XAERO NATIVE HOST", left + 20, top + 92, CYAN_BRIGHT);
-        String[] lines = xaeroMap.diagnostics().split("\\n");
-        for (int i = 0; i < Math.min(9, lines.length); i++) {
-            g.drawString(font, lines[i], left + 20, top + 110 + i * 16, MUTED);
+        g.drawString(font, "FLIGHT COMPUTER", left + 20, top + 42, TEXT);
+        g.drawString(font, powered ? "• OPERATIONAL" : "• OFFLINE", left + 265, top + 42, powered ? GREEN : RED);
+        g.drawString(font, "LINK", left + 20, top + 65, TEXT);
+        g.drawString(font, "• " + linkStatus(), left + 265, top + 65, powered ? GREEN : RED);
+        g.drawString(font, "ENERGY", left + 20, top + 88, TEXT);
+        g.drawString(font, formatEnergy(energy) + " / " + formatEnergy(capacity) + " FE", left + 265, top + 88, energy > 0 ? GREEN : RED);
+        g.drawString(font, "POWER STATE", left + 20, top + 111, TEXT);
+        g.drawString(font, powerState.name(), left + 285, top + 111, powerState == PowerState.NO_POWER ? RED : GREEN);
+
+        g.drawString(font, "MAP SOURCES", left + 20, top + 150, TEXT);
+        drawSourceLine(g, left + 20, top + 174, MarkerCategory.FLIGHT_WAYPOINT);
+        drawSourceLine(g, left + 20, top + 196, MarkerCategory.XAERO_WAYPOINT);
+        drawSourceLine(g, left + 20, top + 218, MarkerCategory.WAYSTONE);
+        drawSourceLine(g, left + 20, top + 240, MarkerCategory.CLAIMED_SUBLEVEL);
+        drawSourceLine(g, left + 20, top + 262, MarkerCategory.LANDING_PAD);
+
+        g.drawString(font, "POSITION", left + 405, top + 150, TEXT);
+        g.drawString(font, String.format("CTRL X  %.2f", (double) controllerPos.getX()), left + 405, top + 174, MUTED);
+        g.drawString(font, String.format("CTRL Y  %.2f", (double) controllerPos.getY()), left + 405, top + 196, MUTED);
+        g.drawString(font, String.format("CTRL Z  %.2f", (double) controllerPos.getZ()), left + 405, top + 218, MUTED);
+        if (minecraft != null && minecraft.player != null) {
+            g.drawString(font, String.format("PLAYER X  %.2f", minecraft.player.getX()), left + 405, top + 240, MUTED);
+            g.drawString(font, String.format("PLAYER Z  %.2f", minecraft.player.getZ()), left + 405, top + 262, MUTED);
         }
+
+        g.drawString(font, "XAERO", left + 20, top + 292, CYAN_BRIGHT);
+        String[] lines = xaeroMap.diagnostics().split("\\n");
+        int diagnosticY = top + 312;
+        for (int i = 0; i < Math.min(3, lines.length); i++) {
+            g.drawString(font, lines[i], left + 20, diagnosticY + i * 16, MUTED);
+        }
+    }
+
+    private void drawSourceLine(GuiGraphics g, int x, int y, MarkerCategory category) {
+        long count = MarkerRegistry.all().stream().filter(marker -> marker.category() == category).count();
+        long visible = MarkerRegistry.isVisible(category) ? count : 0L;
+        g.drawString(font, category.getLabel() + ": " + count + " " + (visible > 0 ? "VISIBLE" : "HIDDEN"), x, y, MUTED);
+    }
+
+    private String formatEnergy(long value) {
+        return String.format("%,d", Math.max(0L, value));
     }
 
     private boolean isInsideMap(double x, double y) {
