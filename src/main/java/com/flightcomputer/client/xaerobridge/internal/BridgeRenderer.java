@@ -33,7 +33,7 @@ public final class BridgeRenderer {
         double guiScale = Math.max(1.0D, Minecraft.getInstance().getWindow().getGuiScale());
         Object dimension = readField(screen, "lastViewedDimensionId");
         if (dimension == null) dimension = readField(screen, "lastNonNullViewedDimensionId");
-        String dimensionId = dimension instanceof ResourceKey<?> key ? key.identifier().toString() : "unknown";
+        String dimensionId = dimension instanceof ResourceKey<?> key ? key.location().toString() : "unknown";
 
         OverlayRegistry.renderMap(new MapOverlayContext(
                 graphics, width, height, cameraX, cameraZ, scale / guiScale, dimensionId));
