@@ -20,7 +20,6 @@ public final class TerrainMapCache {
 
     private static final XaeroMapDataProvider XAERO_PROVIDER = new XaeroMapDataProvider();
     private static final XaeroWaypointProvider XAERO_WAYPOINT_PROVIDER = new XaeroWaypointProvider();
-    private static final WaystoneMapProvider WAYSTONE_PROVIDER = new WaystoneMapProvider();
 
     /* Never allow the UI to enqueue an effectively unbounded map area. */
     private static final int MAX_REQUESTED_CHUNKS = 4096;
@@ -116,9 +115,8 @@ public final class TerrainMapCache {
             REQUESTED.remove(key);
         }
 
-        // Marker layers remain independent from terrain and are updated on the same client tick.
+        // Xaero waypoint data remains independent from terrain rendering.
         XAERO_WAYPOINT_PROVIDER.tick(level);
-        WAYSTONE_PROVIDER.tick(level);
     }
 
     public static String xaeroDiagnostics() {
@@ -148,7 +146,6 @@ public final class TerrainMapCache {
         REQUESTED.clear();
         XAERO_PROVIDER.clear();
         XAERO_WAYPOINT_PROVIDER.clear();
-        WAYSTONE_PROVIDER.clear();
         activeIdentity = identity;
     }
 
@@ -167,7 +164,6 @@ public final class TerrainMapCache {
         REQUESTED.clear();
         XAERO_PROVIDER.clear();
         XAERO_WAYPOINT_PROVIDER.clear();
-        WAYSTONE_PROVIDER.clear();
         activeIdentity = null;
     }
 }
