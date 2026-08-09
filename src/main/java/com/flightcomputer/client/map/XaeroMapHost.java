@@ -4,9 +4,12 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
 import xaero.map.WorldMap;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.net.URL;
@@ -32,7 +35,13 @@ public final class XaeroMapHost {
 
     public void tick(int width, int height) {
         ensureDelegate(width, height);
-        if (delegate != null) delegate.tick();
+        if (delegate != null) {
+            try {
+                delegate.tick();
+            } catch (RuntimeException exception) {
+                fail("Xaero World Map tick failed", exception);
+            }
+        }
     }
 
     public void render(GuiGraphics graphics, int left, int top, int width, int height,
@@ -45,6 +54,10 @@ public final class XaeroMapHost {
         graphics.pose().translate(left, top, 0.0D);
         try {
             delegate.render(graphics, mouseX - left, mouseY - top, partialTick);
+        } catch (RuntimeException exception) {
+            // A broken/partially initialised Xaero screen must never take down the
+            // Navigation Console. Drop the delegate and allow a clean retry later.
+            fail("Xaero World Map render failed", exception);
         } finally {
             graphics.pose().popPose();
             graphics.disableScissor();
@@ -55,14 +68,26 @@ public final class XaeroMapHost {
                                 int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseClicked(mouseX - left, mouseY - top, button);
+        if (delegate == null) return false;
+        try {
+            return delegate.mouseClicked(mouseX - left, mouseY - top, button);
+        } catch (RuntimeException exception) {
+            fail("Xaero World Map mouse click failed", exception);
+            return false;
+        }
     }
 
     public boolean mouseReleased(double mouseX, double mouseY, int button,
                                  int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseReleased(mouseX - left, mouseY - top, button);
+        if (delegate == null) return false;
+        try {
+            return delegate.mouseReleased(mouseX - left, mouseY - top, button);
+        } catch (RuntimeException exception) {
+            fail("Xaero World Map mouse release failed", exception);
+            return false;
+        }
     }
 
     public boolean mouseDragged(double mouseX, double mouseY, int button,
@@ -70,14 +95,26 @@ public final class XaeroMapHost {
                                 int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseDragged(mouseX - left, mouseY - top, button, dragX, dragY);
+        if (delegate == null) return false;
+        try {
+            return delegate.mouseDragged(mouseX - left, mouseY - top, button, dragX, dragY);
+        } catch (RuntimeException exception) {
+            fail("Xaero World Map drag failed", exception);
+            return false;
+        }
     }
 
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY,
                                  int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseScrolled(mouseX - left, mouseY - top, scrollX, scrollY);
+        if (delegate == null) return false;
+        try {
+            return delegate.mouseScrolled(mouseX - left, mouseY - top, scrollX, scrollY);
+        } catch (RuntimeException exception) {
+            fail("Xaero World Map scroll failed", exception);
+            return false;
+        }
     }
 
     public String diagnostics() {
@@ -98,8 +135,8 @@ public final class XaeroMapHost {
 
     private void ensureDelegate(int width, int height) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft == null || minecraft.level == null) {
-            status = "Waiting for Minecraft client world.";
+        if (minecraft == null || minecraft.level == null || minecraft.player == null) {
+            status = "Waiting for Minecraft client world/player.";
             return;
         }
 
@@ -111,53 +148,122 @@ public final class XaeroMapHost {
                 status = "Xaero World Map detected, but no concrete World Map Screen class was found.";
                 return;
             }
-            delegate = instantiate(delegateType);
+            delegate = instantiate(delegateType, minecraft);
             if (delegate == null) {
                 status = "Found Xaero World Map screen " + delegateType.getName()
-                        + " but could not construct it through its supported screen constructors.";
+                        + " but could not construct it with a supported live client context.";
                 delegateType = null;
                 return;
             }
+            bindCurrentPlayer(delegate, minecraft.player);
         }
 
         viewportWidth = width;
         viewportHeight = height;
         try {
             delegate.init(minecraft, width, height);
+            bindCurrentPlayer(delegate, minecraft.player);
             status = "Xaero native World Map screen active.";
         } catch (RuntimeException exception) {
-            status = "Xaero World Map screen initialisation failed: " + exception.getClass().getSimpleName();
-            delegate = null;
+            fail("Xaero World Map screen initialisation failed", exception);
         }
     }
 
-    private static Screen instantiate(Class<? extends Screen> type) {
+    /**
+     * Xaero's GuiMap has internal player state. The old implementation selected
+     * the zero-argument constructor first, which creates a screen with a null
+     * player and then crashes in GuiMap.render(). Prefer constructors that receive
+     * the live Minecraft/player context and bind the player again after init().
+     */
+    private static Screen instantiate(Class<? extends Screen> type, Minecraft minecraft) {
         List<Constructor<?>> constructors = new ArrayList<>();
         for (Constructor<?> constructor : type.getDeclaredConstructors()) {
             constructors.add(constructor);
         }
-        constructors.sort(Comparator.comparingInt(Constructor::getParameterCount));
 
-        Minecraft minecraft = Minecraft.getInstance();
+        constructors.sort(Comparator.comparingInt((Constructor<?> c) -> constructorScore(c, minecraft)).reversed()
+                .thenComparingInt(Constructor::getParameterCount));
+
         for (Constructor<?> constructor : constructors) {
+            Object[] arguments = buildArguments(constructor, minecraft);
+            if (arguments == null) continue;
             try {
                 constructor.setAccessible(true);
-                Class<?>[] parameters = constructor.getParameterTypes();
-                if (parameters.length == 0) {
-                    return (Screen) constructor.newInstance();
-                }
-                if (parameters.length == 1 && parameters[0].isAssignableFrom(Component.class)) {
-                    return (Screen) constructor.newInstance(Component.literal("Flight Computer Map"));
-                }
-                if (parameters.length == 1 && parameters[0].isAssignableFrom(Minecraft.class)) {
-                    return (Screen) constructor.newInstance(minecraft);
-                }
+                Object instance = constructor.newInstance(arguments);
+                if (instance instanceof Screen screen) return screen;
             } catch (ReflectiveOperationException | RuntimeException ignored) {
-                // Try the next constructor. The exact Xaero screen constructor is intentionally
-                // not hardcoded so minor Xaero point releases do not require a source rewrite.
+                // Try the next compatible constructor. Xaero's exact constructor
+                // signature is intentionally discovered rather than hardcoded.
             }
         }
         return null;
+    }
+
+    private static int constructorScore(Constructor<?> constructor, Minecraft minecraft) {
+        int score = 0;
+        for (Class<?> parameter : constructor.getParameterTypes()) {
+            if (minecraft.player != null && parameter.isInstance(minecraft.player)) score += 100;
+            else if (parameter.isInstance(minecraft)) score += 80;
+            else if (Component.class.isAssignableFrom(parameter) || parameter.isInstance(Component.literal("x"))) score += 40;
+            else if (parameter == boolean.class || parameter == Boolean.class) score += 1;
+            else return -1000;
+        }
+        if (constructor.getParameterCount() == 0) score -= 500;
+        return score;
+    }
+
+    private static Object[] buildArguments(Constructor<?> constructor, Minecraft minecraft) {
+        Object[] arguments = new Object[constructor.getParameterCount()];
+        Component title = Component.literal("Flight Computer Map");
+        Player player = minecraft.player;
+
+        for (int i = 0; i < constructor.getParameterTypes().length; i++) {
+            Class<?> parameter = constructor.getParameterTypes()[i];
+            if (player != null && parameter.isInstance(player)) {
+                arguments[i] = player;
+            } else if (parameter.isInstance(minecraft)) {
+                arguments[i] = minecraft;
+            } else if (parameter.isInstance(title)) {
+                arguments[i] = title;
+            } else if (parameter == boolean.class || parameter == Boolean.class) {
+                arguments[i] = false;
+            } else {
+                return null;
+            }
+        }
+        return arguments;
+    }
+
+    /**
+     * Defensive compatibility step for Xaero releases whose GuiMap constructor
+     * does not initialise its player field. This is only used when the field exists,
+     * is currently null, and accepts the live Minecraft player.
+     */
+    private static void bindCurrentPlayer(Screen screen, Player player) {
+        if (player == null) return;
+        Class<?> type = screen.getClass();
+        while (type != null) {
+            try {
+                Field field = type.getDeclaredField("player");
+                if (!Modifier.isStatic(field.getModifiers()) && field.getType().isInstance(player)) {
+                    field.setAccessible(true);
+                    if (field.get(screen) == null) field.set(screen, player);
+                }
+                return;
+            } catch (NoSuchFieldException ignored) {
+                type = type.getSuperclass();
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                return;
+            }
+        }
+    }
+
+    private void fail(String prefix, RuntimeException exception) {
+        status = prefix + ": " + exception.getClass().getSimpleName()
+                + " — " + String.valueOf(exception.getMessage());
+        delegate = null;
+        viewportWidth = 0;
+        viewportHeight = 0;
     }
 
     @SuppressWarnings("unchecked")
