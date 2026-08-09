@@ -25,17 +25,34 @@ public final class XaeroMapHost {
     public static Screen getCapturedNativeScreen() { return nativeScreen; }
 
     public void tick(int width, int height) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.level == null || minecraft.player == null) {
+            status = "Waiting for active Minecraft player before ticking Xaero native map.";
+            return;
+        }
         ensureDelegate(width, height);
-        if (delegate != null) {
-            try { delegate.tick(); }
-            catch (RuntimeException exception) { status = "Xaero native map tick failed: " + exception.getClass().getSimpleName(); }
+        if (delegate != null && initialized) {
+            try {
+                delegate.tick();
+            } catch (NullPointerException exception) {
+                // GuiMap can retain a null internal player after Minecraft replaces/removes
+                // the original Xaero screen. Force a fresh Screen.init on the next tick.
+                initialized = false;
+                status = "Xaero native map lifecycle reset; reinitialising after player state change.";
+            } catch (RuntimeException exception) {
+                status = "Xaero native map tick failed: " + exception.getClass().getSimpleName();
+            }
         }
     }
 
     public void render(GuiGraphics graphics, int left, int top, int width, int height,
                        int mouseX, int mouseY, float partialTick) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.level == null || minecraft.player == null) return;
+
         ensureDelegate(width, height);
-        if (delegate == null) return;
+        if (delegate == null || !initialized) return;
+
         int fullWidth = Math.max(1, delegate.width);
         int fullHeight = Math.max(1, delegate.height);
         double offsetX = (fullWidth - width) / 2.0D;
@@ -46,8 +63,17 @@ public final class XaeroMapHost {
         graphics.enableScissor(left, top, left + width, top + height);
         graphics.pose().pushPose();
         graphics.pose().translate(left - offsetX, top - offsetY, 0.0D);
-        try { delegate.render(graphics, delegateMouseX, delegateMouseY, partialTick); }
-        catch (RuntimeException exception) {
+        try {
+            delegate.render(graphics, delegateMouseX, delegateMouseY, partialTick);
+        } catch (NullPointerException exception) {
+            // Xaero's GuiMap keeps a private player reference. When the original native
+            // screen is removed by Minecraft (for example during a Sub-Level/player
+            // transition), that reference can temporarily become null. Do not allow the
+            // Flight Computer screen to take the whole client down. Reinitialise the same
+            // Xaero-created instance on the next tick instead.
+            initialized = false;
+            status = "Xaero native map render paused for screen/player lifecycle reset.";
+        } catch (RuntimeException exception) {
             status = "Xaero native map render failed: " + exception.getClass().getSimpleName() + " - " + safeMessage(exception);
         } finally {
             graphics.pose().popPose();
@@ -58,27 +84,27 @@ public final class XaeroMapHost {
     public boolean mouseClicked(double mouseX, double mouseY, int button, int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseClicked(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), button);
+        return delegate != null && initialized && delegate.mouseClicked(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), button);
     }
 
     public boolean mouseReleased(double mouseX, double mouseY, int button, int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseReleased(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), button);
+        return delegate != null && initialized && delegate.mouseReleased(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), button);
     }
 
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY,
                                 int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseDragged(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), button, dragX, dragY);
+        return delegate != null && initialized && delegate.mouseDragged(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), button, dragX, dragY);
     }
 
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY,
                                  int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseScrolled(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), scrollX, scrollY);
+        return delegate != null && initialized && delegate.mouseScrolled(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), scrollX, scrollY);
     }
 
     // Shared static forwarding API used by XaeroNavigationInputBridge. Keep this separate
@@ -129,6 +155,10 @@ public final class XaeroMapHost {
             delegate.mouseDragged(endX, endY, 0, dragX, dragY);
             delegate.mouseReleased(endX, endY, 0);
             return true;
+        } catch (NullPointerException exception) {
+            initialized = false;
+            status = "Xaero recenter paused for screen/player lifecycle reset.";
+            return false;
         } catch (RuntimeException exception) {
             status = "Xaero recenter failed: " + exception.getClass().getSimpleName() + " - " + safeMessage(exception);
             return false;
@@ -163,6 +193,7 @@ public final class XaeroMapHost {
     private void ensureDelegate(int viewportWidth, int viewportHeight) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.level == null) { status = "Waiting for Minecraft client world."; return; }
+        if (minecraft.player == null) { status = "Waiting for active Minecraft player."; return; }
         WorldMapSession session = WorldMapSession.getCurrentSession();
         MapProcessor processor = session == null ? null : session.getMapProcessor();
         if (session == null || !session.isUsable() || processor == null) {
@@ -182,6 +213,9 @@ public final class XaeroMapHost {
                 delegateHeight = fullHeight;
                 initialized = true;
                 status = "Xaero native World Map screen active; Flight Computer is hosting its live renderer.";
+            } catch (NullPointerException exception) {
+                initialized = false;
+                status = "Xaero native World Map initialisation waiting for player state.";
             } catch (RuntimeException exception) {
                 initialized = false;
                 status = "Xaero native World Map initialisation failed: " + exception.getClass().getSimpleName() + " - " + safeMessage(exception);
