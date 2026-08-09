@@ -12,9 +12,9 @@ public final class XaeroMapViewport {
     /**
      * Snapshot of the exact coordinate system used by the live Xaero renderer.
      *
-     * Xaero's GuiMap `scale` is a blocks-per-pixel value.  The native bridge uses
-     * the same interpretation, so the Flight Computer must use that same value
-     * rather than inventing a second zoom transform.
+     * Xaero's native bridge exposes `scale / guiScale` as pixels-per-block.
+     * Keep this value in the same units as the native GuiMap renderer so Flight
+     * Computer markers follow the terrain at every zoom level.
      */
     public record Snapshot(double cameraX, double cameraZ, double pixelsPerBlock,
                            int fullWidth, int fullHeight, String dimension) {
@@ -53,13 +53,9 @@ public final class XaeroMapViewport {
         double guiScale = Math.max(1.0D, net.minecraft.client.Minecraft.getInstance().getWindow().getGuiScale());
         String dimension = readDimension(screen);
 
-        // Xaero's `scale` is blocks-per-pixel. Convert it to pixels-per-block
-        // because our worldToViewport helpers and marker sizing operate in pixels.
-        // This is intentionally the reciprocal of the old implementation: using
-        // scale directly caused terrain and overlays to diverge progressively as
-        // the map was zoomed.
-        double blocksPerPixel = scale / guiScale;
-        double pixelsPerBlock = 1.0D / blocksPerPixel;
+        // Match Xaero World Map Bridge exactly: its MapOverlayContext receives
+        // scale / guiScale as pixels-per-block. Do not invert this value here.
+        double pixelsPerBlock = scale / guiScale;
 
         return new Snapshot(cameraX, cameraZ, pixelsPerBlock,
                 Math.max(1, screen.width), Math.max(1, screen.height), dimension);
