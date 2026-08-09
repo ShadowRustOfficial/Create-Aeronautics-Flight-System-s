@@ -5,7 +5,6 @@ import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.client.map.FlightMapOverlayManager;
-import com.flightcomputer.client.map.WaystoneMapProvider;
 import com.flightcomputer.client.map.XaeroMapHost;
 import com.flightcomputer.client.map.XaeroMapViewport;
 import com.flightcomputer.client.map.XaeroWaypointProvider;
@@ -19,7 +18,6 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.neoforged.fml.ModList;
 
 /** Navigation Console: Xaero terrain with Flight Computer navigation controls and overlays. */
 public final class NavigationConsoleScreen extends Screen {
@@ -38,7 +36,6 @@ public final class NavigationConsoleScreen extends Screen {
     private final XaeroMapHost xaeroMap = new XaeroMapHost();
     private final FlightMapOverlayManager overlays = new FlightMapOverlayManager();
     private final XaeroWaypointProvider xaeroWaypoints = new XaeroWaypointProvider();
-    private WaystoneMapProvider waystones;
     private Tab tab = Tab.MAP;
     private FlightControllerBlockEntity controller;
     private boolean showTerrain = true;
@@ -109,7 +106,6 @@ public final class NavigationConsoleScreen extends Screen {
         String label = switch (c) {
             case XAERO_WAYPOINT -> "XAERO WP";
             case FLIGHT_WAYPOINT -> "FLIGHT WP";
-            case WAYSTONE -> "WAYSTONES";
             case CLAIMED_SUBLEVEL -> "CLAIMS";
             case LANDING_PAD -> "PADS";
         };
@@ -155,8 +151,6 @@ public final class NavigationConsoleScreen extends Screen {
         if (!controllerPowered()) { minecraft.setScreen(null); return; }
         xaeroMap.tick(mapWidth(), mapHeight());
         xaeroWaypoints.tick(minecraft.level);
-        if (waystones == null && ModList.get().isLoaded("waystones")) waystones = new WaystoneMapProvider();
-        if (waystones != null) waystones.tick(minecraft.level);
     }
 
     @Override
@@ -249,9 +243,8 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "MAP SOURCES", left + 20, top + 150, TEXT);
         drawSourceLine(g, left + 20, top + 174, MarkerCategory.FLIGHT_WAYPOINT);
         drawSourceLine(g, left + 20, top + 196, MarkerCategory.XAERO_WAYPOINT);
-        drawSourceLine(g, left + 20, top + 218, MarkerCategory.WAYSTONE);
-        drawSourceLine(g, left + 20, top + 240, MarkerCategory.CLAIMED_SUBLEVEL);
-        drawSourceLine(g, left + 20, top + 262, MarkerCategory.LANDING_PAD);
+        drawSourceLine(g, left + 20, top + 218, MarkerCategory.CLAIMED_SUBLEVEL);
+        drawSourceLine(g, left + 20, top + 240, MarkerCategory.LANDING_PAD);
 
         g.drawString(font, "POSITION", left + 405, top + 150, TEXT);
         g.drawString(font, String.format("CTRL X  %.2f", (double) controllerPos.getX()), left + 405, top + 174, MUTED);
