@@ -3,10 +3,13 @@ package com.flightcomputer.client.map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.network.chat.Component;
 import xaero.map.WorldMap;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.net.URL;
@@ -21,7 +24,10 @@ import java.util.jar.JarFile;
 
 /**
  * Hosts Xaero's own World Map screen inside the Flight Computer map viewport.
- * No Xaero terrain data is decoded, sampled, or reconstructed here.
+ *
+ * Flight Computer does not recreate Xaero terrain. Xaero remains responsible for
+ * producing and rendering the actual map. This class only locates and hosts the
+ * concrete Xaero GUI screen and forwards input/render lifecycle calls to it.
  */
 public final class XaeroMapHost {
     private Screen delegate;
@@ -114,7 +120,7 @@ public final class XaeroMapHost {
             delegate = instantiate(delegateType);
             if (delegate == null) {
                 status = "Found Xaero World Map screen " + delegateType.getName()
-                        + " but could not construct it through its supported screen constructors.";
+                        + " but could not construct it from any compatible constructor/factory.";
                 delegateType = null;
                 return;
             }
@@ -126,44 +132,136 @@ public final class XaeroMapHost {
             delegate.init(minecraft, width, height);
             status = "Xaero native World Map screen active.";
         } catch (RuntimeException exception) {
-            status = "Xaero World Map screen initialisation failed: " + exception.getClass().getSimpleName();
+            status = "Xaero World Map screen initialisation failed: " + exception.getClass().getSimpleName()
+                    + " - " + safeMessage(exception);
             delegate = null;
         }
     }
 
     private static Screen instantiate(Class<? extends Screen> type) {
-        List<Constructor<?>> constructors = new ArrayList<>();
-        for (Constructor<?> constructor : type.getDeclaredConstructors()) {
-            constructors.add(constructor);
+        Minecraft minecraft = Minecraft.getInstance();
+        List<Object> worldMapValues = findWorldMapInstances();
+
+        // Prefer explicit static screen factories if Xaero exposes one in this version.
+        for (Method method : type.getDeclaredMethods()) {
+            if (!Modifier.isStatic(method.getModifiers()) || !Screen.class.isAssignableFrom(method.getReturnType())) continue;
+            if (!method.getName().toLowerCase().contains("map") && !method.getName().toLowerCase().contains("screen")) continue;
+            Object[] args = resolveArguments(method.getParameterTypes(), minecraft, worldMapValues);
+            if (args == null) continue;
+            try {
+                method.setAccessible(true);
+                Object value = method.invoke(null, args);
+                if (value instanceof Screen screen) return screen;
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                // Try the next supported factory/constructor.
+            }
         }
+
+        List<Constructor<?>> constructors = new ArrayList<>();
+        for (Constructor<?> constructor : type.getDeclaredConstructors()) constructors.add(constructor);
         constructors.sort(Comparator.comparingInt(Constructor::getParameterCount));
 
-        Minecraft minecraft = Minecraft.getInstance();
         for (Constructor<?> constructor : constructors) {
+            Object[] args = resolveArguments(constructor.getParameterTypes(), minecraft, worldMapValues);
+            if (args == null) continue;
             try {
                 constructor.setAccessible(true);
-                Class<?>[] parameters = constructor.getParameterTypes();
-                if (parameters.length == 0) {
-                    return (Screen) constructor.newInstance();
-                }
-                if (parameters.length == 1 && parameters[0].isAssignableFrom(Component.class)) {
-                    return (Screen) constructor.newInstance(Component.literal("Flight Computer Map"));
-                }
-                if (parameters.length == 1 && parameters[0].isAssignableFrom(Minecraft.class)) {
-                    return (Screen) constructor.newInstance(minecraft);
-                }
+                Object value = constructor.newInstance(args);
+                if (value instanceof Screen screen) return screen;
             } catch (ReflectiveOperationException | RuntimeException ignored) {
-                // Try the next constructor. The exact Xaero screen constructor is intentionally
-                // not hardcoded so minor Xaero point releases do not require a source rewrite.
+                // Try the next constructor. Xaero point releases can change the exact signature.
             }
         }
         return null;
     }
 
+    private static Object[] resolveArguments(Class<?>[] parameterTypes, Minecraft minecraft,
+                                             List<Object> worldMapValues) {
+        Object[] args = new Object[parameterTypes.length];
+        for (int i = 0; i < parameterTypes.length; i++) {
+            Class<?> parameter = parameterTypes[i];
+
+            if (parameter.isAssignableFrom(Minecraft.class)) {
+                args[i] = minecraft;
+                continue;
+            }
+            if (parameter.isAssignableFrom(Component.class)) {
+                args[i] = Component.literal("Flight Computer Map");
+                continue;
+            }
+            if (parameter.isAssignableFrom(ClientLevel.class)) {
+                args[i] = minecraft.level;
+                continue;
+            }
+            Object worldMap = worldMapValues.stream()
+                    .filter(value -> value != null && parameter.isInstance(value))
+                    .findFirst().orElse(null);
+            if (worldMap != null) {
+                args[i] = worldMap;
+                continue;
+            }
+
+            if (parameter == boolean.class || parameter == Boolean.class) {
+                args[i] = false;
+            } else if (parameter == byte.class || parameter == Byte.class) {
+                args[i] = (byte) 0;
+            } else if (parameter == short.class || parameter == Short.class) {
+                args[i] = (short) 0;
+            } else if (parameter == int.class || parameter == Integer.class) {
+                args[i] = 0;
+            } else if (parameter == long.class || parameter == Long.class) {
+                args[i] = 0L;
+            } else if (parameter == float.class || parameter == Float.class) {
+                args[i] = 0.0F;
+            } else if (parameter == double.class || parameter == Double.class) {
+                args[i] = 0.0D;
+            } else if (parameter == char.class || parameter == Character.class) {
+                args[i] = '\0';
+            } else if (parameter == String.class) {
+                args[i] = "";
+            } else if (!parameter.isPrimitive()) {
+                // Optional parent/context objects are commonly nullable in Minecraft screens.
+                args[i] = null;
+            } else {
+                return null;
+            }
+        }
+        return args;
+    }
+
+    private static List<Object> findWorldMapInstances() {
+        List<Object> values = new ArrayList<>();
+        Class<?> type = WorldMap.class;
+
+        for (Field field : type.getDeclaredFields()) {
+            if (!Modifier.isStatic(field.getModifiers()) || !type.isAssignableFrom(field.getType())) continue;
+            try {
+                field.setAccessible(true);
+                Object value = field.get(null);
+                if (value != null) values.add(value);
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                // Optional singleton field.
+            }
+        }
+
+        for (Method method : type.getDeclaredMethods()) {
+            if (!Modifier.isStatic(method.getModifiers()) || method.getParameterCount() != 0
+                    || !type.isAssignableFrom(method.getReturnType())) continue;
+            try {
+                method.setAccessible(true);
+                Object value = method.invoke(null);
+                if (value != null) values.add(value);
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                // Optional singleton accessor.
+            }
+        }
+        return values;
+    }
+
     @SuppressWarnings("unchecked")
     private static Class<? extends Screen> findWorldMapScreen() {
-        // Xaero 1.21.1 uses GuiMap as the concrete fullscreen map screen. ScreenBase is
-        // an abstract/base rendering class and must never be selected as the delegate.
+        // Xaero 1.21.1 / 1.44.2 uses GuiMap as the concrete fullscreen map screen.
+        // ScreenBase is an abstract/base rendering class and must never be selected.
         List<String> names = new ArrayList<>();
         names.add("xaero.map.gui.GuiMap");
         names.add("xaero.map.gui.WorldMapScreen");
@@ -232,6 +330,11 @@ public final class XaeroMapHost {
         String relative = root.relativize(classFile).toString();
         relative = relative.substring(0, relative.length() - 6);
         return relative.replace('/', '.').replace('\\', '.');
+    }
+
+    private static String safeMessage(Throwable throwable) {
+        String message = throwable.getMessage();
+        return message == null || message.isBlank() ? throwable.getClass().getSimpleName() : message;
     }
 
     private static boolean inside(double x, double y, int left, int top, int width, int height) {
