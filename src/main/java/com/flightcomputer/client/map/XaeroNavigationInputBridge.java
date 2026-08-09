@@ -16,6 +16,7 @@ public final class XaeroNavigationInputBridge {
     public static void mousePressed(ScreenEvent.MouseButtonPressed.Pre event) {
         if (!(event.getScreen() instanceof NavigationConsoleScreen screen)) return;
         Viewport viewport = viewport(screen);
+        if (!viewport.contains(event.getMouseX(), event.getMouseY())) return;
         if (XaeroMapHost.forwardMouseClicked(event.getMouseX(), event.getMouseY(), event.getButton(),
                 viewport.left, viewport.top, viewport.width, viewport.height)) {
             event.setCanceled(true);
@@ -26,6 +27,7 @@ public final class XaeroNavigationInputBridge {
     public static void mouseReleased(ScreenEvent.MouseButtonReleased.Pre event) {
         if (!(event.getScreen() instanceof NavigationConsoleScreen screen)) return;
         Viewport viewport = viewport(screen);
+        if (!viewport.contains(event.getMouseX(), event.getMouseY())) return;
         if (XaeroMapHost.forwardMouseReleased(event.getMouseX(), event.getMouseY(), event.getButton(),
                 viewport.left, viewport.top, viewport.width, viewport.height)) {
             event.setCanceled(true);
@@ -36,6 +38,7 @@ public final class XaeroNavigationInputBridge {
     public static void mouseDragged(ScreenEvent.MouseDragged.Pre event) {
         if (!(event.getScreen() instanceof NavigationConsoleScreen screen)) return;
         Viewport viewport = viewport(screen);
+        if (!viewport.contains(event.getMouseX(), event.getMouseY())) return;
         if (XaeroMapHost.forwardMouseDragged(event.getMouseX(), event.getMouseY(), event.getMouseButton(),
                 event.getDragX(), event.getDragY(), viewport.left, viewport.top,
                 viewport.width, viewport.height)) {
@@ -47,6 +50,7 @@ public final class XaeroNavigationInputBridge {
     public static void mouseScrolled(ScreenEvent.MouseScrolled.Pre event) {
         if (!(event.getScreen() instanceof NavigationConsoleScreen screen)) return;
         Viewport viewport = viewport(screen);
+        if (!viewport.contains(event.getMouseX(), event.getMouseY())) return;
         if (XaeroMapHost.forwardMouseScrolled(event.getMouseX(), event.getMouseY(),
                 event.getScrollDeltaX(), event.getScrollDeltaY(), viewport.left, viewport.top,
                 viewport.width, viewport.height)) {
@@ -60,5 +64,9 @@ public final class XaeroNavigationInputBridge {
         return new Viewport(left, top, 600, 260);
     }
 
-    private record Viewport(int left, int top, int width, int height) {}
+    private record Viewport(int left, int top, int width, int height) {
+        boolean contains(double x, double y) {
+            return x >= left && x < left + width && y >= top && y < top + height;
+        }
+    }
 }
