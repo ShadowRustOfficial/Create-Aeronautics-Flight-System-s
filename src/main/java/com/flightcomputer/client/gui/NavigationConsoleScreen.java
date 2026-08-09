@@ -8,6 +8,7 @@ import com.flightcomputer.client.map.FlightMapOverlayManager;
 import com.flightcomputer.client.map.XaeroMapHost;
 import com.flightcomputer.client.map.XaeroMapViewport;
 import com.flightcomputer.client.map.XaeroWaypointProvider;
+import com.flightcomputer.map.MapMarker;
 import com.flightcomputer.map.MarkerCategory;
 import com.flightcomputer.map.MarkerRegistry;
 import com.flightcomputer.network.FlightComputerNetwork;
@@ -18,6 +19,9 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.block.entity.BlockEntity;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /** Navigation Console: Xaero terrain with Flight Computer navigation controls and overlays. */
 public final class NavigationConsoleScreen extends Screen {
@@ -39,6 +43,8 @@ public final class NavigationConsoleScreen extends Screen {
     private Tab tab = Tab.MAP;
     private FlightControllerBlockEntity controller;
     private boolean showTerrain = true;
+    private int selectedWaypointIndex;
+    private MapMarker routeTarget;
 
     public NavigationConsoleScreen(BlockPos controllerPos) {
         super(Component.literal("Navigation Console"));
@@ -59,6 +65,7 @@ public final class NavigationConsoleScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("DIAGNOSTICS"), b -> switchTab(Tab.DIAGNOSTICS)).bounds(left + 480, top, tabW, 22).build());
 
         if (tab == Tab.MAP) initMapControls(left, top);
+        if (tab == Tab.ROUTE) initRouteControls(left, top);
         if (tab == Tab.FLIGHT_CONTROL) {
             addRenderableWidget(Button.builder(Component.literal("ENGAGE / DISENGAGE"), b -> send(FlightControllerAction.TOGGLE_ENGAGED)).bounds(left + 30, top + 210, 180, 20).build());
             addRenderableWidget(Button.builder(Component.literal("STABILISER"), b -> send(FlightControllerAction.TOGGLE_STABILISER)).bounds(left + 225, top + 210, 120, 20).build());
@@ -92,12 +99,22 @@ public final class NavigationConsoleScreen extends Screen {
         x += w + gap;
         for (MarkerCategory category : MarkerCategory.values()) {
             MarkerCategory selected = category;
-            addRenderableWidget(Button.builder(markerLabel(selected), b -> {
-                MarkerRegistry.toggle(selected);
-                b.setMessage(markerLabel(selected));
+            String label = selected == MarkerCategory.XAERO_WAYPOINT ? "XAERO WP: NATIVE" : markerLabel(selected).getString();
+            addRenderableWidget(Button.builder(Component.literal(label), b -> {
+                if (selected != MarkerCategory.XAERO_WAYPOINT) {
+                    MarkerRegistry.toggle(selected);
+                    b.setMessage(markerLabel(selected));
+                }
             }).bounds(x, y, w, 20).build());
             x += w + gap;
         }
+    }
+
+    private void initRouteControls(int left, int top) {
+        int y = top + 165;
+        addRenderableWidget(Button.builder(Component.literal("◀ PREVIOUS"), b -> selectWaypoint(-1)).bounds(left + 30, y, 120, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("NEXT ▶"), b -> selectWaypoint(1)).bounds(left + 170, y, 120, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("SET DESTINATION"), b -> routeTarget = selectedWaypoint(), bounds(left + 310, y, 150, 20).build());
     }
 
     private Component terrainLabel() { return Component.literal("TERRAIN: " + (showTerrain ? "ON" : "OFF")); }
@@ -110,6 +127,30 @@ public final class NavigationConsoleScreen extends Screen {
             case LANDING_PAD -> "PADS";
         };
         return Component.literal(label + ": " + (MarkerRegistry.isVisible(c) ? "ON" : "OFF"));
+    }
+
+    private List<MapMarker> currentXaeroWaypoints() {
+        if (minecraft == null || minecraft.level == null) return List.of();
+        String dimension = minecraft.level.dimension().location().toString();
+        List<MapMarker> result = new ArrayList<>();
+        for (MapMarker marker : MarkerRegistry.all()) {
+            if (marker.category() == MarkerCategory.XAERO_WAYPOINT && dimension.equals(marker.dimensionId())) result.add(marker);
+        }
+        return result;
+    }
+
+    private MapMarker selectedWaypoint() {
+        List<MapMarker> waypoints = currentXaeroWaypoints();
+        if (waypoints.isEmpty()) return null;
+        selectedWaypointIndex = Math.max(0, Math.min(selectedWaypointIndex, waypoints.size() - 1));
+        return waypoints.get(selectedWaypointIndex);
+    }
+
+    private void selectWaypoint(int delta) {
+        List<MapMarker> waypoints = currentXaeroWaypoints();
+        if (waypoints.isEmpty()) return;
+        selectedWaypointIndex = Math.floorMod(selectedWaypointIndex + delta, waypoints.size());
+        routeTarget = waypoints.get(selectedWaypointIndex);
     }
 
     private void zoomIn() { xaeroMap.mouseScrolled(mapLeft() + 300, mapTop() + 130, 0, 1, mapLeft(), mapTop(), mapWidth(), mapHeight()); }
@@ -151,6 +192,7 @@ public final class NavigationConsoleScreen extends Screen {
         if (!controllerPowered()) { minecraft.setScreen(null); return; }
         xaeroMap.tick(mapWidth(), mapHeight());
         xaeroWaypoints.tick(minecraft.level);
+        if (tab == Tab.ROUTE) selectedWaypoint();
     }
 
     @Override
@@ -207,11 +249,29 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void renderRoute(GuiGraphics g, int left, int top) {
+        List<MapMarker> waypoints = currentXaeroWaypoints();
+        MapMarker selected = selectedWaypoint();
+        MapMarker destination = routeTarget != null ? routeTarget : selected;
+
         g.drawString(font, "ROUTE / FLIGHT PLAN", left + 20, top + 10, TEXT);
-        g.drawString(font, "NEXT: Refinery", left + 20, top + 45, CYAN_BRIGHT);
-        g.drawString(font, "DISTANCE: —", left + 20, top + 70, MUTED);
-        g.drawString(font, "BEARING: —", left + 20, top + 92, MUTED);
-        g.drawString(font, "ETA: —", left + 20, top + 114, MUTED);
+        g.drawString(font, "XAERO WAYPOINT DESTINATION", left + 20, top + 45, CYAN_BRIGHT);
+
+        if (selected == null) {
+            g.drawString(font, "NO XAERO WAYPOINTS AVAILABLE", left + 20, top + 85, MUTED);
+            g.drawString(font, "Create a waypoint in Xaero World Map first.", left + 20, top + 108, MUTED);
+        } else {
+            g.drawString(font, "TARGET: " + selected.name(), left + 20, top + 85, TEXT);
+            g.drawString(font, String.format("X %d   Y %d   Z %d", selected.x(), selected.y(), selected.z()), left + 20, top + 108, MUTED);
+            g.drawString(font, "WAYPOINT " + (selectedWaypointIndex + 1) + " / " + waypoints.size(), left + 20, top + 131, MUTED);
+            g.drawString(font, "Xaero renders the waypoint; Flight Computer owns destination selection.", left + 20, top + 190, MUTED);
+        }
+
+        if (destination != null) {
+            g.drawString(font, "SELECTED DESTINATION: " + destination.name(), left + 20, top + 220, GREEN);
+            g.drawString(font, "DISTANCE: —", left + 20, top + 242, MUTED);
+            g.drawString(font, "BEARING: —", left + 200, top + 242, MUTED);
+            g.drawString(font, "ETA: —", left + 360, top + 242, MUTED);
+        }
     }
 
     private void renderFlightControl(GuiGraphics g, int left, int top) {
