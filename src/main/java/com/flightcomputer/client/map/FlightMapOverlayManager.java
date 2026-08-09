@@ -33,7 +33,6 @@ public final class FlightMapOverlayManager {
                 case FLIGHT_WAYPOINT -> drawCircle(graphics, x, y, radius, color);
                 case CLAIMED_SUBLEVEL -> drawDiamond(graphics, x, y, radius, color);
                 case XAERO_WAYPOINT -> drawCircle(graphics, x, y, radius, color);
-                case WAYSTONE -> drawSquare(graphics, x, y, radius, color);
                 case LANDING_PAD -> drawCross(graphics, x, y, radius, color);
             }
 
@@ -80,10 +79,6 @@ public final class FlightMapOverlayManager {
             int half = (int) Math.sqrt(Math.max(0, r * r - yy * yy));
             g.fill(x - half, y + yy, x + half + 1, y + yy + 1, color);
         }
-    }
-
-    private static void drawSquare(GuiGraphics g, int x, int y, int r, int color) {
-        g.fill(x - r, y - r, x + r + 1, y + r + 1, color);
     }
 
     private static void drawCross(GuiGraphics g, int x, int y, int r, int color) {
