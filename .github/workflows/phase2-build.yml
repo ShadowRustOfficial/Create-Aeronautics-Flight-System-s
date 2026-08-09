@@ -2,7 +2,7 @@ name: Phase 2 Build Verification
 
 on:
   push:
-    branches: [phase-2-map-controls, phase-2-map-controls-buildfix, phase-2-xaero-waypoint-integration]
+    branches: [phase-2-map-controls, phase-2-map-controls-buildfix, phase-2-xaero-waypoint-integration, phase-2-xaero-waypoint-build-fix]
 
 jobs:
   build:
