@@ -6,6 +6,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
+import net.minecraft.util.InputConstants;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -120,8 +121,7 @@ public final class XaeroNativeMapBridge {
 
     private static boolean isXaeroWorldMapKey(Minecraft minecraft, int keyCode, int scanCode) {
         KeyMapping mapping = findXaeroWorldMapKey(minecraft);
-        return mapping != null && mapping.isActiveAndMatches(
-                net.minecraft.client.KeyMapping.getKey(keyCode, scanCode));
+        return mapping != null && mapping.isActiveAndMatches(InputConstants.getKey(keyCode, scanCode));
     }
 
     private static KeyMapping findXaeroWorldMapKey(Minecraft minecraft) {
