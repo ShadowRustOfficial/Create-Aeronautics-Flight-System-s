@@ -114,7 +114,7 @@ public final class NavigationConsoleScreen extends Screen {
         int y = top + 165;
         addRenderableWidget(Button.builder(Component.literal("◀ PREVIOUS"), b -> selectWaypoint(-1)).bounds(left + 30, y, 120, 20).build());
         addRenderableWidget(Button.builder(Component.literal("NEXT ▶"), b -> selectWaypoint(1)).bounds(left + 170, y, 120, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("SET DESTINATION"), b -> routeTarget = selectedWaypoint(), bounds(left + 310, y, 150, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("SET DESTINATION"), b -> routeTarget = selectedWaypoint()).bounds(left + 310, y, 150, 20).build());
     }
 
     private Component terrainLabel() { return Component.literal("TERRAIN: " + (showTerrain ? "ON" : "OFF")); }
