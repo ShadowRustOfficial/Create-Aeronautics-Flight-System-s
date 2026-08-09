@@ -2,7 +2,7 @@ name: Phase 2 Build Verification
 
 on:
   push:
-    branches: [phase-2-map-controls]
+    branches: [phase-2-map-controls, phase-2-map-controls-buildfix]
 
 jobs:
   build:
