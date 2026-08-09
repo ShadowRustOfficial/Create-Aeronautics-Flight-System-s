@@ -2,7 +2,6 @@ package com.flightcomputer.client.map;
 
 import com.flightcomputer.map.MapMarker;
 import com.flightcomputer.map.MarkerCategory;
-import com.flightcomputer.map.MarkerRegistry;
 import net.blay09.mods.waystones.api.Waystone;
 import net.blay09.mods.waystones.api.WaystonesAPI;
 import net.neoforged.fml.ModList;
@@ -12,16 +11,17 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import java.util.List;
 
 /**
- * Optional Waystones integration. Singleplayer snapshots the server-side database on the
- * server thread; multiplayer uses the client-visible activated list. No Waystones files are
- * modified and the integration is a no-op when the mod is absent.
+ * Optional Waystones integration.
+ *
+ * The Flight Computer shows the same Waystones the current player has activated,
+ * rather than enumerating every Waystone in the singleplayer/server database.
+ * This prevents distant/unavailable Waystones from appearing as false map markers.
  */
 public final class WaystoneMapProvider {
     private static final long RESCAN_TICKS = 20L;
 
     private volatile List<WaystoneSnapshot> snapshot = List.of();
     private long nextScan;
-    private volatile boolean serverRequestPending;
 
     public void tick(ClientLevel level) {
         Minecraft minecraft = Minecraft.getInstance();
@@ -54,32 +54,18 @@ public final class WaystoneMapProvider {
     public void clear() {
         snapshot = List.of();
         nextScan = 0L;
-        serverRequestPending = false;
         MarkerRegistry.clearCategory(MarkerCategory.WAYSTONE);
     }
 
     private void requestSnapshot(Minecraft minecraft) {
-        if (minecraft.getSingleplayerServer() != null) {
-            if (serverRequestPending) return;
-            serverRequestPending = true;
-            var server = minecraft.getSingleplayerServer();
-            server.execute(() -> {
-                try {
-                    snapshot = WaystonesAPI.getAllWaystones(server)
-                            .map(WaystoneMapProvider::snapshot)
-                            .toList();
-                } finally {
-                    serverRequestPending = false;
-                }
-            });
-            return;
-        }
+        if (minecraft.player == null) return;
 
-        if (minecraft.player != null) {
-            snapshot = WaystonesAPI.getActivatedWaystones(minecraft.player).stream()
-                    .map(WaystoneMapProvider::snapshot)
-                    .toList();
-        }
+        // Use the player's activated list in both singleplayer and multiplayer.
+        // getAllWaystones(server) includes distant/unavailable destinations and was
+        // the reason the Flight Computer could display more Waystones than expected.
+        snapshot = WaystonesAPI.getActivatedWaystones(minecraft.player).stream()
+                .map(WaystoneMapProvider::snapshot)
+                .toList();
     }
 
     private static WaystoneSnapshot snapshot(Waystone waystone) {
