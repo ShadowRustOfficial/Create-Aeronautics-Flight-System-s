@@ -7,6 +7,7 @@ import net.minecraft.network.chat.Component;
 import xaero.map.WorldMap;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
@@ -107,12 +108,12 @@ public final class XaeroMapHost {
         if (delegate == null) {
             delegateType = findWorldMapScreen();
             if (delegateType == null) {
-                status = "Xaero World Map detected, but no World Map Screen class was found.";
+                status = "Xaero World Map detected, but no concrete World Map Screen class was found.";
                 return;
             }
             delegate = instantiate(delegateType);
             if (delegate == null) {
-                status = "Found Xaero World Map Screen " + delegateType.getName()
+                status = "Found Xaero World Map screen " + delegateType.getName()
                         + " but could not construct it through its supported screen constructors.";
                 delegateType = null;
                 return;
@@ -161,7 +162,10 @@ public final class XaeroMapHost {
 
     @SuppressWarnings("unchecked")
     private static Class<? extends Screen> findWorldMapScreen() {
+        // Xaero 1.21.1 uses GuiMap as the concrete fullscreen map screen. ScreenBase is
+        // an abstract/base rendering class and must never be selected as the delegate.
         List<String> names = new ArrayList<>();
+        names.add("xaero.map.gui.GuiMap");
         names.add("xaero.map.gui.WorldMapScreen");
         names.add("xaero.map.gui.GuiWorldMap");
         names.add("xaero.map.gui.GuiWorldMapScreen");
@@ -197,11 +201,11 @@ public final class XaeroMapHost {
         for (String name : names) {
             if (!name.startsWith("xaero.map.gui.") || !name.toLowerCase().contains("map")) continue;
             String lower = name.toLowerCase();
-            if (lower.contains("settings") || lower.contains("options") || lower.contains("select")
-                    || lower.contains("confirm") || lower.contains("help")) continue;
+            if (lower.contains("screenbase") || lower.contains("settings") || lower.contains("options")
+                    || lower.contains("select") || lower.contains("confirm") || lower.contains("help")) continue;
             try {
                 Class<?> type = Class.forName(name, false, loader);
-                if (Screen.class.isAssignableFrom(type)) {
+                if (Screen.class.isAssignableFrom(type) && !Modifier.isAbstract(type.getModifiers())) {
                     candidates.add((Class<? extends Screen>) type);
                 }
             } catch (LinkageError | ClassNotFoundException ignored) {
@@ -217,9 +221,10 @@ public final class XaeroMapHost {
 
     private static int screenPriority(Class<? extends Screen> type) {
         String name = type.getSimpleName().toLowerCase();
-        if (name.equals("worldmapscreen")) return 0;
-        if (name.equals("guiworldmap")) return 1;
-        if (name.contains("worldmap")) return 2;
+        if (name.equals("guimap")) return 0;
+        if (name.equals("worldmapscreen")) return 1;
+        if (name.equals("guiworldmap")) return 2;
+        if (name.contains("worldmap")) return 3;
         return 10;
     }
 
