@@ -4,14 +4,12 @@ import com.flightcomputer.avionics.FlightControllerAction;
 import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
-import com.flightcomputer.client.map.FlightMapOverlayManager;
+import com.flightcomputer.client.map.FlightMapPositionOverlay;
+import com.flightcomputer.client.map.NavigationDestination;
 import com.flightcomputer.client.map.XaeroMapHost;
 import com.flightcomputer.client.map.XaeroMapViewport;
 import com.flightcomputer.client.map.XaeroWaypointProvider;
-import com.flightcomputer.map.MarkerCategory;
-import com.flightcomputer.map.MarkerRegistry;
 import com.flightcomputer.network.FlightComputerNetwork;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
@@ -19,7 +17,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
-/** Navigation Console: Xaero terrain with Flight Computer navigation controls and overlays. */
+import java.util.List;
+
+/** Navigation Console hosted around Xaero's native map and waypoint rendering. */
 public final class NavigationConsoleScreen extends Screen {
     private enum Tab { MAP, ROUTE, FLIGHT_CONTROL, DIAGNOSTICS }
 
@@ -34,11 +34,15 @@ public final class NavigationConsoleScreen extends Screen {
 
     private final BlockPos controllerPos;
     private final XaeroMapHost xaeroMap = new XaeroMapHost();
-    private final FlightMapOverlayManager overlays = new FlightMapOverlayManager();
+    private final FlightMapPositionOverlay positions = new FlightMapPositionOverlay();
     private final XaeroWaypointProvider xaeroWaypoints = new XaeroWaypointProvider();
+
     private Tab tab = Tab.MAP;
     private FlightControllerBlockEntity controller;
     private boolean showTerrain = true;
+    private boolean showFlightMap = true;
+    private int waypointIndex;
+    private NavigationDestination destination;
 
     public NavigationConsoleScreen(BlockPos controllerPos) {
         super(Component.literal("Navigation Console"));
@@ -59,12 +63,8 @@ public final class NavigationConsoleScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("DIAGNOSTICS"), b -> switchTab(Tab.DIAGNOSTICS)).bounds(left + 480, top, tabW, 22).build());
 
         if (tab == Tab.MAP) initMapControls(left, top);
-        if (tab == Tab.FLIGHT_CONTROL) {
-            addRenderableWidget(Button.builder(Component.literal("ENGAGE / DISENGAGE"), b -> send(FlightControllerAction.TOGGLE_ENGAGED)).bounds(left + 30, top + 210, 180, 20).build());
-            addRenderableWidget(Button.builder(Component.literal("STABILISER"), b -> send(FlightControllerAction.TOGGLE_STABILISER)).bounds(left + 225, top + 210, 120, 20).build());
-            addRenderableWidget(Button.builder(Component.literal("MODE SELECT"), b -> send(FlightControllerAction.CYCLE_MODE)).bounds(left + 360, top + 210, 120, 20).build());
-            addRenderableWidget(Button.builder(Component.literal("DISPLAY TEST"), b -> send(FlightControllerAction.PULSE_DISPLAY)).bounds(left + 495, top + 210, 120, 20).build());
-        }
+        if (tab == Tab.ROUTE) initRouteControls(left, top);
+        if (tab == Tab.FLIGHT_CONTROL) initFlightControls(left, top);
     }
 
     private void initMapControls(int left, int top) {
@@ -90,27 +90,38 @@ public final class NavigationConsoleScreen extends Screen {
             b.setMessage(terrainLabel());
         }).bounds(x, y, w, 20).build());
         x += w + gap;
-        for (MarkerCategory category : MarkerCategory.values()) {
-            MarkerCategory selected = category;
-            addRenderableWidget(Button.builder(markerLabel(selected), b -> {
-                MarkerRegistry.toggle(selected);
-                b.setMessage(markerLabel(selected));
-            }).bounds(x, y, w, 20).build());
-            x += w + gap;
-        }
+        addRenderableWidget(Button.builder(flightMapLabel(), b -> {
+            showFlightMap = !showFlightMap;
+            b.setMessage(flightMapLabel());
+        }).bounds(x, y, w, 20).build());
+        x += w + gap;
+        addRenderableWidget(Button.builder(Component.literal("XAERO WP: NATIVE"), b -> {}).bounds(x, y, 118, 20).build());
+        x += 122;
+        addRenderableWidget(Button.builder(Component.literal("CLAIMS: ON"), b -> {}).bounds(x, y, w, 20).build());
+        x += w + gap;
+        addRenderableWidget(Button.builder(Component.literal("PADS: ON"), b -> {}).bounds(x, y, w, 20).build());
+    }
+
+    private void initRouteControls(int left, int top) {
+        int y = top + 145;
+        int buttonY = top + 180;
+        addRenderableWidget(Button.builder(Component.literal("WAYPOINT PREVIOUS"), b -> previousWaypoint())
+                .bounds(left + 20, buttonY, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("NEXT ▶"), b -> nextWaypoint())
+                .bounds(left + 210, buttonY, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("SET DESTINATION"), b -> setDestination())
+                .bounds(left + 400, buttonY, 180, 20).build());
+    }
+
+    private void initFlightControls(int left, int top) {
+        addRenderableWidget(Button.builder(Component.literal("ENGAGE / DISENGAGE"), b -> send(FlightControllerAction.TOGGLE_ENGAGED)).bounds(left + 30, top + 210, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("STABILISER"), b -> send(FlightControllerAction.TOGGLE_STABILISER)).bounds(left + 225, top + 210, 120, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("MODE SELECT"), b -> send(FlightControllerAction.CYCLE_MODE)).bounds(left + 360, top + 210, 120, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("DISPLAY TEST"), b -> send(FlightControllerAction.PULSE_DISPLAY)).bounds(left + 495, top + 210, 120, 20).build());
     }
 
     private Component terrainLabel() { return Component.literal("TERRAIN: " + (showTerrain ? "ON" : "OFF")); }
-
-    private Component markerLabel(MarkerCategory c) {
-        String label = switch (c) {
-            case XAERO_WAYPOINT -> "XAERO WP";
-            case FLIGHT_WAYPOINT -> "FLIGHT WP";
-            case CLAIMED_SUBLEVEL -> "CLAIMS";
-            case LANDING_PAD -> "PADS";
-        };
-        return Component.literal(label + ": " + (MarkerRegistry.isVisible(c) ? "ON" : "OFF"));
-    }
+    private Component flightMapLabel() { return Component.literal("FLIGHT MAP: " + (showFlightMap ? "ON" : "OFF")); }
 
     private void zoomIn() { xaeroMap.mouseScrolled(mapLeft() + 300, mapTop() + 130, 0, 1, mapLeft(), mapTop(), mapWidth(), mapHeight()); }
     private void zoomOut() { xaeroMap.mouseScrolled(mapLeft() + 300, mapTop() + 130, 0, -1, mapLeft(), mapTop(), mapWidth(), mapHeight()); }
@@ -120,6 +131,28 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void centreController() { xaeroMap.centerOn(controllerPos.getX() + 0.5D, controllerPos.getZ() + 0.5D); }
+
+    private void previousWaypoint() {
+        List<XaeroWaypointProvider.Waypoint> waypoints = xaeroWaypoints.getWaypoints();
+        if (waypoints.isEmpty()) return;
+        waypointIndex = (waypointIndex - 1 + waypoints.size()) % waypoints.size();
+    }
+
+    private void nextWaypoint() {
+        List<XaeroWaypointProvider.Waypoint> waypoints = xaeroWaypoints.getWaypoints();
+        if (waypoints.isEmpty()) return;
+        waypointIndex = (waypointIndex + 1) % waypoints.size();
+    }
+
+    private void setDestination() {
+        List<XaeroWaypointProvider.Waypoint> waypoints = xaeroWaypoints.getWaypoints();
+        if (waypoints.isEmpty()) {
+            destination = null;
+            return;
+        }
+        waypointIndex = Math.max(0, Math.min(waypointIndex, waypoints.size() - 1));
+        destination = NavigationDestination.from(waypoints.get(waypointIndex));
+    }
 
     private void switchTab(Tab next) {
         tab = next;
@@ -151,6 +184,9 @@ public final class NavigationConsoleScreen extends Screen {
         if (!controllerPowered()) { minecraft.setScreen(null); return; }
         xaeroMap.tick(mapWidth(), mapHeight());
         xaeroWaypoints.tick(minecraft.level);
+        List<XaeroWaypointProvider.Waypoint> waypoints = xaeroWaypoints.getWaypoints();
+        if (waypoints.isEmpty()) waypointIndex = 0;
+        else if (waypointIndex >= waypoints.size()) waypointIndex = waypoints.size() - 1;
     }
 
     @Override
@@ -197,7 +233,7 @@ public final class NavigationConsoleScreen extends Screen {
 
         XaeroMapViewport.Snapshot view = XaeroMapViewport.read();
         boolean online = showTerrain && xaeroMap.isActive() && view != null && view.finite();
-        if (view != null && view.finite()) overlays.render(g, view, mapL, mapT, mapWidth, mapHeight, controllerPos);
+        if (view != null && view.finite() && showFlightMap) positions.render(g, view, mapL, mapT, mapWidth, mapHeight, controllerPos);
 
         g.drawString(font, "XAERO TERRAIN: " + (online ? "ONLINE" : "OFFLINE"), mapL + 8, mapT + 8, online ? GREEN : RED);
         g.drawString(font, "XAERO NATIVE MAP", mapR - 122, mapT + 8, CYAN_BRIGHT);
@@ -207,19 +243,60 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void renderRoute(GuiGraphics g, int left, int top) {
+        List<XaeroWaypointProvider.Waypoint> waypoints = xaeroWaypoints.getWaypoints();
         g.drawString(font, "ROUTE / FLIGHT PLAN", left + 20, top + 10, TEXT);
-        g.drawString(font, "NEXT: Refinery", left + 20, top + 45, CYAN_BRIGHT);
-        g.drawString(font, "DISTANCE: —", left + 20, top + 70, MUTED);
-        g.drawString(font, "BEARING: —", left + 20, top + 92, MUTED);
-        g.drawString(font, "ETA: —", left + 20, top + 114, MUTED);
+        g.drawString(font, "XAERO WAYPOINT DESTINATION", left + 20, top + 45, CYAN_BRIGHT);
+
+        if (waypoints.isEmpty()) {
+            g.drawString(font, "TARGET: —", left + 20, top + 82, MUTED);
+            g.drawString(font, "NO XAERO WAYPOINTS AVAILABLE", left + 20, top + 108, MUTED);
+            g.drawString(font, "Create a waypoint with Xaero's normal waypoint UI; it will appear here automatically.", left + 20, top + 135, MUTED);
+            return;
+        }
+
+        waypointIndex = Math.max(0, Math.min(waypointIndex, waypoints.size() - 1));
+        XaeroWaypointProvider.Waypoint selected = waypoints.get(waypointIndex);
+        g.drawString(font, "TARGET: " + selected.name(), left + 20, top + 82, TEXT);
+        g.drawString(font, String.format("X %d   Y %d   Z %d", selected.x(), selected.y(), selected.z()), left + 20, top + 108, MUTED);
+        g.drawString(font, String.format("WAYPOINT %d / %d", waypointIndex + 1, waypoints.size()), left + 20, top + 132, MUTED);
+
+        if (destination != null) {
+            g.drawString(font, "SELECTED DESTINATION: " + destination.name(), left + 20, top + 215, GREEN);
+            renderNavigationMetrics(g, left, top, destination);
+        } else {
+            g.drawString(font, "SELECTED DESTINATION: —", left + 20, top + 215, MUTED);
+            g.drawString(font, "Choose a waypoint, then press SET DESTINATION.", left + 20, top + 239, MUTED);
+        }
+    }
+
+    private void renderNavigationMetrics(GuiGraphics g, int left, int top, NavigationDestination target) {
+        if (minecraft == null || minecraft.player == null || minecraft.level == null) return;
+        String dimension = minecraft.level.dimension().location().toString();
+        if (!dimension.equals(target.dimension())) {
+            g.drawString(font, "DISTANCE: —", left + 20, top + 244, MUTED);
+            g.drawString(font, "BEARING: —", left + 210, top + 244, MUTED);
+            g.drawString(font, "ETA: —", left + 400, top + 244, MUTED);
+            return;
+        }
+
+        double dx = target.x() + 0.5D - minecraft.player.getX();
+        double dz = target.z() + 0.5D - minecraft.player.getZ();
+        double distance = Math.sqrt(dx * dx + dz * dz);
+        double bearing = Math.toDegrees(Math.atan2(dx, -dz));
+        if (bearing < 0.0D) bearing += 360.0D;
+
+        g.drawString(font, String.format("DISTANCE: %.1f m", distance), left + 20, top + 244, MUTED);
+        g.drawString(font, String.format("BEARING: %03.0f°", bearing), left + 210, top + 244, MUTED);
+        g.drawString(font, "ETA: —", left + 400, top + 244, MUTED);
     }
 
     private void renderFlightControl(GuiGraphics g, int left, int top) {
         FlightControllerState state = controller == null ? FlightControllerState.DEFAULT : controller.getControllerState();
         g.drawString(font, "FLIGHT CONTROL", left + 20, top + 10, TEXT);
         g.drawString(font, "SYSTEM: " + (state.engaged() ? "ENGAGED" : "DISENGAGED"), left + 20, top + 42, state.engaged() ? GREEN : MUTED);
-        g.drawString(font, "STABILIZER: " + (state.stabiliser() ? "ON" : "OFF"), left + 20, top + 65, state.stabiliser() ? GREEN : MUTED);
+        g.drawString(font, "STABILISER: " + (state.stabiliser() ? "ON" : "OFF"), left + 20, top + 65, state.stabiliser() ? GREEN : MUTED);
         g.drawString(font, "FLIGHT MODE: " + state.flightMode(), left + 20, top + 88, TEXT);
+        g.drawString(font, "NAVIGATION TARGET: " + (destination == null ? "NONE" : destination.name()), left + 20, top + 120, CYAN_BRIGHT);
     }
 
     private void renderDiagnostics(GuiGraphics g, int left, int top) {
@@ -239,13 +316,10 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, formatEnergy(energy) + " / " + formatEnergy(capacity) + " FE", left + 265, top + 88, energy > 0 ? GREEN : RED);
         g.drawString(font, "POWER STATE", left + 20, top + 111, TEXT);
         g.drawString(font, powerState.name(), left + 285, top + 111, powerState == PowerState.NO_POWER ? RED : GREEN);
-
-        g.drawString(font, "MAP SOURCES", left + 20, top + 150, TEXT);
-        drawSourceLine(g, left + 20, top + 174, MarkerCategory.FLIGHT_WAYPOINT);
-        drawSourceLine(g, left + 20, top + 196, MarkerCategory.XAERO_WAYPOINT);
-        drawSourceLine(g, left + 20, top + 218, MarkerCategory.CLAIMED_SUBLEVEL);
-        drawSourceLine(g, left + 20, top + 240, MarkerCategory.LANDING_PAD);
-
+        g.drawString(font, "XAERO", left + 20, top + 150, CYAN_BRIGHT);
+        g.drawString(font, xaeroOnline ? "STATUS: ONLINE" : "STATUS: OFFLINE", left + 90, top + 150, xaeroOnline ? GREEN : RED);
+        g.drawString(font, "WAYPOINTS: " + xaeroWaypoints.getWaypoints().size(), left + 20, top + 174, MUTED);
+        g.drawString(font, "DESTINATION: " + (destination == null ? "NONE" : destination.name()), left + 20, top + 198, MUTED);
         g.drawString(font, "POSITION", left + 405, top + 150, TEXT);
         g.drawString(font, String.format("CTRL X  %.2f", (double) controllerPos.getX()), left + 405, top + 174, MUTED);
         g.drawString(font, String.format("CTRL Y  %.2f", (double) controllerPos.getY()), left + 405, top + 196, MUTED);
@@ -254,19 +328,6 @@ public final class NavigationConsoleScreen extends Screen {
             g.drawString(font, String.format("PLAYER X  %.2f", minecraft.player.getX()), left + 405, top + 240, MUTED);
             g.drawString(font, String.format("PLAYER Z  %.2f", minecraft.player.getZ()), left + 405, top + 262, MUTED);
         }
-
-        g.drawString(font, "XAERO", left + 20, top + 292, CYAN_BRIGHT);
-        g.drawString(font, xaeroOnline ? "STATUS: ONLINE" : "STATUS: OFFLINE", left + 90, top + 292, xaeroOnline ? GREEN : RED);
-        String[] lines = xaeroMap.diagnostics().split("\\n");
-        int diagnosticY = top + 312;
-        for (int i = 0; i < Math.min(5, lines.length); i++) g.drawString(font, lines[i], left + 20, diagnosticY + i * 16, MUTED);
-        if (view != null && view.finite()) g.drawString(font, String.format("centre=%.2f, %.2f  scale=%.5f px/block", view.cameraX(), view.cameraZ(), view.pixelsPerBlock()), left + 405, top + 284, MUTED);
-    }
-
-    private void drawSourceLine(GuiGraphics g, int x, int y, MarkerCategory category) {
-        long count = MarkerRegistry.all().stream().filter(marker -> marker.category() == category).count();
-        long visible = MarkerRegistry.isVisible(category) ? count : 0L;
-        g.drawString(font, category.getLabel() + ": " + count + " " + (visible > 0 ? "VISIBLE" : "HIDDEN"), x, y, MUTED);
     }
 
     private String formatEnergy(long value) { return String.format("%,d", Math.max(0L, value)); }
