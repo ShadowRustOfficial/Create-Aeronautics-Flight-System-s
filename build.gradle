@@ -27,6 +27,13 @@ repositories {
             includeGroup "software.bernie.geckolib"
         }
     }
+    maven {
+        name = "Xaero Maven"
+        url = "https://chocolateminecraft.com/maven"
+        content {
+            includeGroupByRegex "xaero\\..*"
+        }
+    }
 }
 
 runs {
@@ -49,20 +56,16 @@ runs {
 dependencies {
     implementation "net.neoforged:neoforge:${neo_version}"
 
-    // Create 6.0.10 for Minecraft 1.21.1. The -223 suffix is Create's Maven build number
-    // for the 6.0.10 release line. Keep it compile-only; Create remains a runtime mod dependency.
     compileOnly("com.simibubi.create:create-${minecraft_version}:6.0.10-223:slim") {
         transitive = false
     }
-
-    // Catnip (net.createmod.catnip.*, e.g. Couple, which IRedstoneLinkable's getNetworkKey()
-    // requires) is NOT bundled in Create's slim jar - it lives in Ponder's own jar instead.
-    // Without this, "package net.createmod.catnip.data does not exist" is expected.
     compileOnly("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
-
-    // GeckoLib - block/entity animation engine. Replaces hand-coded ModelPart rotation for
-    // the Flight Controller's buttons/dials with real keyframe animations authored in Blockbench.
     implementation "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
+
+    // Xaero is an external client dependency. We compile directly against the public map API,
+    // but never bundle either jar into Flight Computer. The player already has these mods.
+    compileOnly "xaero.map:xaeroworldmap-neoforge-${minecraft_version}:1.44.2"
+    compileOnly "xaero.lib:xaerolib-neoforge-${minecraft_version}:1.1.15"
 }
 
 tasks.withType(ProcessResources).configureEach {
