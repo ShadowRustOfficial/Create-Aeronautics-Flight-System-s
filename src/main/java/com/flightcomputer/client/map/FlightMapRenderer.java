@@ -60,7 +60,15 @@ public final class FlightMapRenderer {
         int minLeafZ = Math.floorDiv((int) Math.floor(minWorldZ), XaeroMapDataProvider.LEAF_PIXELS);
         int maxLeafZ = Math.floorDiv((int) Math.floor(maxWorldZ), XaeroMapDataProvider.LEAF_PIXELS);
 
-        XaeroMapDataProvider provider = TerrainMapCache.provider();
+        // Transitional compatibility bridge: TerrainMapCache deliberately exposes the generic
+        // provider contract to the rest of the renderer, while FlightMapTextureCache still needs
+        // the immutable native leaf snapshot during this milestone. The concrete provider is
+        // created by TerrainMapCache itself, so this cast cannot introduce a second provider or
+        // alter runtime behaviour. Milestone 2 can remove this bridge by moving LeafSnapshot into
+        // the generic terrain contract without changing the rendering path.
+        TerrainProvider terrainProvider = TerrainMapCache.provider();
+        if (!(terrainProvider instanceof XaeroMapDataProvider provider)) return;
+
         int centreX = (left + right) / 2;
         int centreY = (top + bottom) / 2;
         int maxTracked = tracker.radiusBlocks();
