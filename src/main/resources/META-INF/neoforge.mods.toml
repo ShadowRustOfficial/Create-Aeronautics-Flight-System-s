@@ -27,3 +27,17 @@ displayName="${mod_name}"
     versionRange="[4.8.4,)"
     ordering="AFTER"
     side="BOTH"
+
+[[dependencies.'${mod_id}']]
+    modId="xaeroworldmap"
+    type="required"
+    versionRange="[1.44.2,)"
+    ordering="AFTER"
+    side="CLIENT"
+
+[[dependencies.'${mod_id}']]
+    modId="xaerolib"
+    type="required"
+    versionRange="[1.1.15,)"
+    ordering="AFTER"
+    side="CLIENT"
