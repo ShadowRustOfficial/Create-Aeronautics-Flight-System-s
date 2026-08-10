@@ -17,9 +17,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.entity.BlockEntity;
-
-import java.nio.charset.StandardCharsets;
-import java.util.UUID;
+import net.minecraft.world.phys.Vec3;
 
 /** Navigation Console: Map, Route, Flight Control and Diagnostics. */
 public final class NavigationConsoleScreen extends Screen {
@@ -76,7 +74,8 @@ public final class NavigationConsoleScreen extends Screen {
         if (minecraft == null || minecraft.level == null) return;
         ResourceLocation dimension = minecraft.level.dimension().location();
         if (flightMapViewport == null || !dimension.equals(flightMapViewport.dimension())) {
-            flightMapViewport = new FlightMapViewport(controllerPos.getX() + 0.5D, controllerPos.getZ() + 0.5D, 4.0D, dimension);
+            BlockPos anchor = controller != null ? controller.getBlockPos() : controllerPos;
+            flightMapViewport = new FlightMapViewport(anchor.getX() + 0.5D, anchor.getZ() + 0.5D, 4.0D, dimension);
         }
     }
 
@@ -87,8 +86,10 @@ public final class NavigationConsoleScreen extends Screen {
         ensureViewport();
 
         if (showTerrain) {
-            // The Flight Controller, not the player and not Xaero's GuiMap, is the map anchor.
-            TerrainMapCache.requestViewport(minecraft.level, controllerPos.getX(), controllerPos.getZ(), MAP_TRACK_RADIUS_BLOCKS);
+            // The active controller is the tracking anchor. The player is not used to decide
+            // what terrain the Flight Computer knows about.
+            BlockPos anchor = controller != null ? controller.getBlockPos() : controllerPos;
+            TerrainMapCache.requestViewport(minecraft.level, anchor.getX(), anchor.getZ(), MAP_TRACK_RADIUS_BLOCKS);
             TerrainMapCache.tick(minecraft.level);
         }
     }
@@ -141,16 +142,19 @@ public final class NavigationConsoleScreen extends Screen {
         int mapL = left + 20, mapT = top + 8, mapR = left + 620, mapB = top + 260;
         ensureViewport();
         if (minecraft != null && minecraft.level != null && flightMapViewport != null && controller != null) {
-            UUID controllerId = UUID.nameUUIDFromBytes(("flight-controller:" + controllerPos).getBytes(StandardCharsets.UTF_8));
-            FlightMapTracker tracker = new FlightMapTracker(controllerId, minecraft.level.dimension().location(), controllerPos, MAP_TRACK_RADIUS_BLOCKS);
-            FlightMapRenderer.render(g, font, minecraft.level, flightMapViewport, tracker, mapL, mapT, mapR, mapB);
+            BlockPos liveControllerPos = controller.getBlockPos();
+            FlightMapTracker tracker = new FlightMapTracker(
+                    controller.getControllerId(),
+                    minecraft.level.dimension().location(),
+                    liveControllerPos,
+                    MAP_TRACK_RADIUS_BLOCKS);
+            Vec3 playerPos = minecraft.player == null ? null : minecraft.player.position();
+            FlightMapRenderer.render(g, font, minecraft.level, flightMapViewport, tracker,
+                    liveControllerPos, playerPos, mapL, mapT, mapR, mapB);
         } else {
             g.fill(mapL, mapT, mapR, mapB, 0xFF101820);
         }
 
-        int cx = (mapL + mapR) / 2, cy = (mapT + mapB) / 2;
-        g.fill(cx - 4, cy - 4, cx + 4, cy + 4, 0xFFFFFFFF);
-        g.drawString(font, "▲ CONTROLLER", cx + 10, cy - 5, 0xFFFFFFFF);
         g.drawString(font, "TRACK: " + MAP_TRACK_RADIUS_BLOCKS + "m", mapL + 8, mapB + 6, 0xFFBFC8CC);
         double viewX = flightMapViewport == null ? controllerPos.getX() : flightMapViewport.centerX();
         double viewZ = flightMapViewport == null ? controllerPos.getZ() : flightMapViewport.centerZ();
