@@ -18,6 +18,9 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
+import java.nio.charset.StandardCharsets;
+import java.util.UUID;
+
 /** Navigation Console: Map, Route, Flight Control and Diagnostics. */
 public final class NavigationConsoleScreen extends Screen {
     private enum Tab { MAP, ROUTE, FLIGHT_CONTROL, DIAGNOSTICS }
@@ -40,8 +43,7 @@ public final class NavigationConsoleScreen extends Screen {
         this.controllerPos = controllerPos;
     }
 
-    @Override
-    protected void init() {
+    @Override protected void init() {
         controller = getController();
         if (controller != null) showTerrain = controller.isTerrainEnabled();
         ensureViewport();
@@ -78,8 +80,7 @@ public final class NavigationConsoleScreen extends Screen {
         }
     }
 
-    @Override
-    public void tick() {
+    @Override public void tick() {
         super.tick();
         if (minecraft == null || minecraft.level == null) return;
         if (!controllerPowered()) { minecraft.setScreen(null); return; }
@@ -114,8 +115,7 @@ public final class NavigationConsoleScreen extends Screen {
 
     private int statusColor(boolean online) { return online ? STATUS_ON_COLOR : STATUS_OFFLINE_COLOR; }
 
-    @Override
-    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+    @Override public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         int left = Math.max(10, (width - 640) / 2);
         int top = 20;
         g.fill(left - 8, top - 8, left + 648, Math.min(height - 20, top + 360), 0xE610141A);
@@ -138,74 +138,55 @@ public final class NavigationConsoleScreen extends Screen {
     @Override public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) { }
 
     private void renderMap(GuiGraphics g, int left, int top, int mouseX, int mouseY) {
-        int mapL = left + 20;
-        int mapT = top + 8;
-        int mapR = left + 620;
-        int mapB = top + 260;
+        int mapL = left + 20, mapT = top + 8, mapR = left + 620, mapB = top + 260;
         ensureViewport();
-
         if (minecraft != null && minecraft.level != null && flightMapViewport != null && controller != null) {
-            FlightMapTracker tracker = new FlightMapTracker(
-                    controller.getBlockPos().asLong() == 0L ? java.util.UUID.nameUUIDFromBytes(("flight-controller:" + controllerPos).getBytes(java.nio.charset.StandardCharsets.UTF_8)) : java.util.UUID.nameUUIDFromBytes(("flight-controller:" + controllerPos).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-                    minecraft.level.dimension().location(), controllerPos, MAP_TRACK_RADIUS_BLOCKS);
+            UUID controllerId = UUID.nameUUIDFromBytes(("flight-controller:" + controllerPos).getBytes(StandardCharsets.UTF_8));
+            FlightMapTracker tracker = new FlightMapTracker(controllerId, minecraft.level.dimension().location(), controllerPos, MAP_TRACK_RADIUS_BLOCKS);
             FlightMapRenderer.render(g, font, minecraft.level, flightMapViewport, tracker, mapL, mapT, mapR, mapB);
         } else {
             g.fill(mapL, mapT, mapR, mapB, 0xFF101820);
         }
 
-        int cx = (mapL + mapR) / 2;
-        int cy = (mapT + mapB) / 2;
+        int cx = (mapL + mapR) / 2, cy = (mapT + mapB) / 2;
         g.fill(cx - 4, cy - 4, cx + 4, cy + 4, 0xFFFFFFFF);
         g.drawString(font, "▲ CONTROLLER", cx + 10, cy - 5, 0xFFFFFFFF);
         g.drawString(font, "TRACK: " + MAP_TRACK_RADIUS_BLOCKS + "m", mapL + 8, mapB + 6, 0xFFBFC8CC);
-        g.drawString(font, "CENTRE X " + String.format("%.1f", flightMapViewport == null ? controllerPos.getX() : flightMapViewport.centerX())
-                + "  Z " + String.format("%.1f", flightMapViewport == null ? controllerPos.getZ() : flightMapViewport.centerZ()), mapL + 8, mapB - 18, 0xFFBFC8CC);
+        double viewX = flightMapViewport == null ? controllerPos.getX() : flightMapViewport.centerX();
+        double viewZ = flightMapViewport == null ? controllerPos.getZ() : flightMapViewport.centerZ();
+        g.drawString(font, "CENTRE X " + String.format("%.1f", viewX) + "  Z " + String.format("%.1f", viewZ), mapL + 8, mapB - 18, 0xFFBFC8CC);
         g.drawString(font, "DRAG TO PAN | SCROLL TO ZOOM", mapL + 8, mapB - 2, 0xFFBFC8CC);
     }
 
-    @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+    @Override public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (tab == Tab.MAP && button == 0 && isInsideMap(mouseX, mouseY)) {
-            draggingMap = true;
-            lastMouseX = mouseX;
-            lastMouseY = mouseY;
-            return true;
+            draggingMap = true; lastMouseX = mouseX; lastMouseY = mouseY; return true;
         }
         return super.mouseClicked(mouseX, mouseY, button);
     }
 
-    @Override
-    public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        if (button == 0 && draggingMap) {
-            draggingMap = false;
-            return true;
-        }
+    @Override public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && draggingMap) { draggingMap = false; return true; }
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
-    @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+    @Override public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
         if (tab == Tab.MAP && draggingMap && button == 0 && flightMapViewport != null) {
             flightMapViewport.panPixels(mouseX - lastMouseX, mouseY - lastMouseY);
-            lastMouseX = mouseX;
-            lastMouseY = mouseY;
-            return true;
+            lastMouseX = mouseX; lastMouseY = mouseY; return true;
         }
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double deltaX, double deltaY) {
+    @Override public boolean mouseScrolled(double mouseX, double mouseY, double deltaX, double deltaY) {
         if (tab == Tab.MAP && isInsideMap(mouseX, mouseY) && flightMapViewport != null) {
-            flightMapViewport.zoom(deltaY);
-            return true;
+            flightMapViewport.zoom(deltaY); return true;
         }
         return super.mouseScrolled(mouseX, mouseY, deltaX, deltaY);
     }
 
     private boolean isInsideMap(double x, double y) {
-        int left = Math.max(10, (width - 640) / 2);
-        int top = 20;
+        int left = Math.max(10, (width - 640) / 2), top = 20;
         int mapL = left + 20, mapT = top + 50, mapR = left + 620, mapB = top + 302;
         return x >= mapL && x <= mapR && y >= mapT && y <= mapB;
     }
@@ -228,8 +209,7 @@ public final class NavigationConsoleScreen extends Screen {
 
     private void renderFlightControl(GuiGraphics g, int left, int top) {
         FlightControllerState state = controller == null ? FlightControllerState.DEFAULT : controller.getControllerState();
-        boolean engaged = state.engaged();
-        boolean stabiliser = state.stabiliser();
+        boolean engaged = state.engaged(), stabiliser = state.stabiliser();
         g.drawString(font, "FLIGHT CONTROL", left + 20, top + 10, 0xFFFFFFFF);
         g.drawString(font, "SYSTEM: " + (engaged ? "● ENGAGED" : "○ DISENGAGED"), left + 20, top + 40, engaged ? 0xFF55FF55 : 0xFFAAAAAA);
         g.drawString(font, "STABILIZER: " + (stabiliser ? "ON" : "OFF"), left + 20, top + 65, stabiliser ? 0xFF55FF55 : 0xFFAAAAAA);
@@ -248,8 +228,7 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "FLIGHT COMPUTER     ● " + (powered ? "OPERATIONAL" : "OFFLINE"), left + 20, top + 40, statusColor);
         g.drawString(font, "LINK                ● " + (powered ? linkStatus() : "OFFLINE"), left + 20, top + 62, statusColor);
         if (controller != null) {
-            long stored = controller.getEnergyStorage().getEnergyStored();
-            long capacity = controller.getEnergyStorage().getMaxEnergyStored();
+            long stored = controller.getEnergyStorage().getEnergyStored(), capacity = controller.getEnergyStorage().getMaxEnergyStored();
             g.drawString(font, String.format("ENERGY              %,d / %,d FE", stored, capacity), left + 20, top + 84, statusColor);
             g.drawString(font, "POWER STATE         " + controller.getPowerState().name(), left + 20, top + 106, statusColor);
         }
