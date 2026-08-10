@@ -71,12 +71,6 @@ public final class NavigationConsoleScreen extends Screen {
         int y = top + 310;
         int x = left + 20;
         int gap = 4;
-        addRenderableWidget(Button.builder(Component.literal("−"), b -> zoomOut()).bounds(x, y, 28, 20).build());
-        x += 32;
-        addRenderableWidget(Button.builder(Component.literal("ZOOM"), b -> {}).bounds(x, y, 78, 20).build());
-        x += 82;
-        addRenderableWidget(Button.builder(Component.literal("+"), b -> zoomIn()).bounds(x, y, 28, 20).build());
-        x += 32;
         addRenderableWidget(Button.builder(Component.literal("CENTRE PLAYER"), b -> centrePlayer()).bounds(x, y, 118, 20).build());
         x += 122;
         addRenderableWidget(Button.builder(Component.literal("CENTRE CTRL"), b -> centreController()).bounds(x, y, 104, 20).build());
@@ -103,7 +97,6 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void initRouteControls(int left, int top) {
-        int y = top + 145;
         int buttonY = top + 180;
         addRenderableWidget(Button.builder(Component.literal("WAYPOINT PREVIOUS"), b -> previousWaypoint())
                 .bounds(left + 20, buttonY, 180, 20).build());
@@ -121,10 +114,7 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private Component terrainLabel() { return Component.literal("TERRAIN: " + (showTerrain ? "ON" : "OFF")); }
-    private Component flightMapLabel() { return Component.literal("FLIGHT MAP: " + (showFlightMap ? "ON" : "OFF")); }
-
-    private void zoomIn() { xaeroMap.mouseScrolled(mapLeft() + 300, mapTop() + 130, 0, 1, mapLeft(), mapTop(), mapWidth(), mapHeight()); }
-    private void zoomOut() { xaeroMap.mouseScrolled(mapLeft() + 300, mapTop() + 130, 0, -1, mapLeft(), mapTop(), mapWidth(), mapHeight()); }
+    private Component flightMapLabel() { return Component.literal("FLIGHT MAP: " + (showFlightMap ? "ON" : "OFF"); }
 
     private void centrePlayer() {
         if (minecraft != null && minecraft.player != null) xaeroMap.centerOn(minecraft.player.getX(), minecraft.player.getZ());
@@ -239,7 +229,7 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "XAERO NATIVE MAP", mapR - 122, mapT + 8, CYAN_BRIGHT);
         if (view != null && view.finite()) g.drawString(font, String.format("CENTRE X %.2f   Z %.2f", view.cameraX(), view.cameraZ()), mapL + 8, mapB - 30, MUTED);
         else g.drawString(font, "CENTRE X —   Z —", mapL + 8, mapB - 30, MUTED);
-        g.drawString(font, "DRAG TO PAN | SCROLL TO ZOOM", mapL + 8, mapB - 14, MUTED);
+        g.drawString(font, "DRAG TO PAN | MAP 1×", mapL + 8, mapB - 14, MUTED);
     }
 
     private void renderRoute(GuiGraphics g, int left, int top) {
@@ -338,12 +328,6 @@ public final class NavigationConsoleScreen extends Screen {
     private int mapRight() { return mapLeft() + mapWidth(); }
     private int mapBottom() { return mapTop() + mapHeight(); }
     private boolean isInsideMap(double x, double y) { return x >= mapLeft() && x < mapRight() && y >= mapTop() && y < mapBottom(); }
-
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        if (tab == Tab.MAP && isInsideMap(mouseX, mouseY) && xaeroMap.mouseScrolled(mouseX, mouseY, scrollX, scrollY, mapLeft(), mapTop(), mapWidth(), mapHeight())) return true;
-        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
-    }
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
