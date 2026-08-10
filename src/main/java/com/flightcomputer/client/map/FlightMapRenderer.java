@@ -14,7 +14,6 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class FlightMapRenderer {
     private static final int UNKNOWN = 0xFF101820;
-    private static final int MAX_MAP_LEVEL = 8;
     private static final FlightMapTextureCache TEXTURES = new FlightMapTextureCache();
 
     private FlightMapRenderer() { }
@@ -40,12 +39,13 @@ public final class FlightMapRenderer {
 
     private static void renderTerrain(GuiGraphics graphics, ClientLevel level, FlightMapViewport viewport,
                                       FlightMapTracker tracker, int left, int top, int right, int bottom) {
-        double blocksPerPixel = viewport.blocksPerPixel();
-        int mapLevel = chooseMapLevel(blocksPerPixel);
-        int mapBlocksPerPixel = 1 << mapLevel;
-        double leafWorldSize = XaeroMapDataProvider.LEAF_PIXELS * (double) mapBlocksPerPixel;
+        // Xaero's native API gives us a real 64x64 LOD-0 leaf, representing 64x64 world blocks.
+        // Zoom is a screen-space scale only. Do not reinterpret zoom as MapProcessor coordinates.
+        final int mapLevel = 0;
+        final double blocksPerPixel = viewport.blocksPerPixel();
+        final double leafWorldSize = XaeroMapDataProvider.LEAF_PIXELS;
 
-        String identity = level.dimension().location() + "|" + mapLevel;
+        String identity = level.dimension().location() + "|native-lod0";
         TEXTURES.beginFrame(identity);
 
         double mapCentreX = (left + right) / 2.0D;
@@ -55,10 +55,10 @@ public final class FlightMapRenderer {
         double minWorldZ = viewport.centerZ() + (top - mapCentreY) * blocksPerPixel;
         double maxWorldZ = viewport.centerZ() + (bottom - mapCentreY) * blocksPerPixel;
 
-        int minLeafX = Math.floorDiv((int) Math.floor(minWorldX / mapBlocksPerPixel), XaeroMapDataProvider.LEAF_PIXELS);
-        int maxLeafX = Math.floorDiv((int) Math.floor(maxWorldX / mapBlocksPerPixel), XaeroMapDataProvider.LEAF_PIXELS);
-        int minLeafZ = Math.floorDiv((int) Math.floor(minWorldZ / mapBlocksPerPixel), XaeroMapDataProvider.LEAF_PIXELS);
-        int maxLeafZ = Math.floorDiv((int) Math.floor(maxWorldZ / mapBlocksPerPixel), XaeroMapDataProvider.LEAF_PIXELS);
+        int minLeafX = Math.floorDiv((int) Math.floor(minWorldX), XaeroMapDataProvider.LEAF_PIXELS);
+        int maxLeafX = Math.floorDiv((int) Math.floor(maxWorldX), XaeroMapDataProvider.LEAF_PIXELS);
+        int minLeafZ = Math.floorDiv((int) Math.floor(minWorldZ), XaeroMapDataProvider.LEAF_PIXELS);
+        int maxLeafZ = Math.floorDiv((int) Math.floor(maxWorldZ), XaeroMapDataProvider.LEAF_PIXELS);
 
         XaeroMapDataProvider provider = TerrainMapCache.provider();
         int centreX = (left + right) / 2;
@@ -87,12 +87,6 @@ public final class FlightMapRenderer {
         double dx = x - (anchor.getX() + 0.5D);
         double dz = z - (anchor.getZ() + 0.5D);
         return dx * dx + dz * dz > (double) radius * radius;
-    }
-
-    private static int chooseMapLevel(double blocksPerPixel) {
-        if (!Double.isFinite(blocksPerPixel) || blocksPerPixel <= 1.0D) return 0;
-        double log2 = Math.log(blocksPerPixel) / Math.log(2.0D);
-        return Math.max(0, Math.min(MAX_MAP_LEVEL, (int) Math.round(log2)));
     }
 
     private static void renderGrid(GuiGraphics graphics, int left, int top, int right, int bottom, double scale) {
