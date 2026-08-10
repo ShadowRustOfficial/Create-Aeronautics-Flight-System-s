@@ -1,5 +1,6 @@
 package com.flightcomputer.client.map;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -9,10 +10,13 @@ import net.minecraft.world.phys.Vec3;
 /**
  * First-party Flight Computer map renderer.
  *
- * Xaero is a data source only. This renderer never creates, ticks or renders Xaero GUI state.
+ * Xaero is used strictly as a decoded terrain provider. Its GUI, camera, mouse state, zoom state
+ * and render methods are never invoked. Terrain is rendered from cached 64x64 Xaero leaf textures.
  */
 public final class FlightMapRenderer {
     private static final int UNKNOWN = 0xFF101820;
+    private static final int MAX_MAP_LEVEL = 8;
+    private static final FlightMapTextureCache TEXTURES = new FlightMapTextureCache();
 
     private FlightMapRenderer() { }
 
@@ -28,7 +32,7 @@ public final class FlightMapRenderer {
             graphics.fill(left, top, right, bottom, UNKNOWN);
             renderTerrain(graphics, level, viewport, tracker, left, top, right, bottom);
             renderGrid(graphics, left, top, right, bottom, viewport.blocksPerPixel());
-            renderNavigationMarkers(graphics, font, level, viewport, tracker,
+            renderNavigationMarkers(graphics, font, viewport, tracker,
                     controllerPos, playerPos, left, top, right, bottom);
         } finally {
             graphics.disableScissor();
@@ -37,30 +41,60 @@ public final class FlightMapRenderer {
 
     private static void renderTerrain(GuiGraphics graphics, ClientLevel level, FlightMapViewport viewport,
                                       FlightMapTracker tracker, int left, int top, int right, int bottom) {
+        double blocksPerPixel = viewport.blocksPerPixel();
+        int mapLevel = chooseMapLevel(blocksPerPixel);
+        int mapBlocksPerPixel = 1 << mapLevel;
+        double leafWorldSize = XaeroMapDataProvider.LEAF_PIXELS * (double) mapBlocksPerPixel;
+
+        String identity = level.dimension().location() + "|" + mapLevel;
+        TEXTURES.beginFrame(identity);
+
+        // The Flight Controller's tracked radius is a hard visibility boundary. We still clip
+        // every leaf to it so panning cannot expose terrain outside the controller's known area.
+        double minWorldX = viewport.centerX() + (left - (left + right) / 2.0D) * blocksPerPixel;
+        double maxWorldX = viewport.centerX() + (right - (left + right) / 2.0D) * blocksPerPixel;
+        double minWorldZ = viewport.centerZ() + (top - (top + bottom) / 2.0D) * blocksPerPixel;
+        double maxWorldZ = viewport.centerZ() + (bottom - (top + bottom) / 2.0D) * blocksPerPixel;
+
+        int minLeafX = Math.floorDiv((int) Math.floor(minWorldX / mapBlocksPerPixel), XaeroMapDataProvider.LEAF_PIXELS);
+        int maxLeafX = Math.floorDiv((int) Math.floor(maxWorldX / mapBlocksPerPixel), XaeroMapDataProvider.LEAF_PIXELS);
+        int minLeafZ = Math.floorDiv((int) Math.floor(minWorldZ / mapBlocksPerPixel), XaeroMapDataProvider.LEAF_PIXELS);
+        int maxLeafZ = Math.floorDiv((int) Math.floor(maxWorldZ / mapBlocksPerPixel), XaeroMapDataProvider.LEAF_PIXELS);
+
+        XaeroMapDataProvider provider = TerrainMapCache.provider();
         int centreX = (left + right) / 2;
         int centreY = (top + bottom) / 2;
-        double scale = viewport.blocksPerPixel();
+        int maxTracked = tracker.radiusBlocks();
 
-        // The old renderer stepped by four SCREEN pixels regardless of zoom. At the default
-        // 4 blocks/pixel scale that sampled one point every 16 world blocks and produced the
-        // sparse green squares seen in-game. Keep the renderer cheap, but always cover the
-        // viewport continuously with adaptive screen-space blocks.
-        int step = scale >= 16.0D ? 4 : scale >= 8.0D ? 3 : scale >= 3.0D ? 2 : 1;
+        for (int leafZ = minLeafZ; leafZ <= maxLeafZ; leafZ++) {
+            for (int leafX = minLeafX; leafX <= maxLeafX; leafX++) {
+                double leafWorldX = leafX * leafWorldSize;
+                double leafWorldZ = leafZ * leafWorldSize;
+                double leafCentreX = leafWorldX + leafWorldSize * 0.5D;
+                double leafCentreZ = leafWorldZ + leafWorldSize * 0.5D;
+                if (distanceOutsideTrack(leafCentreX, leafCentreZ, tracker.anchor(), maxTracked)) continue;
 
-        for (int sy = top; sy < bottom; sy += step) {
-            double worldZ = viewport.centerZ() + ((sy + step * 0.5D) - centreY) * scale;
-            for (int sx = left; sx < right; sx += step) {
-                double worldX = viewport.centerX() + ((sx + step * 0.5D) - centreX) * scale;
-                int wx = (int) Math.floor(worldX);
-                int wz = (int) Math.floor(worldZ);
+                int sx = centreX + (int) Math.floor((leafWorldX - viewport.centerX()) / blocksPerPixel);
+                int sy = centreY + (int) Math.floor((leafWorldZ - viewport.centerZ()) / blocksPerPixel);
+                int sw = Math.max(1, (int) Math.ceil(leafWorldSize / blocksPerPixel));
+                int sh = sw;
 
-                int color = tracker.tracksBlock(wx, wz)
-                        ? TerrainMapCache.cachedColorAt(level, wx, wz)
-                        : 0;
-                int drawColor = color == 0 ? UNKNOWN : color;
-                graphics.fill(sx, sy, Math.min(sx + step, right), Math.min(sy + step, bottom), drawColor);
+                TEXTURES.drawLeaf(graphics, provider, mapLevel, leafX, leafZ, sx, sy, sw, sh);
             }
         }
+    }
+
+    private static double distanceOutsideTrack(double x, double z, BlockPos anchor, int radius) {
+        if (anchor == null) return 0.0D;
+        double dx = x - (anchor.getX() + 0.5D);
+        double dz = z - (anchor.getZ() + 0.5D);
+        return Math.sqrt(dx * dx + dz * dz) > radius;
+    }
+
+    private static int chooseMapLevel(double blocksPerPixel) {
+        if (!Double.isFinite(blocksPerPixel) || blocksPerPixel <= 1.0D) return 0;
+        double log2 = Math.log(blocksPerPixel) / Math.log(2.0D);
+        return Math.max(0, Math.min(MAX_MAP_LEVEL, (int) Math.round(log2)));
     }
 
     private static void renderGrid(GuiGraphics graphics, int left, int top, int right, int bottom, double scale) {
@@ -70,7 +104,7 @@ public final class FlightMapRenderer {
         for (int y = top; y <= bottom; y += spacing) graphics.hLine(left, right, y, 0x332F414A);
     }
 
-    private static void renderNavigationMarkers(GuiGraphics graphics, Font font, ClientLevel level,
+    private static void renderNavigationMarkers(GuiGraphics graphics, Font font,
                                                 FlightMapViewport viewport, FlightMapTracker tracker,
                                                 BlockPos controllerPos, Vec3 playerPos,
                                                 int left, int top, int right, int bottom) {
@@ -79,7 +113,6 @@ public final class FlightMapRenderer {
                     controllerPos.getX() + 0.5D, controllerPos.getZ() + 0.5D,
                     "▲ CONTROLLER", 0xFFFFFFFF, left, top, right, bottom);
         }
-
         if (playerPos != null) {
             renderMarker(graphics, font, viewport, tracker,
                     playerPos.x, playerPos.z,
@@ -91,14 +124,12 @@ public final class FlightMapRenderer {
                                      FlightMapTracker tracker, double worldX, double worldZ,
                                      String label, int color, int left, int top, int right, int bottom) {
         if (!tracker.tracksBlock((int) Math.floor(worldX), (int) Math.floor(worldZ))) return;
-
         int centreX = (left + right) / 2;
         int centreY = (top + bottom) / 2;
         double scale = viewport.blocksPerPixel();
         int sx = centreX + (int) Math.round((worldX - viewport.centerX()) / scale);
         int sy = centreY + (int) Math.round((worldZ - viewport.centerZ()) / scale);
         if (sx < left - 80 || sx > right + 80 || sy < top - 20 || sy > bottom + 20) return;
-
         graphics.fill(sx - 4, sy - 4, sx + 5, sy + 5, color);
         graphics.drawString(font, label, sx + 10, sy - 5, color);
     }
