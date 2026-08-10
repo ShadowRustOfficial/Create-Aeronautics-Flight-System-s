@@ -10,6 +10,7 @@ import xaero.map.region.MapTileChunk;
 import xaero.map.region.texture.LeafRegionTexture;
 import org.slf4j.Logger;
 
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
@@ -28,9 +29,19 @@ public final class XaeroMapDataProvider {
     private MapProcessor processor;
     private String diagnostics = "Xaero adapter not initialized.";
 
+    /*
+     * Xaero normally pumps disk/map decoding from its own render-processing path. Flight
+     * Computer deliberately does not render Xaero's GUI, so merely queueing MapSaveLoad
+     * requests can leave them permanently waiting. We therefore invoke Xaero's own processing
+     * routine on the Minecraft render thread while our independent map is open.
+     */
+    private Method renderProcessMethod;
+    private boolean renderProcessMethodResolved;
+
     public void tick(ClientLevel level) {
         tickCounter++;
-        ensure(level);
+        if (!ensure(level)) return;
+        pumpXaeroDecoder();
     }
 
     public boolean available(ClientLevel level) {
@@ -38,12 +49,6 @@ public final class XaeroMapDataProvider {
         return processor != null;
     }
 
-    /**
-     * Prefetches native Xaero LOD-0 map data around the Flight Controller.
-     *
-     * Flight Computer zoom is deliberately NOT passed to Xaero as a map coordinate or level.
-     * Xaero's MapProcessor is used only for its decoded map data and existing disk-load queue.
-     */
     public void requestWorldArea(ClientLevel level, double centerX, double centerZ, double radiusBlocks,
                                  int ignoredMapLevel) {
         if (!ensure(level)) return;
@@ -73,11 +78,7 @@ public final class XaeroMapDataProvider {
         }
     }
 
-    /**
-     * Returns a copy of Xaero's decoded RGBA 64x64 leaf buffer.
-     *
-     * leafX/leafZ are the native LOD-0 map coordinates used by MapProcessor#getMapChunk.
-     */
+    /** Returns a copy of Xaero's decoded RGBA 64x64 leaf buffer. */
     public LeafSnapshot getLeaf(int ignoredMapLevel, int leafX, int leafZ) {
         if (processor == null) return null;
 
@@ -147,6 +148,8 @@ public final class XaeroMapDataProvider {
         processor = null;
         identity = null;
         tickCounter = 0;
+        renderProcessMethod = null;
+        renderProcessMethodResolved = false;
         diagnostics = "Xaero adapter cleared.";
     }
 
@@ -159,6 +162,8 @@ public final class XaeroMapDataProvider {
         requestedRegions.clear();
         tickCounter = 0;
         processor = null;
+        renderProcessMethod = null;
+        renderProcessMethodResolved = false;
 
         try {
             WorldMapSession session = WorldMapSession.getCurrentSession();
@@ -209,11 +214,10 @@ public final class XaeroMapDataProvider {
                 processor.getMapSaveLoad().requestLoad(region, "flightcomputer", false);
                 requestedRegions.put(key, tickCounter);
                 diagnostics = "Requested Xaero region " + regionX + "," + regionZ
-                        + " layer " + caveLayer + "; waiting for decode.";
+                        + " layer " + caveLayer + "; decoder pump active.";
                 return true;
             }
 
-            // It is already decoded. Keep the entry fresh so we do not spam the load queue.
             requestedRegions.put(key, tickCounter);
             return false;
         } catch (Throwable t) {
@@ -221,6 +225,42 @@ public final class XaeroMapDataProvider {
             LOGGER.debug("[FlightComputer] Failed to request Xaero region {},{} layer {}", regionX, regionZ, caveLayer, t);
             return false;
         }
+    }
+
+    /** Pumps Xaero's existing decode/load path without opening or rendering its GUI. */
+    private void pumpXaeroDecoder() {
+        if (processor == null || requestedRegions.isEmpty()) return;
+
+        try {
+            if (!renderProcessMethodResolved) {
+                renderProcessMethodResolved = true;
+                Method method = findZeroArgMethod(processor.getClass(), "onRenderProcess");
+                if (method != null) {
+                    method.setAccessible(true);
+                    renderProcessMethod = method;
+                } else {
+                    diagnostics = "Xaero decoder pump unavailable: MapProcessor.onRenderProcess() not found.";
+                    return;
+                }
+            }
+
+            if (renderProcessMethod == null) return;
+            renderProcessMethod.invoke(processor);
+            diagnostics = "Xaero decoder pump active; waiting for requested regions to decode.";
+        } catch (Throwable t) {
+            Throwable cause = t.getCause() != null ? t.getCause() : t;
+            diagnostics = "Xaero decoder pump failed: " + cause.getClass().getSimpleName();
+            LOGGER.debug("[FlightComputer] Xaero decoder pump failed", cause);
+        }
+    }
+
+    private static Method findZeroArgMethod(Class<?> type, String name) {
+        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+            for (Method method : current.getDeclaredMethods()) {
+                if (method.getName().equals(name) && method.getParameterCount() == 0) return method;
+            }
+        }
+        return null;
     }
 
     private static String buildIdentity(ClientLevel level) {
