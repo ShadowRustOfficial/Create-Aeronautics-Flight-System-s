@@ -28,13 +28,6 @@ repositories {
         }
     }
     maven {
-        name = "Xaero's Maven"
-        url = "https://chocolateminecraft.com/maven"
-        content {
-            includeGroupByRegex "xaero\\..*"
-        }
-    }
-    maven {
         name = "CurseMaven"
         url = "https://www.cursemaven.com"
         content {
@@ -63,29 +56,15 @@ runs {
 dependencies {
     implementation "net.neoforged:neoforge:${neo_version}"
 
-    // Create 6.0.10 for Minecraft 1.21.1. The -223 suffix is Create's Maven build number
-    // for the 6.0.10 release line. Keep it compile-only; Create remains a runtime mod dependency.
     compileOnly("com.simibubi.create:create-${minecraft_version}:6.0.10-223:slim") {
         transitive = false
     }
 
-    // Catnip (net.createmod.catnip.*, e.g. Couple, which IRedstoneLinkable's getNetworkKey()
-    // requires) is NOT bundled in Create's slim jar - it lives in Ponder's own jar instead.
-    // Without this, "package net.createmod.catnip.data does not exist" is expected.
     compileOnly("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
-
-    // GeckoLib - block/entity animation engine. Replaces hand-coded ModelPart rotation for
-    // the Flight Controller's buttons/dials with real keyframe animations authored in Blockbench.
     implementation "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
 
-    // Xaero World Map is a hard dependency for terrain integration. The provider consumes
-    // Xaero's native decoded MapProcessor/MapTile textures rather than reverse-engineering
-    // .xwmc files or scanning live Minecraft chunks.
-    implementation "xaero.map:xaeroworldmap-neoforge-${minecraft_version}:${xaero_world_map_version}"
-
-    // Xaero Minimap is also a hard dependency because Flight Computer consumes its persistent
-    // waypoint data. The provider reads Xaero's waypoint file without modifying Xaero state.
-    implementation "xaero.minimap:xaerominimap-neoforge-${minecraft_version}:${xaero_minimap_version}"
+    // No Xaero, JourneyMap, or VoxelMap dependency. The Flight Computer owns
+    // the complete map acquisition, cache, terrain generation and renderer stack.
 }
 
 tasks.withType(ProcessResources).configureEach {

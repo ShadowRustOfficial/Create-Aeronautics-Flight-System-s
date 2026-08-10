@@ -2,9 +2,9 @@ name: Phase 2 Build Verification
 
 on:
   push:
-    branches: [phase-2-map-controls, phase-2-map-controls-buildfix, phase-2-xaero-waypoint-integration, phase-2-xaero-waypoint-build-fix, phase-2-navigation-foundation, phase-2-xaero-viewport-leak-fix, phase-2-map-stabilisation-1x-clean, phase-3-map-architecture-standard]
+    branches: [phase-2-map-controls, phase-2-map-controls-buildfix, phase-2-xaero-waypoint-integration, phase-2-xaero-waypoint-build-fix, phase-2-navigation-foundation, phase-2-xaero-viewport-leak-fix, phase-2-map-stabilisation-1x-clean, phase-3-map-architecture-standard, phase-4-native-journeymap-renderer]
   pull_request:
-    branches: [phase-2-xaero-waypoint-build-fix, phase-2-xaero-viewport-leak-fix, phase-2-map-ui-viewport-isolation]
+    branches: [phase-2-xaero-waypoint-build-fix, phase-2-xaero-viewport-leak-fix, phase-2-map-ui-viewport-isolation, phase-3-map-architecture-standard, phase-4-native-journeymap-renderer]
 
 jobs:
   build:

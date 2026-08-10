@@ -1,10 +1,12 @@
 package com.flightcomputer.client.map;
 
-/** Provider identity used by the Flight Computer without exposing provider-specific APIs to the UI. */
+/**
+ * Provider identity exposed to the Flight Computer UI.
+ *
+ * There are deliberately no external map-mod provider identities here. The
+ * JourneyMap-inspired implementation is owned by Flight Computer itself.
+ */
 public enum FlightMapProviderKind {
-    NATIVE,
-    XAERO,
-    JOURNEYMAP,
-    VOXELMAP,
+    NATIVE_JOURNEYMAP_INSPIRED,
     NONE
 }

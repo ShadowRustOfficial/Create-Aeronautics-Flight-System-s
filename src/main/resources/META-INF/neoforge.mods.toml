@@ -31,21 +31,6 @@ config="flightcomputer.mixins.json"
     ordering="AFTER"
     side="BOTH"
 
-# Flight Computer consumes Xaero World Map's native decoded terrain representation.
-# Keep the exact client version aligned with the supplied 1.21.1 / 1.44.2 jar.
-[[dependencies.'${mod_id}']]
-    modId="xaeroworldmap"
-    type="required"
-    versionRange="[1.44.2,1.44.3)"
-    ordering="AFTER"
-    side="CLIENT"
-
-# Flight Computer consumes Xaero Minimap's persistent waypoint data as part of the
-# same navigation integration. Keep the exact client version aligned with the
-# supplied 1.21.1 / 26.4.2 jar.
-[[dependencies.'${mod_id}']]
-    modId="xaerominimap"
-    type="required"
-    versionRange="[26.4.2,26.4.3)"
-    ordering="AFTER"
-    side="CLIENT"
+# The map engine is Flight Computer-owned. JourneyMap's architecture is used
+# as a design reference only; JourneyMap itself is never loaded or required.
+# Xaero and VoxelMap are likewise not dependencies.
