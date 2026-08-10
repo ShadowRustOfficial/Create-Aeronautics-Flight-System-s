@@ -197,8 +197,13 @@ public final class NavigationConsoleScreen extends Screen {
         int mapL = left + 20, mapT = top + 8, mapR = left + 620, mapB = top + 268;
         int mapWidth = mapR - mapL, mapHeight = mapB - mapT;
         g.fill(mapL, mapT, mapR, mapB, MAP_BG);
+
+        // Hard viewport boundary: terrain and map markers cannot paint into the UI chrome.
+        g.enableScissor(mapL, mapT, mapR, mapB);
         if (showTerrain && minecraft != null && minecraft.level != null) renderTerrain(g, minecraft.level, mapL, mapT, mapR, mapB);
         if (showFlightMap) renderPositionOverlay(g, mapL, mapT, mapWidth, mapHeight);
+        g.disableScissor();
+
         FlightMapDiagnostics d = mapPipeline.diagnostics();
         boolean online = showTerrain && d.provider() == FlightMapProviderKind.NATIVE_JOURNEYMAP_INSPIRED;
         g.drawString(font, "NATIVE TERRAIN: " + (online ? "ONLINE" : "OFFLINE"), mapL + 8, mapT + 8, online ? GREEN : RED);
@@ -206,8 +211,10 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "DRAG TO PAN | 1 BLOCK/PIXEL", mapL + 8, mapB - 14, MUTED);
     }
 
-    private void renderTerrain(GuiGraphics g, net.minecraft.client.multiplayer.ClientLevel level, int left, int top, int right, int bottom) {
+    private void renderTerrain(net.minecraft.client.gui.GuiGraphics g, net.minecraft.client.multiplayer.ClientLevel level, int left, int top, int right, int bottom) {
         final double scale = 1.0D;
+        final int sourceStep = 2;
+        final int tilePixels = 16;
         int minChunkX = (int)Math.floor((mapCenterX - (right - left) / (2.0D * scale)) / 16.0D) - 1;
         int maxChunkX = (int)Math.floor((mapCenterX + (right - left) / (2.0D * scale)) / 16.0D) + 1;
         int minChunkZ = (int)Math.floor((mapCenterZ - (bottom - top) / (2.0D * scale)) / 16.0D) - 1;
@@ -215,15 +222,18 @@ public final class NavigationConsoleScreen extends Screen {
         for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
             for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
                 int[] tile = mapPipeline.getCachedTile(level, chunkX, chunkZ);
-                int px = (int)Math.floor(left + (chunkX * 16.0D - mapCenterX) * scale + (right - left) / 2.0D);
-                int py = (int)Math.floor(top + (chunkZ * 16.0D - mapCenterZ) * scale + (bottom - top) / 2.0D);
+                int px = (int)Math.floor(left + (chunkX * tilePixels - mapCenterX) * scale + (right - left) / 2.0D);
+                int py = (int)Math.floor(top + (chunkZ * tilePixels - mapCenterZ) * scale + (bottom - top) / 2.0D);
                 if (tile == null) {
-                    g.fill(px, py, px + 16, py + 16, 0xFF171B1E);
+                    g.fill(px, py, px + tilePixels, py + tilePixels, 0xFF171B1E);
                     continue;
                 }
-                for (int sy = 0; sy < 16; sy += 4) {
-                    for (int sx = 0; sx < 16; sx += 4) {
-                        g.fill(px + sx, py + sy, px + sx + 4, py + sy + 4, tile[sy * 16 + sx]);
+                // Render 2x2 source samples instead of the old 4x4 blocks. This keeps
+                // the CPU renderer inexpensive while substantially improving map detail.
+                for (int sy = 0; sy < tilePixels; sy += sourceStep) {
+                    for (int sx = 0; sx < tilePixels; sx += sourceStep) {
+                        g.fill(px + sx, py + sy, px + sx + sourceStep, py + sy + sourceStep,
+                                tile[sy * tilePixels + sx]);
                     }
                 }
             }
