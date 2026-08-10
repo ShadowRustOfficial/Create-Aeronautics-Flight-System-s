@@ -85,11 +85,12 @@ public final class NavigationConsoleScreen extends Screen {
         if (!controllerPowered()) { minecraft.setScreen(null); return; }
         ensureViewport();
 
-        if (showTerrain) {
-            // The active controller is the tracking anchor. The player is not used to decide
-            // what terrain the Flight Computer knows about.
+        if (showTerrain && flightMapViewport != null) {
+            // The controller defines the Flight Computer's known area. The current Flight Map
+            // zoom selects the Xaero LOD, while Xaero itself performs cache decoding/loading.
             BlockPos anchor = controller != null ? controller.getBlockPos() : controllerPos;
-            TerrainMapCache.requestViewport(minecraft.level, anchor.getX(), anchor.getZ(), MAP_TRACK_RADIUS_BLOCKS);
+            TerrainMapCache.requestViewport(minecraft.level, anchor.getX(), anchor.getZ(),
+                    MAP_TRACK_RADIUS_BLOCKS, flightMapViewport.blocksPerPixel());
             TerrainMapCache.tick(minecraft.level);
         }
     }
@@ -218,36 +219,10 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "SYSTEM: " + (engaged ? "● ENGAGED" : "○ DISENGAGED"), left + 20, top + 40, engaged ? 0xFF55FF55 : 0xFFAAAAAA);
         g.drawString(font, "STABILIZER: " + (stabiliser ? "ON" : "OFF"), left + 20, top + 65, stabiliser ? 0xFF55FF55 : 0xFFAAAAAA);
         g.drawString(font, "FLIGHT MODE: " + state.flightMode(), left + 20, top + 90, 0xFFFFFFFF);
-        g.drawString(font, "AUTOPILOT", left + 330, top + 40, 0xFFFFFFFF);
-        g.drawString(font, "Automatic Navigation     ○", left + 330, top + 65, 0xFFBFC8CC);
-        g.drawString(font, "Automatic Braking        ○", left + 330, top + 87, 0xFFBFC8CC);
-        g.drawString(font, "Automatic Altitude       ○", left + 330, top + 109, 0xFFBFC8CC);
-        g.drawString(font, "Automatic Docking        ○", left + 330, top + 131, 0xFFBFC8CC);
     }
 
     private void renderDiagnostics(GuiGraphics g, int left, int top) {
-        boolean powered = controllerPowered();
-        int statusColor = statusColor(powered);
         g.drawString(font, "DIAGNOSTICS", left + 20, top + 10, 0xFFFFFFFF);
-        g.drawString(font, "FLIGHT COMPUTER     ● " + (powered ? "OPERATIONAL" : "OFFLINE"), left + 20, top + 40, statusColor);
-        g.drawString(font, "LINK                ● " + (powered ? linkStatus() : "OFFLINE"), left + 20, top + 62, statusColor);
-        if (controller != null) {
-            long stored = controller.getEnergyStorage().getEnergyStored(), capacity = controller.getEnergyStorage().getMaxEnergyStored();
-            g.drawString(font, String.format("ENERGY              %,d / %,d FE", stored, capacity), left + 20, top + 84, statusColor);
-            g.drawString(font, "POWER STATE         " + controller.getPowerState().name(), left + 20, top + 106, statusColor);
-        }
-        g.drawString(font, "POSITION", left + 20, top + 140, 0xFFFFFFFF);
-        double positionX = minecraft != null && minecraft.player != null ? minecraft.player.getX() : controllerPos.getX() + 0.5D;
-        double positionY = minecraft != null && minecraft.player != null ? minecraft.player.getY() : controllerPos.getY() + 0.5D;
-        double positionZ = minecraft != null && minecraft.player != null ? minecraft.player.getZ() : controllerPos.getZ() + 0.5D;
-        g.drawString(font, String.format("X %8.2f", positionX), left + 20, top + 160, 0xFFBFC8CC);
-        g.drawString(font, String.format("Y %8.2f", positionY), left + 20, top + 180, 0xFFBFC8CC);
-        g.drawString(font, String.format("Z %8.2f", positionZ), left + 20, top + 200, 0xFFBFC8CC);
-        g.drawString(font, "SPEED   — m/s", left + 330, top + 160, 0xFFBFC8CC);
-        g.drawString(font, "HEADING —°", left + 330, top + 182, 0xFFBFC8CC);
-        g.drawString(font, "CONTROL OUTPUTS", left + 20, top + 245, 0xFFFFFFFF);
-        g.drawString(font, "UP 04      DOWN 00      WEST 00      EAST 07", left + 20, top + 267, 0xFFBFC8CC);
+        g.drawString(font, "XAERO: " + TerrainMapCache.xaeroDiagnostics(), left + 20, top + 40, 0xFFBFC8CC);
     }
-
-    @Override public boolean isPauseScreen() { return false; }
 }
