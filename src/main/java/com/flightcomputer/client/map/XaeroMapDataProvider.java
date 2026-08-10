@@ -14,22 +14,12 @@ import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Adapter over Xaero World Map's already-decoded map state.
- *
- * Flight Computer deliberately does not parse .xwmc files. Xaero owns cache decoding,
- * compression, palette handling, biome colouring and cache-version compatibility. We only
- * request the regions we need and copy the resulting 64x64 RGBA leaf buffers into our renderer.
- *
- * All calls are client/render-thread calls because Xaero's MapProcessor and texture objects are
- * client-owned. No Minecraft chunks are loaded by this class.
- */
+/** Adapter over Xaero World Map's already-decoded map state. */
 public final class XaeroMapDataProvider {
     private static final Logger LOGGER = LogUtils.getLogger();
     public static final int LEAF_PIXELS = 64;
-    private static final int MAX_LOAD_REQUESTS_PER_TICK = 4;
+    private static final int MAX_LOAD_REQUESTS_PER_TICK = 12;
 
-    /** Region-level deduplication prevents 64 leaf requests from repeatedly queuing one region. */
     private final Map<Long, Integer> requestedRegions = new HashMap<>();
     private String identity;
     private MapProcessor processor;
@@ -45,33 +35,36 @@ public final class XaeroMapDataProvider {
     }
 
     /**
-     * Requests all leaf regions intersecting a world-space rectangle at the selected Xaero LOD.
-     * The request is handed to Xaero's own MapSaveLoad queue; no filesystem parsing occurs here.
+     * Requests nearby regions first. The old row-major request order could spend the entire
+     * request budget loading distant edge regions while the centre of the Flight Map remained
+     * blank. Requests are now ordered outward from the centre so the map becomes useful quickly.
      */
     public void requestWorldArea(ClientLevel level, double centerX, double centerZ, double radiusBlocks,
                                  int mapLevel) {
         if (!ensure(level)) return;
         mapLevel = Math.max(0, Math.min(8, mapLevel));
         double blocksPerMapPixel = 1 << mapLevel;
-        double minPixelX = Math.floor((centerX - radiusBlocks) / blocksPerMapPixel);
-        double maxPixelX = Math.floor((centerX + radiusBlocks) / blocksPerMapPixel);
-        double minPixelZ = Math.floor((centerZ - radiusBlocks) / blocksPerMapPixel);
-        double maxPixelZ = Math.floor((centerZ + radiusBlocks) / blocksPerMapPixel);
-
-        int minLeafX = Math.floorDiv((int) minPixelX, LEAF_PIXELS);
-        int maxLeafX = Math.floorDiv((int) maxPixelX, LEAF_PIXELS);
-        int minLeafZ = Math.floorDiv((int) minPixelZ, LEAF_PIXELS);
-        int maxLeafZ = Math.floorDiv((int) maxPixelZ, LEAF_PIXELS);
-
-        int queued = 0;
         int centreLeafX = Math.floorDiv((int) Math.floor(centerX / blocksPerMapPixel), LEAF_PIXELS);
         int centreLeafZ = Math.floorDiv((int) Math.floor(centerZ / blocksPerMapPixel), LEAF_PIXELS);
-        queued += requestLeaf(centreLeafX, centreLeafZ, mapLevel) ? 1 : 0;
 
-        for (int z = minLeafZ; z <= maxLeafZ && queued < MAX_LOAD_REQUESTS_PER_TICK; z++) {
-            for (int x = minLeafX; x <= maxLeafX && queued < MAX_LOAD_REQUESTS_PER_TICK; x++) {
-                if (x == centreLeafX && z == centreLeafZ) continue;
-                if (requestLeaf(x, z, mapLevel)) queued++;
+        int minLeafX = Math.floorDiv((int) Math.floor((centerX - radiusBlocks) / blocksPerMapPixel), LEAF_PIXELS);
+        int maxLeafX = Math.floorDiv((int) Math.floor((centerX + radiusBlocks) / blocksPerMapPixel), LEAF_PIXELS);
+        int minLeafZ = Math.floorDiv((int) Math.floor((centerZ - radiusBlocks) / blocksPerMapPixel), LEAF_PIXELS);
+        int maxLeafZ = Math.floorDiv((int) Math.floor((centerZ + radiusBlocks) / blocksPerMapPixel), LEAF_PIXELS);
+
+        int queued = 0;
+        int maxRadius = Math.max(Math.max(Math.abs(centreLeafX - minLeafX), Math.abs(maxLeafX - centreLeafX)),
+                Math.max(Math.abs(centreLeafZ - minLeafZ), Math.abs(maxLeafZ - centreLeafZ)));
+
+        for (int radius = 0; radius <= maxRadius && queued < MAX_LOAD_REQUESTS_PER_TICK; radius++) {
+            for (int dz = -radius; dz <= radius && queued < MAX_LOAD_REQUESTS_PER_TICK; dz++) {
+                int dxLimit = radius - Math.abs(dz);
+                for (int dx = -dxLimit; dx <= dxLimit && queued < MAX_LOAD_REQUESTS_PER_TICK; dx++) {
+                    int leafX = centreLeafX + dx;
+                    int leafZ = centreLeafZ + dz;
+                    if (leafX < minLeafX || leafX > maxLeafX || leafZ < minLeafZ || leafZ > maxLeafZ) continue;
+                    if (requestLeaf(leafX, leafZ, mapLevel)) queued++;
+                }
             }
         }
     }
@@ -95,8 +88,6 @@ public final class XaeroMapDataProvider {
             return null;
         }
 
-        // Xaero may leave the shared buffer's position wherever its renderer last used it.
-        // Never mutate that position and never assume remaining() describes the valid image.
         ByteBuffer copy = source.duplicate();
         copy.position(0);
         copy.limit(expected);
