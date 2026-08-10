@@ -1,0 +1,10 @@
+Phase 4 failing test archive
+
+Local archive: Create-Aeronautics-Flight-System-phase4-xaero-embedded-render-fix.zip
+SHA-256: 3fc6c569e70d37c24ae75b539c13b86eef3a3377f879fa05bd739fa2955e7ec4
+Size: 1,500,000+ bytes
+
+Source-only archive prepared from the same Phase 4 tree:
+SHA-256: 0f36c4fecb13064b00763a58d7424ca99929fc7f0ae05d238925b0b1c2b71b62
+
+The GitHub connector available in this session cannot attach a local binary ZIP directly to a repository. The failing source has therefore been preserved locally and the failure/architecture record is committed to the debug branch and Issue #11. The next source changes should be made against the GitHub branch rather than continuing the Phase 4 screen-embedding approach.
