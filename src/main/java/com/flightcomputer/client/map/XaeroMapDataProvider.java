@@ -3,7 +3,6 @@ package com.flightcomputer.client.map;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.resources.ResourceLocation;
 import xaero.map.MapProcessor;
 import xaero.map.WorldMapSession;
 import xaero.map.region.MapRegion;
@@ -30,6 +29,7 @@ public final class XaeroMapDataProvider {
     public static final int LEAF_PIXELS = 64;
     private static final int MAX_LOAD_REQUESTS_PER_TICK = 4;
 
+    /** Region-level deduplication prevents 64 leaf requests from repeatedly queuing one region. */
     private final Map<Long, Integer> requestedRegions = new HashMap<>();
     private String identity;
     private MapProcessor processor;
@@ -66,12 +66,12 @@ public final class XaeroMapDataProvider {
         int queued = 0;
         int centreLeafX = Math.floorDiv((int) Math.floor(centerX / blocksPerMapPixel), LEAF_PIXELS);
         int centreLeafZ = Math.floorDiv((int) Math.floor(centerZ / blocksPerMapPixel), LEAF_PIXELS);
-        queued += requestLeaf(level, centreLeafX, centreLeafZ, mapLevel) ? 1 : 0;
+        queued += requestLeaf(centreLeafX, centreLeafZ, mapLevel) ? 1 : 0;
 
         for (int z = minLeafZ; z <= maxLeafZ && queued < MAX_LOAD_REQUESTS_PER_TICK; z++) {
             for (int x = minLeafX; x <= maxLeafX && queued < MAX_LOAD_REQUESTS_PER_TICK; x++) {
                 if (x == centreLeafX && z == centreLeafZ) continue;
-                if (requestLeaf(level, x, z, mapLevel)) queued++;
+                if (requestLeaf(x, z, mapLevel)) queued++;
             }
         }
     }
@@ -150,13 +150,14 @@ public final class XaeroMapDataProvider {
         }
     }
 
-    private boolean requestLeaf(ClientLevel level, int leafX, int leafZ, int mapLevel) {
+    private boolean requestLeaf(int leafX, int leafZ, int mapLevel) {
         if (processor == null) return false;
-        long key = pack(mapLevel, leafX, leafZ);
-        if (requestedRegions.containsKey(key)) return false;
 
         int regionX = Math.floorDiv(leafX, 8);
         int regionZ = Math.floorDiv(leafZ, 8);
+        long key = pack(mapLevel, regionX, regionZ);
+        if (requestedRegions.containsKey(key)) return false;
+
         try {
             MapRegion region = processor.getLeafMapRegion(mapLevel, regionX, regionZ, true);
             if (region == null) return false;
