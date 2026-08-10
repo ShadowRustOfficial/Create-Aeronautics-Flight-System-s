@@ -4,27 +4,25 @@ import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.avionics.FlightControllerAction;
 import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.PowerState;
+import com.flightcomputer.client.map.FlightMapRenderer;
+import com.flightcomputer.client.map.FlightMapTracker;
+import com.flightcomputer.client.map.FlightMapViewport;
 import com.flightcomputer.client.map.TerrainMapCache;
-import com.flightcomputer.map.MapMarker;
-import com.flightcomputer.map.MarkerRegistry;
 import com.flightcomputer.network.FlightComputerNetwork;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
 /** Navigation Console: Map, Route, Flight Control and Diagnostics. */
 public final class NavigationConsoleScreen extends Screen {
     private enum Tab { MAP, ROUTE, FLIGHT_CONTROL, DIAGNOSTICS }
 
-    private static final int TERRAIN_STEP = 8;
-    private static final int MAP_SCALE_BLOCKS_PER_PIXEL = 4;
-    private static final int MAP_PRELOAD_RADIUS_BLOCKS = 1200;
-    private static final int UNLOADED_COLOR = 0xFF16202A;
+    private static final int MAP_TRACK_RADIUS_BLOCKS = 1200;
     private static final int STATUS_ON_COLOR = 0xFF55FF55;
     private static final int STATUS_OFFLINE_COLOR = 0xFFFF5555;
 
@@ -32,15 +30,21 @@ public final class NavigationConsoleScreen extends Screen {
     private Tab tab = Tab.MAP;
     private FlightControllerBlockEntity controller;
     private boolean showTerrain = true;
+    private FlightMapViewport flightMapViewport;
+    private boolean draggingMap;
+    private double lastMouseX;
+    private double lastMouseY;
 
     public NavigationConsoleScreen(BlockPos controllerPos) {
         super(Component.literal("Navigation Console"));
         this.controllerPos = controllerPos;
     }
 
-    @Override protected void init() {
+    @Override
+    protected void init() {
         controller = getController();
         if (controller != null) showTerrain = controller.isTerrainEnabled();
+        ensureViewport();
 
         int left = Math.max(10, (width - 640) / 2);
         int top = 20;
@@ -51,11 +55,11 @@ public final class NavigationConsoleScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("DIAGNOSTICS"), b -> switchTab(Tab.DIAGNOSTICS)).bounds(left + 480, top, tabW, 22).build());
 
         if (tab == Tab.MAP) {
-            addRenderableWidget(Button.builder(terrainLabel(), b -> {
+            addRenderableWidget(Button.builder(Component.literal("TERRAIN: " + (showTerrain ? "ON" : "OFF")), b -> {
                 showTerrain = !showTerrain;
                 send(FlightControllerAction.TOGGLE_TERRAIN);
-                b.setMessage(terrainLabel());
-            }).bounds(left + 500, top + 210, 140, 20).build());
+                b.setMessage(Component.literal("TERRAIN: " + (showTerrain ? "ON" : "OFF")));
+            }).bounds(left + 500, top + 290, 140, 20).build());
         }
 
         if (tab == Tab.FLIGHT_CONTROL) {
@@ -66,17 +70,24 @@ public final class NavigationConsoleScreen extends Screen {
         }
     }
 
-    private Component terrainLabel() { return Component.literal("MAP: " + (showTerrain ? "ON" : "OFF")); }
+    private void ensureViewport() {
+        if (minecraft == null || minecraft.level == null) return;
+        ResourceLocation dimension = minecraft.level.dimension().location();
+        if (flightMapViewport == null || !dimension.equals(flightMapViewport.dimension())) {
+            flightMapViewport = new FlightMapViewport(controllerPos.getX() + 0.5D, controllerPos.getZ() + 0.5D, 4.0D, dimension);
+        }
+    }
 
-    @Override public void tick() {
+    @Override
+    public void tick() {
         super.tick();
         if (minecraft == null || minecraft.level == null) return;
         if (!controllerPowered()) { minecraft.setScreen(null); return; }
+        ensureViewport();
 
         if (showTerrain) {
-            int centerX = minecraft.player == null ? controllerPos.getX() : minecraft.player.blockPosition().getX();
-            int centerZ = minecraft.player == null ? controllerPos.getZ() : minecraft.player.blockPosition().getZ();
-            TerrainMapCache.requestViewport(minecraft.level, centerX, centerZ, MAP_PRELOAD_RADIUS_BLOCKS);
+            // The Flight Controller, not the player and not Xaero's GuiMap, is the map anchor.
+            TerrainMapCache.requestViewport(minecraft.level, controllerPos.getX(), controllerPos.getZ(), MAP_TRACK_RADIUS_BLOCKS);
             TerrainMapCache.tick(minecraft.level);
         }
     }
@@ -103,11 +114,12 @@ public final class NavigationConsoleScreen extends Screen {
 
     private int statusColor(boolean online) { return online ? STATUS_ON_COLOR : STATUS_OFFLINE_COLOR; }
 
-    @Override public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+    @Override
+    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         int left = Math.max(10, (width - 640) / 2);
         int top = 20;
-        g.fill(left - 8, top - 8, left + 648, Math.min(height - 20, top + 340), 0xE610141A);
-        g.fill(left - 8, top + 24, left + 648, Math.min(height - 20, top + 340), 0xE30B0E13);
+        g.fill(left - 8, top - 8, left + 648, Math.min(height - 20, top + 360), 0xE610141A);
+        g.fill(left - 8, top + 24, left + 648, Math.min(height - 20, top + 360), 0xE30B0E13);
 
         boolean powered = controllerPowered();
         String linkStatus = linkStatus();
@@ -115,7 +127,7 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "LINK: " + (powered ? linkStatus : "OFFLINE"), left + 500, top - 2, statusColor(powered));
 
         switch (tab) {
-            case MAP -> renderMap(g, left, top + 42);
+            case MAP -> renderMap(g, left, top + 42, mouseX, mouseY);
             case ROUTE -> renderRoute(g, left, top + 42);
             case FLIGHT_CONTROL -> renderFlightControl(g, left, top + 42);
             case DIAGNOSTICS -> renderDiagnostics(g, left, top + 42);
@@ -125,63 +137,90 @@ public final class NavigationConsoleScreen extends Screen {
 
     @Override public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) { }
 
-    private void renderMap(GuiGraphics g, int left, int top) {
-        int mapL = left + 20, mapT = top + 8, mapR = left + 620, mapB = top + 260;
-        int cx = (mapL + mapR) / 2, cy = (mapT + mapB) / 2;
-        double centerX = minecraft != null && minecraft.player != null ? minecraft.player.getX() : controllerPos.getX() + 0.5D;
-        double centerZ = minecraft != null && minecraft.player != null ? minecraft.player.getZ() : controllerPos.getZ() + 0.5D;
-        g.fill(mapL, mapT, mapR, mapB, UNLOADED_COLOR);
+    private void renderMap(GuiGraphics g, int left, int top, int mouseX, int mouseY) {
+        int mapL = left + 20;
+        int mapT = top + 8;
+        int mapR = left + 620;
+        int mapB = top + 260;
+        ensureViewport();
 
-        if (showTerrain && minecraft != null && minecraft.level != null)
-            renderTerrain(g, minecraft.level, centerX, centerZ, mapL, mapT, mapR, mapB, cx, cy);
-
-        for (int x = mapL; x < mapR; x += 32) g.vLine(x, mapT, mapB, 0x551E3037);
-        for (int y = mapT; y < mapB; y += 32) g.hLine(mapL, mapR, y, 0x551E3037);
-        g.fill(cx - 4, cy - 4, cx + 4, cy + 4, 0xFFFFFFFF);
-        g.drawString(font, "▲ PLAYER", cx + 10, cy - 5, 0xFFFFFFFF);
-        g.drawString(font, "MAP: " + (showTerrain ? "ON" : "OFF"), mapR - 120, mapB + 6, 0xFFBFC8CC);
-
-        if (minecraft != null && minecraft.level != null) {
-            String dim = minecraft.level.dimension().location().toString();
-            for (MapMarker marker : MarkerRegistry.all()) {
-                if (!dim.equals(marker.dimensionId()) || !MarkerRegistry.isVisible(marker.category())) continue;
-                int sx = cx + (int)((marker.x() - centerX) / MAP_SCALE_BLOCKS_PER_PIXEL);
-                int sy = cy + (int)((marker.z() - centerZ) / MAP_SCALE_BLOCKS_PER_PIXEL);
-                if (sx < mapL || sx > mapR || sy < mapT || sy > mapB) continue;
-                g.fill(sx - 3, sy - 3, sx + 3, sy + 3, 0xFF000000 | marker.category().getColor());
-                g.drawString(font, marker.name(), sx + 7, sy - 4, 0xFFFFFFFF);
-            }
+        if (minecraft != null && minecraft.level != null && flightMapViewport != null && controller != null) {
+            FlightMapTracker tracker = new FlightMapTracker(
+                    controller.getBlockPos().asLong() == 0L ? java.util.UUID.nameUUIDFromBytes(("flight-controller:" + controllerPos).getBytes(java.nio.charset.StandardCharsets.UTF_8)) : java.util.UUID.nameUUIDFromBytes(("flight-controller:" + controllerPos).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    minecraft.level.dimension().location(), controllerPos, MAP_TRACK_RADIUS_BLOCKS);
+            FlightMapRenderer.render(g, font, minecraft.level, flightMapViewport, tracker, mapL, mapT, mapR, mapB);
+        } else {
+            g.fill(mapL, mapT, mapR, mapB, 0xFF101820);
         }
-        g.drawString(font, "DESTINATION: —    DISTANCE: —    BEARING: —    ETA: —", left + 20, top + 275, 0xFFBFC8CC);
+
+        int cx = (mapL + mapR) / 2;
+        int cy = (mapT + mapB) / 2;
+        g.fill(cx - 4, cy - 4, cx + 4, cy + 4, 0xFFFFFFFF);
+        g.drawString(font, "▲ CONTROLLER", cx + 10, cy - 5, 0xFFFFFFFF);
+        g.drawString(font, "TRACK: " + MAP_TRACK_RADIUS_BLOCKS + "m", mapL + 8, mapB + 6, 0xFFBFC8CC);
+        g.drawString(font, "CENTRE X " + String.format("%.1f", flightMapViewport == null ? controllerPos.getX() : flightMapViewport.centerX())
+                + "  Z " + String.format("%.1f", flightMapViewport == null ? controllerPos.getZ() : flightMapViewport.centerZ()), mapL + 8, mapB - 18, 0xFFBFC8CC);
+        g.drawString(font, "DRAG TO PAN | SCROLL TO ZOOM", mapL + 8, mapB - 2, 0xFFBFC8CC);
     }
 
-    private void renderTerrain(GuiGraphics g, ClientLevel level, double centerWorldX, double centerWorldZ,
-                               int mapL, int mapT, int mapR, int mapB, int cx, int cy) {
-        // Render only normalized tiles already prepared by the tick thread. No disk reads,
-        // chunk scans, or Xaero decoding occur from render().
-        for (int sy = mapT; sy < mapB; sy += TERRAIN_STEP) {
-            double worldZ = centerWorldZ + (sy - cy) * MAP_SCALE_BLOCKS_PER_PIXEL;
-            for (int sx = mapL; sx < mapR; sx += TERRAIN_STEP) {
-                double worldX = centerWorldX + (sx - cx) * MAP_SCALE_BLOCKS_PER_PIXEL;
-                int color = TerrainMapCache.cachedColorAt(level, (int) Math.floor(worldX), (int) Math.floor(worldZ));
-                int x2 = Math.min(sx + TERRAIN_STEP, mapR);
-                int y2 = Math.min(sy + TERRAIN_STEP, mapB);
-                g.fill(sx, sy, x2, y2, color == 0 ? UNLOADED_COLOR : color);
-            }
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (tab == Tab.MAP && button == 0 && isInsideMap(mouseX, mouseY)) {
+            draggingMap = true;
+            lastMouseX = mouseX;
+            lastMouseY = mouseY;
+            return true;
         }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && draggingMap) {
+            draggingMap = false;
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (tab == Tab.MAP && draggingMap && button == 0 && flightMapViewport != null) {
+            flightMapViewport.panPixels(mouseX - lastMouseX, mouseY - lastMouseY);
+            lastMouseX = mouseX;
+            lastMouseY = mouseY;
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double deltaX, double deltaY) {
+        if (tab == Tab.MAP && isInsideMap(mouseX, mouseY) && flightMapViewport != null) {
+            flightMapViewport.zoom(deltaY);
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, deltaX, deltaY);
+    }
+
+    private boolean isInsideMap(double x, double y) {
+        int left = Math.max(10, (width - 640) / 2);
+        int top = 20;
+        int mapL = left + 20, mapT = top + 50, mapR = left + 620, mapB = top + 302;
+        return x >= mapL && x <= mapR && y >= mapT && y <= mapB;
     }
 
     private void renderRoute(GuiGraphics g, int left, int top) {
         g.drawString(font, "ROUTE / FLIGHT PLAN", left + 20, top + 10, 0xFFFFFFFF);
         g.drawString(font, "STATUS: DRAFT", left + 430, top + 10, 0xFFFFAA55);
-        String[] stops = { "AIRSHIP", "Ironworks", "Refinery", "New London", "Docking Station" };
+        String[] stops = { "CONTROLLER", "TRACKED AREA", "DESTINATION", "DOCKING POINT" };
         for (int i = 0; i < stops.length; i++) {
             int y = top + 45 + i * 38;
-            g.drawString(font, i == 0 ? "●" : (i == 1 ? "✓" : "○"), left + 30, y, i == 1 ? 0xFF55FF55 : 0xFFFFFFFF);
+            g.drawString(font, i == 0 ? "●" : "○", left + 30, y, i == 0 ? 0xFF55FF55 : 0xFFFFFFFF);
             g.drawString(font, stops[i], left + 55, y, 0xFFFFFFFF);
             if (i < stops.length - 1) g.vLine(left + 34, y + 10, y + 36, 0xFF555555);
         }
-        g.drawString(font, "NEXT: Refinery", left + 360, top + 65, 0xFFFFFFFF);
+        g.drawString(font, "NEXT: —", left + 360, top + 65, 0xFFFFFFFF);
         g.drawString(font, "Distance: —", left + 360, top + 88, 0xFFBFC8CC);
         g.drawString(font, "Bearing: —", left + 360, top + 108, 0xFFBFC8CC);
         g.drawString(font, "ETA: —", left + 360, top + 128, 0xFFBFC8CC);
