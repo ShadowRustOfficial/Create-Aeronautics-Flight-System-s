@@ -15,7 +15,7 @@ import java.util.concurrent.Future;
 
 /**
  * Native terrain provider. Minecraft data is sampled only on the client thread;
- * expensive tile shading runs on a bounded CPU worker and never touches Minecraft objects.
+ * expensive tile shading runs on bounded CPU workers and never touches Minecraft objects.
  */
 public final class LiveWorldMapProvider implements FlightMapDataProvider {
     private static final int MAX_JOBS = 64;
@@ -50,8 +50,7 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
         if (level == null || cache.containsKey(key(chunkX, chunkZ))) return;
         long key = key(chunkX, chunkZ);
         if (running.containsKey(key) || queued.contains(key)) return;
-        if (queued.remainingCapacity() == 0) return;
-        if (!level.hasChunk(chunkX, chunkZ)) return;
+        if (queued.remainingCapacity() == 0 || !level.hasChunk(chunkX, chunkZ)) return;
 
         TerrainChunkSnapshot snapshot = capture(level, chunkX, chunkZ);
         if (snapshot == null || !queued.offer(key)) return;
@@ -64,6 +63,12 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
             }
         });
         running.put(key, future);
+    }
+
+    @Override
+    public synchronized boolean isTilePending(int chunkX, int chunkZ) {
+        long key = key(chunkX, chunkZ);
+        return running.containsKey(key) || queued.contains(key);
     }
 
     private TerrainChunkSnapshot capture(ClientLevel level, int chunkX, int chunkZ) {
