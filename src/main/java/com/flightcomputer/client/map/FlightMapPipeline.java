@@ -18,8 +18,10 @@ public final class FlightMapPipeline {
         this.provider = provider;
         this.scheduler = scheduler;
         this.diagnostics = diagnostics;
-        diagnostics.provider(FlightMapProviderKind.NONE);
-        diagnostics.state(FlightMapProviderState.DISCOVERING);
+        diagnostics.provider(provider == null
+                ? FlightMapProviderKind.NONE
+                : FlightMapProviderKind.NATIVE_JOURNEYMAP_INSPIRED);
+        diagnostics.state(provider == null ? FlightMapProviderState.FAILED : FlightMapProviderState.DISCOVERING);
     }
 
     public void setProvider(FlightMapDataProvider next, FlightMapProviderKind kind) {
@@ -39,6 +41,8 @@ public final class FlightMapPipeline {
             return tile;
         }
         diagnostics.cacheMiss();
+        // The provider owns in-flight state. A tile that is already generating must
+        // never be re-enqueued just because the renderer sees another cache miss.
         if (!provider.isTilePending(chunkX, chunkZ)) {
             if (scheduler.offer(chunkX, chunkZ, 50)) diagnostics.pending(scheduler.size());
         }
@@ -57,6 +61,8 @@ public final class FlightMapPipeline {
         while (budget-- > 0) {
             FlightMapTileRequest request = scheduler.poll();
             if (request == null) break;
+            // A request may have become in-flight between frames; do not capture it twice.
+            if (provider.isTilePending(request.chunkX(), request.chunkZ())) continue;
             diagnostics.requested();
             provider.requestChunkTile(level, request.chunkX(), request.chunkZ());
             if (provider.getCachedChunkTile(level, request.chunkX(), request.chunkZ()) != null) {
