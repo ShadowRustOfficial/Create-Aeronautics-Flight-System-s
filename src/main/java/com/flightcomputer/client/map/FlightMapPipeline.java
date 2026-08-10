@@ -1,13 +1,10 @@
 package com.flightcomputer.client.map;
 
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.world.level.ChunkPos;
-
-import java.util.Map;
 
 /**
  * Provider-neutral terrain pipeline. The UI asks for tiles; the pipeline owns request state,
- * provider work and diagnostics. Rendering should only consume completed cache entries.
+ * provider work and diagnostics. Rendering consumes completed cache entries only.
  */
 public final class FlightMapPipeline {
     private final FlightMapRequestScheduler scheduler;
@@ -36,24 +33,21 @@ public final class FlightMapPipeline {
         diagnostics.state(next == null ? FlightMapProviderState.FAILED : FlightMapProviderState.DISCOVERING);
     }
 
-    /** Read-only fast path for the render layer. A miss schedules work; it never performs it. */
+    /** Render-only fast path. A miss is scheduled; no provider decoder is entered here. */
     public int[] getCachedTile(ClientLevel level, int chunkX, int chunkZ) {
         if (provider == null || level == null) return null;
-        int[] tile = provider.getChunkTile(level, chunkX, chunkZ);
+        int[] tile = provider.getCachedChunkTile(level, chunkX, chunkZ);
         if (tile != null) {
             diagnostics.cacheHit();
             return tile;
         }
         diagnostics.cacheMiss();
-        int distance = Math.max(Math.abs(chunkX - ChunkPos.getX(ChunkPos.asLong(chunkX, chunkZ))),
-                Math.abs(chunkZ - ChunkPos.getZ(ChunkPos.asLong(chunkX, chunkZ))));
-        scheduler.offer(chunkX, chunkZ, FlightMapRequestScheduler.priorityForDistance(distance));
-        diagnostics.pending(scheduler.size());
+        if (scheduler.offer(chunkX, chunkZ, 50)) diagnostics.pending(scheduler.size());
         return null;
     }
 
     /**
-     * Client-thread bounded work pump. Providers may internally stage work, but this layer
+     * Client-thread bounded work pump. Providers may stage work internally, but this layer
      * never blocks waiting for a decoder or texture upload.
      */
     public void tick(ClientLevel level, int maxRequests) {
@@ -65,7 +59,8 @@ public final class FlightMapPipeline {
             FlightMapTileRequest request = scheduler.poll();
             if (request == null) break;
             diagnostics.requested();
-            int[] tile = provider.getChunkTile(level, request.chunkX(), request.chunkZ());
+            provider.requestChunkTile(level, request.chunkX(), request.chunkZ());
+            int[] tile = provider.getCachedChunkTile(level, request.chunkX(), request.chunkZ());
             if (tile != null) diagnostics.decoded();
             else diagnostics.retry();
         }
