@@ -37,20 +37,23 @@ public final class XaeroMapHost {
                        int mouseX, int mouseY, float partialTick) {
         ensureDelegate(width, height);
         if (delegate == null) return;
-        int fullWidth = Math.max(1, delegate.width);
-        int fullHeight = Math.max(1, delegate.height);
-        double offsetX = (fullWidth - width) / 2.0D;
-        double offsetY = (fullHeight - height) / 2.0D;
-        int delegateMouseX = (int) Math.round(mouseX - left + offsetX);
-        int delegateMouseY = (int) Math.round(mouseY - top + offsetY);
 
-        // GuiGraphics maintains a scissor stack, while the native Xaero Screen can also
-        // manipulate render state. Keep our viewport boundary active and explicitly reset
-        // the common global state after the delegate returns so it cannot bleed into the
-        // remainder of the Navigation Console or subsequent Minecraft screens.
+        // The previous host rendered Xaero at the full Minecraft screen size and then
+        // translated/cropped it into the Flight Computer. That made Xaero's own screen
+        // coordinate system larger than the map viewport: panning could therefore move
+        // native background/UI pixels into the console shell and expose the old border leak.
+        //
+        // The captured GuiMap is now initialised at the exact viewport dimensions. Xaero's
+        // map camera and screen UI therefore operate in their own isolated 600x260 space,
+        // while the Flight Computer UI remains outside that coordinate system.
+        int delegateWidthNow = Math.max(1, delegate.width);
+        int delegateHeightNow = Math.max(1, delegate.height);
+        int delegateMouseX = mouseX - left;
+        int delegateMouseY = mouseY - top;
+
         graphics.enableScissor(left, top, left + width, top + height);
         graphics.pose().pushPose();
-        graphics.pose().translate(left - offsetX, top - offsetY, 0.0D);
+        graphics.pose().translate(left, top, 0.0D);
         try {
             delegate.render(graphics, delegateMouseX, delegateMouseY, partialTick);
         } catch (RuntimeException exception) {
@@ -59,6 +62,12 @@ public final class XaeroMapHost {
             graphics.pose().popPose();
             graphics.disableScissor();
             resetRenderState();
+        }
+
+        // Keep these reads explicit so a malformed/partially initialised native screen
+        // cannot result in invalid viewport assumptions during a resize.
+        if (delegateWidthNow <= 0 || delegateHeightNow <= 0) {
+            initialized = false;
         }
     }
 
@@ -74,20 +83,20 @@ public final class XaeroMapHost {
     public boolean mouseClicked(double mouseX, double mouseY, int button, int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseClicked(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), button);
+        return delegate != null && delegate.mouseClicked(toDelegateX(mouseX, left), toDelegateY(mouseY, top), button);
     }
 
     public boolean mouseReleased(double mouseX, double mouseY, int button, int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseReleased(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), button);
+        return delegate != null && delegate.mouseReleased(toDelegateX(mouseX, left), toDelegateY(mouseY, top), button);
     }
 
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY,
                                 int left, int top, int width, int height) {
         if (!inside(mouseX, mouseY, left, top, width, height)) return false;
         ensureDelegate(width, height);
-        return delegate != null && delegate.mouseDragged(toDelegateX(mouseX, left, width), toDelegateY(mouseY, top, height), button, dragX, dragY);
+        return delegate != null && delegate.mouseDragged(toDelegateX(mouseX, left), toDelegateY(mouseY, top), button, dragX, dragY);
     }
 
     /** Zoom is intentionally disabled in the Flight Computer. The map is fixed at 1x. */
@@ -99,22 +108,19 @@ public final class XaeroMapHost {
     public static boolean forwardMouseClicked(double mouseX, double mouseY, int button,
                                               int left, int top, int width, int height) {
         Screen screen = nativeScreen;
-        return screen != null && screen.mouseClicked(toDelegateXStatic(mouseX, left, width, screen.width),
-                toDelegateYStatic(mouseY, top, height, screen.height), button);
+        return screen != null && screen.mouseClicked(mouseX - left, mouseY - top, button);
     }
 
     public static boolean forwardMouseReleased(double mouseX, double mouseY, int button,
                                                int left, int top, int width, int height) {
         Screen screen = nativeScreen;
-        return screen != null && screen.mouseReleased(toDelegateXStatic(mouseX, left, width, screen.width),
-                toDelegateYStatic(mouseY, top, height, screen.height), button);
+        return screen != null && screen.mouseReleased(mouseX - left, mouseY - top, button);
     }
 
     public static boolean forwardMouseDragged(double mouseX, double mouseY, int button,
                                               double dragX, double dragY, int left, int top, int width, int height) {
         Screen screen = nativeScreen;
-        return screen != null && screen.mouseDragged(toDelegateXStatic(mouseX, left, width, screen.width),
-                toDelegateYStatic(mouseY, top, height, screen.height), button, dragX, dragY);
+        return screen != null && screen.mouseDragged(mouseX - left, mouseY - top, button, dragX, dragY);
     }
 
     /** Zoom input is deliberately consumed by the host layer and never reaches Xaero. */
@@ -185,15 +191,20 @@ public final class XaeroMapHost {
             status = "Xaero World Map detected, but no live GuiMap instance has been captured yet."; return;
         }
         if (delegate != captured) { delegate = captured; initialized = false; }
-        int fullWidth = minecraft.getWindow().getGuiScaledWidth();
-        int fullHeight = minecraft.getWindow().getGuiScaledHeight();
-        if (!initialized || delegateWidth != fullWidth || delegateHeight != fullHeight) {
+
+        int targetWidth = Math.max(1, viewportWidth);
+        int targetHeight = Math.max(1, viewportHeight);
+        if (!initialized || delegateWidth != targetWidth || delegateHeight != targetHeight) {
             try {
-                delegate.init(minecraft, fullWidth, fullHeight);
-                delegateWidth = fullWidth;
-                delegateHeight = fullHeight;
+                // Important: initialise the native Xaero screen against the Flight Computer
+                // viewport, not the full Minecraft window. This keeps panning/camera/UI math
+                // local to the map rectangle and prevents the native screen from leaking into
+                // the surrounding Navigation Console.
+                delegate.init(minecraft, targetWidth, targetHeight);
+                delegateWidth = targetWidth;
+                delegateHeight = targetHeight;
                 initialized = true;
-                status = "Xaero native World Map screen active; Flight Computer is hosting its live renderer.";
+                status = "Xaero native World Map screen active in isolated Flight Computer viewport.";
             } catch (RuntimeException exception) {
                 initialized = false;
                 status = "Xaero native World Map initialisation failed: " + exception.getClass().getSimpleName() + " - " + safeMessage(exception);
@@ -201,10 +212,8 @@ public final class XaeroMapHost {
         }
     }
 
-    private double toDelegateX(double x, int left, int width) { return toDelegateXStatic(x, left, width, delegate == null ? width : delegate.width); }
-    private double toDelegateY(double y, int top, int height) { return toDelegateYStatic(y, top, height, delegate == null ? height : delegate.height); }
-    private static double toDelegateXStatic(double x, int left, int width, int fullWidth) { return x - left + (fullWidth - width) / 2.0D; }
-    private static double toDelegateYStatic(double y, int top, int height, int fullHeight) { return y - top + (fullHeight - height) / 2.0D; }
+    private double toDelegateX(double x, int left) { return x - left; }
+    private double toDelegateY(double y, int top) { return y - top; }
     private static boolean inside(double x, double y, int left, int top, int width, int height) { return x >= left && x < left + width && y >= top && y < top + height; }
     private static String safeMessage(Throwable throwable) { String message = throwable.getMessage(); return message == null || message.isBlank() ? throwable.getClass().getSimpleName() : message; }
     private static String safe(String value) { return value == null || value.isBlank() ? "<none>" : value; }
