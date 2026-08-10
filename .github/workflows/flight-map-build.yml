@@ -1,0 +1,29 @@
+name: Flight Map Build
+
+on:
+  push:
+    branches:
+      - feature/flight-map-native-renderer
+  pull_request:
+    branches:
+      - feature/flight-map-native-renderer
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Make Gradle executable
+        run: chmod +x gradlew
+
+      - name: Compile and build
+        run: ./gradlew build --stacktrace
