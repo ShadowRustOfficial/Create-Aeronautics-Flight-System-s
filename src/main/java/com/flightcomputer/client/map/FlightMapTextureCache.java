@@ -56,9 +56,12 @@ public final class FlightMapTextureCache {
     }
 
     public void clear() {
+        if (Minecraft.getInstance() == null) {
+            entries.clear();
+            return;
+        }
         for (Entry entry : entries.values()) {
             Minecraft.getInstance().getTextureManager().release(entry.location);
-            entry.texture.close();
         }
         entries.clear();
     }
@@ -89,7 +92,6 @@ public final class FlightMapTextureCache {
             Entry entry = iterator.next().getValue();
             iterator.remove();
             Minecraft.getInstance().getTextureManager().release(entry.location);
-            entry.texture.close();
         }
     }
 
