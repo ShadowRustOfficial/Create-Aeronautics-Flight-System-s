@@ -12,9 +12,8 @@ import java.util.Set;
 /**
  * Flight Computer-owned compatibility facade over the native terrain provider.
  *
- * This class deliberately has no integration with Xaero, JourneyMap, or VoxelMap.
- * JourneyMap is an architectural reference only; all acquisition, caching and
- * rendering data is owned by Flight Computer.
+ * No external map-mod integration is performed here. JourneyMap is an architectural
+ * reference only; terrain acquisition, caching and rendering remain Flight Computer-owned.
  */
 public final class TerrainMapCache {
     private static final Map<Long, int[]> CACHE = new HashMap<>();
@@ -65,11 +64,19 @@ public final class TerrainMapCache {
         }
     }
 
+    /**
+     * Advances requests from the client-thread facade into the native provider.
+     * The provider captures Minecraft data here, then performs expensive generation
+     * on its bounded CPU worker pool. Completed tiles are read back from its cache.
+     */
     public static void tick(ClientLevel level) {
         ensureLevel(level);
         if (level == null) return;
         for (Long key : Set.copyOf(REQUESTED)) {
-            int[] tile = PROVIDER.getChunkTile(level, ChunkPos.getX(key), ChunkPos.getZ(key));
+            int chunkX = ChunkPos.getX(key);
+            int chunkZ = ChunkPos.getZ(key);
+            PROVIDER.requestChunkTile(level, chunkX, chunkZ);
+            int[] tile = PROVIDER.getCachedChunkTile(level, chunkX, chunkZ);
             if (tile != null) {
                 CACHE.put(key, tile);
                 REQUESTED.remove(key);
@@ -80,7 +87,9 @@ public final class TerrainMapCache {
     public static String diagnostics() {
         return "Native Flight Computer terrain provider"
                 + "\nloaded=" + CACHE.size()
-                + "\npending=" + REQUESTED.size();
+                + "\npending=" + REQUESTED.size()
+                + "\nproviderQueued=" + PROVIDER.queuedTiles()
+                + "\nproviderCached=" + PROVIDER.cachedTiles();
     }
 
     public static void clear() {
@@ -100,7 +109,7 @@ public final class TerrainMapCache {
     }
 
     private static void requestChunk(ClientLevel level, long key) {
-        if (CACHE.containsKey(key) || !REQUESTED.add(key)) return;
+        if (level == null || CACHE.containsKey(key) || !REQUESTED.add(key)) return;
         if (REQUESTED.size() > MAX_REQUESTED_CHUNKS) REQUESTED.remove(key);
     }
 
