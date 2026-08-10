@@ -114,7 +114,7 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private Component terrainLabel() { return Component.literal("TERRAIN: " + (showTerrain ? "ON" : "OFF")); }
-    private Component flightMapLabel() { return Component.literal("FLIGHT MAP: " + (showFlightMap ? "ON" : "OFF"); }
+    private Component flightMapLabel() { return Component.literal("FLIGHT MAP: " + (showFlightMap ? "ON" : "OFF")); }
 
     private void centrePlayer() {
         if (minecraft != null && minecraft.player != null) xaeroMap.centerOn(minecraft.player.getX(), minecraft.player.getZ());
