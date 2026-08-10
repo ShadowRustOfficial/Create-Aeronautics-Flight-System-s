@@ -1,6 +1,9 @@
 package com.flightcomputer.client.gui;
 
 import com.flightcomputer.client.map.TerrainMapCache;
+import com.flightcomputer.client.map.TerrainProviderDiagnostics;
+import com.flightcomputer.client.map.TerrainProviderState;
+import com.flightcomputer.client.map.TerrainViewport;
 import com.flightcomputer.map.MapMarker;
 import com.flightcomputer.map.MarkerCategory;
 import com.flightcomputer.map.MarkerRegistry;
@@ -10,9 +13,8 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.network.chat.Component;
 
-/** Lightweight first-party map view backed by the normalized Flight Computer map cache. */
+/** Lightweight first-party map view backed by the renderer-neutral terrain provider. */
 public class FlightMapScreen extends Screen {
-    /** World blocks represented by one screen pixel at the current map zoom. */
     private static final double SCALE = 4.0D;
     private static final int TERRAIN_STEP = 4;
     private static final int UNLOADED_COLOR = 0xFF1B242A;
@@ -51,8 +53,6 @@ public class FlightMapScreen extends Screen {
         super.tick();
         if (minecraft == null || minecraft.level == null || !showTerrain) return;
 
-        // Ask Xaero for the LOD that actually matches this screen's scale. The viewport is
-        // prefetched once per tick so the render loop never starts filesystem/region requests.
         double playerX = minecraft.player != null ? minecraft.player.getX() : 0.0D;
         double playerZ = minecraft.player != null ? minecraft.player.getZ() : 0.0D;
         double radius = Math.ceil(Math.hypot(width, height) * SCALE * 0.65D);
@@ -76,7 +76,10 @@ public class FlightMapScreen extends Screen {
         graphics.fill(0, 0, width, height, 0xFF101018);
 
         if (showTerrain && minecraft.level != null) {
-            renderTerrain(graphics, minecraft.level, playerX, playerZ, centerX, centerY);
+            TerrainViewport viewport = new TerrainViewport(
+                    playerX, playerZ,
+                    Math.ceil(Math.hypot(width, height) * SCALE * 0.65D), SCALE);
+            renderTerrain(graphics, minecraft.level, viewport, centerX, centerY);
         }
 
         graphics.hLine(centerX - 4, centerX + 4, centerY, 0xFFFFFFFF);
@@ -91,25 +94,42 @@ public class FlightMapScreen extends Screen {
                     0xFF000000 | marker.category().getColor());
             graphics.drawCenteredString(font, marker.name(), screenX, screenZ + 5, 0xFFFFFFFF);
         }
+
+        renderTerrainStatus(graphics);
         super.render(graphics, mouseX, mouseY, partialTick);
     }
 
-    private void renderTerrain(GuiGraphics graphics, ClientLevel level, double centerWorldX, double centerWorldZ,
+    private void renderTerrain(GuiGraphics graphics, ClientLevel level, TerrainViewport viewport,
                                int centerX, int centerY) {
-        // Use the same blocks-per-pixel value for both viewport selection and pixel lookup.
-        // This keeps the world->Xaero LOD conversion stable and prevents the old zoom-dependent
-        // patching where LOD 0 was sampled while the GUI was displaying a coarser scale.
         for (int sy = 0; sy < height; sy += TERRAIN_STEP) {
-            double worldZ = centerWorldZ + (sy - centerY) * SCALE;
+            double worldZ = viewport.centerZ() + (sy - centerY) * viewport.blocksPerPixel();
             for (int sx = 0; sx < width; sx += TERRAIN_STEP) {
-                double worldX = centerWorldX + (sx - centerX) * SCALE;
+                double worldX = viewport.centerX() + (sx - centerX) * viewport.blocksPerPixel();
                 int color = TerrainMapCache.colorAt(level,
-                        (int) Math.floor(worldX), (int) Math.floor(worldZ), SCALE);
+                        (int) Math.floor(worldX), (int) Math.floor(worldZ), viewport.blocksPerPixel());
                 graphics.fill(sx, sy, Math.min(sx + TERRAIN_STEP, width),
                         Math.min(sy + TERRAIN_STEP, height),
                         color == 0 ? UNLOADED_COLOR : color);
             }
         }
+    }
+
+    /** Compact in-UI operational status; no diagnostics are drawn outside this screen. */
+    private void renderTerrainStatus(GuiGraphics graphics) {
+        TerrainProviderDiagnostics d = TerrainMapCache.diagnostics(minecraft.level);
+        String status = "TERRAIN " + d.state().name()
+                + "  R:" + d.loadedRegions() + "/" + d.requestedRegions()
+                + "  L:" + d.decodedLeaves()
+                + "  C:" + d.cachedLeaves();
+        int statusColor = switch (d.state()) {
+            case READY -> 0xFF66FF88;
+            case LOADING, INITIALIZING -> 0xFFFFCC66;
+            case DEGRADED -> 0xFFFFAA55;
+            case ERROR -> 0xFFFF6666;
+            case OFFLINE -> 0xFFAAAAAA;
+        };
+        graphics.fill(6, 6, Math.min(width - 6, 280), 22, 0xCC080B0D);
+        graphics.drawString(font, status, 10, 10, statusColor, false);
     }
 
     @Override public boolean isPauseScreen() { return false; }
