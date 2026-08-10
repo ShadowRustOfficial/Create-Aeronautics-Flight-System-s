@@ -35,25 +35,28 @@ public final class XaeroMapDataProvider {
     }
 
     /**
-     * Requests nearby regions first. The old row-major request order could spend the entire
-     * request budget loading distant edge regions while the centre of the Flight Map remained
-     * blank. Requests are now ordered outward from the centre so the map becomes useful quickly.
+     * Prefetches the native 64x64 Xaero leaf map chunks around the Flight Controller.
+     *
+     * Important: the value passed in as mapLevel is a Flight Computer zoom/LOD concept, not a
+     * Xaero MapProcessor coordinate. Xaero's MapProcessor#getMapChunk uses X, Z, cave-layer.
+     * The Flight Computer therefore currently requests the real LOD-0 decoded map data only.
      */
     public void requestWorldArea(ClientLevel level, double centerX, double centerZ, double radiusBlocks,
                                  int mapLevel) {
         if (!ensure(level)) return;
-        mapLevel = Math.max(0, Math.min(8, mapLevel));
-        double blocksPerMapPixel = 1 << mapLevel;
-        int centreLeafX = Math.floorDiv((int) Math.floor(centerX / blocksPerMapPixel), LEAF_PIXELS);
-        int centreLeafZ = Math.floorDiv((int) Math.floor(centerZ / blocksPerMapPixel), LEAF_PIXELS);
 
-        int minLeafX = Math.floorDiv((int) Math.floor((centerX - radiusBlocks) / blocksPerMapPixel), LEAF_PIXELS);
-        int maxLeafX = Math.floorDiv((int) Math.floor((centerX + radiusBlocks) / blocksPerMapPixel), LEAF_PIXELS);
-        int minLeafZ = Math.floorDiv((int) Math.floor((centerZ - radiusBlocks) / blocksPerMapPixel), LEAF_PIXELS);
-        int maxLeafZ = Math.floorDiv((int) Math.floor((centerZ + radiusBlocks) / blocksPerMapPixel), LEAF_PIXELS);
+        // Native Xaero leaf chunks are 64 world blocks wide at LOD 0 (4 Minecraft chunks).
+        int nativeLevel = 0;
+        int centreLeafX = Math.floorDiv((int) Math.floor(centerX), LEAF_PIXELS);
+        int centreLeafZ = Math.floorDiv((int) Math.floor(centerZ), LEAF_PIXELS);
+        int minLeafX = Math.floorDiv((int) Math.floor(centerX - radiusBlocks), LEAF_PIXELS);
+        int maxLeafX = Math.floorDiv((int) Math.floor(centerX + radiusBlocks), LEAF_PIXELS);
+        int minLeafZ = Math.floorDiv((int) Math.floor(centerZ - radiusBlocks), LEAF_PIXELS);
+        int maxLeafZ = Math.floorDiv((int) Math.floor(centerZ + radiusBlocks), LEAF_PIXELS);
 
         int queued = 0;
-        int maxRadius = Math.max(Math.max(Math.abs(centreLeafX - minLeafX), Math.abs(maxLeafX - centreLeafX)),
+        int maxRadius = Math.max(
+                Math.max(Math.abs(centreLeafX - minLeafX), Math.abs(maxLeafX - centreLeafX)),
                 Math.max(Math.abs(centreLeafZ - minLeafZ), Math.abs(maxLeafZ - centreLeafZ)));
 
         for (int radius = 0; radius <= maxRadius && queued < MAX_LOAD_REQUESTS_PER_TICK; radius++) {
@@ -63,37 +66,49 @@ public final class XaeroMapDataProvider {
                     int leafX = centreLeafX + dx;
                     int leafZ = centreLeafZ + dz;
                     if (leafX < minLeafX || leafX > maxLeafX || leafZ < minLeafZ || leafZ > maxLeafZ) continue;
-                    if (requestLeaf(leafX, leafZ, mapLevel)) queued++;
+                    if (requestLeaf(leafX, leafZ, nativeLevel)) queued++;
                 }
             }
         }
     }
 
-    /** Returns a copy of Xaero's exact decoded RGBA leaf buffer. */
+    /**
+     * Returns a copy of Xaero's exact decoded RGBA 64x64 leaf buffer.
+     *
+     * leafX/leafZ are MapChunk coordinates: one leaf is four Minecraft chunks (64 blocks).
+     * They are NOT a map LOD and must never be passed as the cave-layer parameter.
+     */
     public LeafSnapshot getLeaf(int mapLevel, int leafX, int leafZ) {
         if (processor == null) return null;
 
-        MapTileChunk chunk = processor.getMapChunk(mapLevel, leafX, leafZ);
-        if (chunk == null || !chunk.hasHadTerrain()) return null;
+        try {
+            int caveLayer = processor.getCurrentCaveLayer();
+            MapTileChunk chunk = processor.getMapChunk(leafX, leafZ, caveLayer);
+            if (chunk == null || !chunk.hasHadTerrain()) return null;
 
-        LeafRegionTexture texture = chunk.getLeafTexture();
-        if (texture == null || texture.isColorBufferCompressed()) return null;
-        ByteBuffer source = texture.getDirectColorBuffer();
-        if (source == null) return null;
+            LeafRegionTexture texture = chunk.getLeafTexture();
+            if (texture == null || texture.isColorBufferCompressed()) return null;
+            ByteBuffer source = texture.getDirectColorBuffer();
+            if (source == null) return null;
 
-        int expected = LEAF_PIXELS * LEAF_PIXELS * 4;
-        if (source.limit() < expected) {
-            diagnostics = "Xaero leaf " + leafX + "," + leafZ + " level " + mapLevel
-                    + " has a " + source.limit() + " byte buffer; expected " + expected;
+            int expected = LEAF_PIXELS * LEAF_PIXELS * 4;
+            if (source.capacity() < expected) {
+                diagnostics = "Xaero leaf " + leafX + "," + leafZ
+                        + " has a " + source.capacity() + " byte buffer; expected " + expected;
+                return null;
+            }
+
+            ByteBuffer copy = source.duplicate();
+            copy.position(0);
+            copy.limit(expected);
+            byte[] rgba = new byte[expected];
+            copy.get(rgba);
+            return new LeafSnapshot(0, leafX, leafZ, texture.getTextureVersion(), rgba);
+        } catch (Throwable t) {
+            diagnostics = "Xaero leaf read failed: " + t.getClass().getSimpleName();
+            LOGGER.debug("[FlightComputer] Failed to read Xaero native leaf {},{}", leafX, leafZ, t);
             return null;
         }
-
-        ByteBuffer copy = source.duplicate();
-        copy.position(0);
-        copy.limit(expected);
-        byte[] rgba = new byte[expected];
-        copy.get(rgba);
-        return new LeafSnapshot(mapLevel, leafX, leafZ, texture.getTextureVersion(), rgba);
     }
 
     public String diagnostics() {
@@ -132,7 +147,7 @@ public final class XaeroMapDataProvider {
                 return false;
             }
             processor = candidate;
-            diagnostics = "Xaero native MapProcessor connected.";
+            diagnostics = "Xaero native MapProcessor connected; using LOD 0 MapChunk coordinates.";
             return true;
         } catch (Throwable t) {
             diagnostics = "Xaero API connection failed: " + t.getClass().getSimpleName();
@@ -141,16 +156,18 @@ public final class XaeroMapDataProvider {
         }
     }
 
-    private boolean requestLeaf(int leafX, int leafZ, int mapLevel) {
+    private boolean requestLeaf(int leafX, int leafZ, int ignoredLevel) {
         if (processor == null) return false;
 
+        int caveLayer = processor.getCurrentCaveLayer();
         int regionX = Math.floorDiv(leafX, 8);
         int regionZ = Math.floorDiv(leafZ, 8);
-        long key = pack(mapLevel, regionX, regionZ);
+        long key = pack(caveLayer, regionX, regionZ);
         if (requestedRegions.containsKey(key)) return false;
 
         try {
-            MapRegion region = processor.getLeafMapRegion(mapLevel, regionX, regionZ, true);
+            // Xaero's native coordinate order is X, Z, cave layer, create/load.
+            MapRegion region = processor.getLeafMapRegion(regionX, regionZ, caveLayer, true);
             if (region == null) return false;
             if (!region.hasHadTerrain() || !region.isLoaded()) {
                 processor.getMapSaveLoad().requestLoad(region, "flightcomputer", false);
@@ -159,7 +176,7 @@ public final class XaeroMapDataProvider {
             return true;
         } catch (Throwable t) {
             diagnostics = "Xaero region request failed: " + t.getClass().getSimpleName();
-            LOGGER.debug("[FlightComputer] Failed to request Xaero region {},{} level {}", regionX, regionZ, mapLevel, t);
+            LOGGER.debug("[FlightComputer] Failed to request Xaero region {},{} layer {}", regionX, regionZ, caveLayer, t);
             return false;
         }
     }
@@ -174,11 +191,10 @@ public final class XaeroMapDataProvider {
         return server + "|" + level.dimension().location();
     }
 
-    private static long pack(int level, int x, int z) {
-        long value = ((long) level & 0xFFL) << 56;
+    private static long pack(int layer, int x, int z) {
+        long value = ((long) layer & 0xFFL) << 56;
         value |= ((long) x & 0x0FFFFFFFL) << 28;
-        value |= (long) z & 0x0FFFFFFFL;
-        return value;
+        return value | ((long) z & 0x0FFFFFFFL);
     }
 
     public record LeafSnapshot(int level, int leafX, int leafZ, int textureVersion, byte[] rgba) { }
