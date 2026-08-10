@@ -3,13 +3,12 @@ package com.flightcomputer.client.map;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import xaero.map.MapProcessor;
 import xaero.map.WorldMapSession;
+import xaero.map.region.MapRegion;
 import xaero.map.region.MapTileChunk;
 import xaero.map.region.texture.LeafRegionTexture;
-import xaero.map.region.MapRegion;
 import org.slf4j.Logger;
 
 import java.nio.ByteBuffer;
@@ -29,9 +28,6 @@ import java.util.Map;
 public final class XaeroMapDataProvider {
     private static final Logger LOGGER = LogUtils.getLogger();
     public static final int LEAF_PIXELS = 64;
-    public static final int LEAF_WORLD_PIXELS = LEAF_PIXELS;
-    private static final int MAP_TILES_PER_LEAF = 4;
-    private static final int LEAF_CHUNKS = 4;
     private static final int MAX_LOAD_REQUESTS_PER_TICK = 4;
 
     private final Map<Long, Integer> requestedRegions = new HashMap<>();
@@ -68,7 +64,6 @@ public final class XaeroMapDataProvider {
         int maxLeafZ = Math.floorDiv((int) maxPixelZ, LEAF_PIXELS);
 
         int queued = 0;
-        // Centre first. This makes the map become useful quickly without flooding Xaero's loader.
         int centreLeafX = Math.floorDiv((int) Math.floor(centerX / blocksPerMapPixel), LEAF_PIXELS);
         int centreLeafZ = Math.floorDiv((int) Math.floor(centerZ / blocksPerMapPixel), LEAF_PIXELS);
         queued += requestLeaf(level, centreLeafX, centreLeafZ, mapLevel) ? 1 : 0;
@@ -81,10 +76,7 @@ public final class XaeroMapDataProvider {
         }
     }
 
-    /**
-     * Returns the exact decoded Xaero leaf texture for a map-level leaf coordinate.
-     * The returned object is owned by Xaero and must not be mutated.
-     */
+    /** Returns a copy of Xaero's exact decoded RGBA leaf buffer. */
     public LeafSnapshot getLeaf(int mapLevel, int leafX, int leafZ) {
         if (processor == null) return null;
 
@@ -97,14 +89,17 @@ public final class XaeroMapDataProvider {
         if (source == null) return null;
 
         int expected = LEAF_PIXELS * LEAF_PIXELS * 4;
-        if (source.remaining() < expected) {
+        if (source.limit() < expected) {
             diagnostics = "Xaero leaf " + leafX + "," + leafZ + " level " + mapLevel
-                    + " has only " + source.remaining() + " bytes; expected " + expected;
+                    + " has a " + source.limit() + " byte buffer; expected " + expected;
             return null;
         }
 
+        // Xaero may leave the shared buffer's position wherever its renderer last used it.
+        // Never mutate that position and never assume remaining() describes the valid image.
         ByteBuffer copy = source.duplicate();
-        copy.rewind();
+        copy.position(0);
+        copy.limit(expected);
         byte[] rgba = new byte[expected];
         copy.get(rgba);
         return new LeafSnapshot(mapLevel, leafX, leafZ, texture.getTextureVersion(), rgba);
@@ -122,7 +117,7 @@ public final class XaeroMapDataProvider {
     }
 
     private boolean ensure(ClientLevel level) {
-        if (level == null || Minecraft.getInstance() == null) return false;
+        if (level == null) return false;
         String newIdentity = buildIdentity(level);
         if (newIdentity.equals(identity) && processor != null) return true;
 
@@ -184,8 +179,7 @@ public final class XaeroMapDataProvider {
                 : "singleplayer:" + (mc.getSingleplayerServer() == null
                 ? "unknown"
                 : mc.getSingleplayerServer().getWorldData().getLevelName());
-        ResourceLocation dimension = level.dimension().location();
-        return server + "|" + dimension;
+        return server + "|" + level.dimension().location();
     }
 
     private static long pack(int level, int x, int z) {
