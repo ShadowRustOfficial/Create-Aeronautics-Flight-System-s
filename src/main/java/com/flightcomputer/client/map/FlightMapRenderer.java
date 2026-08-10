@@ -1,6 +1,5 @@
 package com.flightcomputer.client.map;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -49,12 +48,12 @@ public final class FlightMapRenderer {
         String identity = level.dimension().location() + "|" + mapLevel;
         TEXTURES.beginFrame(identity);
 
-        // The Flight Controller's tracked radius is a hard visibility boundary. We still clip
-        // every leaf to it so panning cannot expose terrain outside the controller's known area.
-        double minWorldX = viewport.centerX() + (left - (left + right) / 2.0D) * blocksPerPixel;
-        double maxWorldX = viewport.centerX() + (right - (left + right) / 2.0D) * blocksPerPixel;
-        double minWorldZ = viewport.centerZ() + (top - (top + bottom) / 2.0D) * blocksPerPixel;
-        double maxWorldZ = viewport.centerZ() + (bottom - (top + bottom) / 2.0D) * blocksPerPixel;
+        double mapCentreX = (left + right) / 2.0D;
+        double mapCentreY = (top + bottom) / 2.0D;
+        double minWorldX = viewport.centerX() + (left - mapCentreX) * blocksPerPixel;
+        double maxWorldX = viewport.centerX() + (right - mapCentreX) * blocksPerPixel;
+        double minWorldZ = viewport.centerZ() + (top - mapCentreY) * blocksPerPixel;
+        double maxWorldZ = viewport.centerZ() + (bottom - mapCentreY) * blocksPerPixel;
 
         int minLeafX = Math.floorDiv((int) Math.floor(minWorldX / mapBlocksPerPixel), XaeroMapDataProvider.LEAF_PIXELS);
         int maxLeafX = Math.floorDiv((int) Math.floor(maxWorldX / mapBlocksPerPixel), XaeroMapDataProvider.LEAF_PIXELS);
@@ -72,23 +71,22 @@ public final class FlightMapRenderer {
                 double leafWorldZ = leafZ * leafWorldSize;
                 double leafCentreX = leafWorldX + leafWorldSize * 0.5D;
                 double leafCentreZ = leafWorldZ + leafWorldSize * 0.5D;
-                if (distanceOutsideTrack(leafCentreX, leafCentreZ, tracker.anchor(), maxTracked)) continue;
+                if (outsideTrack(leafCentreX, leafCentreZ, tracker.controllerPos(), maxTracked)) continue;
 
                 int sx = centreX + (int) Math.floor((leafWorldX - viewport.centerX()) / blocksPerPixel);
                 int sy = centreY + (int) Math.floor((leafWorldZ - viewport.centerZ()) / blocksPerPixel);
                 int sw = Math.max(1, (int) Math.ceil(leafWorldSize / blocksPerPixel));
                 int sh = sw;
-
                 TEXTURES.drawLeaf(graphics, provider, mapLevel, leafX, leafZ, sx, sy, sw, sh);
             }
         }
     }
 
-    private static double distanceOutsideTrack(double x, double z, BlockPos anchor, int radius) {
-        if (anchor == null) return 0.0D;
+    private static boolean outsideTrack(double x, double z, BlockPos anchor, int radius) {
+        if (anchor == null) return true;
         double dx = x - (anchor.getX() + 0.5D);
         double dz = z - (anchor.getZ() + 0.5D);
-        return Math.sqrt(dx * dx + dz * dz) > radius;
+        return dx * dx + dz * dz > (double) radius * radius;
     }
 
     private static int chooseMapLevel(double blocksPerPixel) {
