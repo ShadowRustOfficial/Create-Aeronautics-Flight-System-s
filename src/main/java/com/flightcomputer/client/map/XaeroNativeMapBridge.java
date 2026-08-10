@@ -3,6 +3,7 @@ package com.flightcomputer.client.map;
 import com.flightcomputer.FlightComputer;
 import com.flightcomputer.client.gui.NavigationConsoleScreen;
 import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
@@ -54,6 +55,16 @@ public final class XaeroNativeMapBridge {
         navigationConsoleActive = false;
         pendingController = null;
         activeController = null;
+
+        // Never retain Xaero's live Screen after leaving the Flight Computer. Retaining
+        // it can keep Xaero's GUI/render state alive after the world or screen changes.
+        XaeroMapHost.clearNativeScreen();
+        RenderSystem.disableScissor();
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+        RenderSystem.depthMask(true);
+        RenderSystem.enableDepthTest();
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
     }
 
     /**
