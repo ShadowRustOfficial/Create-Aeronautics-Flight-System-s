@@ -19,13 +19,17 @@ public final class XaeroMapDataProvider {
     private static final Logger LOGGER = LogUtils.getLogger();
     public static final int LEAF_PIXELS = 64;
     private static final int MAX_LOAD_REQUESTS_PER_TICK = 12;
+    private static final int REGION_RETRY_TICKS = 10;
 
-    private final Map<Long, Integer> requestedRegions = new HashMap<>();
+    /** region key -> last tick at which a load request was issued */
+    private final Map<Long, Long> requestedRegions = new HashMap<>();
+    private long tickCounter;
     private String identity;
     private MapProcessor processor;
     private String diagnostics = "Xaero adapter not initialized.";
 
     public void tick(ClientLevel level) {
+        tickCounter++;
         ensure(level);
     }
 
@@ -35,18 +39,15 @@ public final class XaeroMapDataProvider {
     }
 
     /**
-     * Prefetches the native 64x64 Xaero leaf map chunks around the Flight Controller.
+     * Prefetches native Xaero LOD-0 map data around the Flight Controller.
      *
-     * Important: the value passed in as mapLevel is a Flight Computer zoom/LOD concept, not a
-     * Xaero MapProcessor coordinate. Xaero's MapProcessor#getMapChunk uses X, Z, cave-layer.
-     * The Flight Computer therefore currently requests the real LOD-0 decoded map data only.
+     * Flight Computer zoom is deliberately NOT passed to Xaero as a map coordinate or level.
+     * Xaero's MapProcessor is used only for its decoded map data and existing disk-load queue.
      */
     public void requestWorldArea(ClientLevel level, double centerX, double centerZ, double radiusBlocks,
-                                 int mapLevel) {
+                                 int ignoredMapLevel) {
         if (!ensure(level)) return;
 
-        // Native Xaero leaf chunks are 64 world blocks wide at LOD 0 (4 Minecraft chunks).
-        int nativeLevel = 0;
         int centreLeafX = Math.floorDiv((int) Math.floor(centerX), LEAF_PIXELS);
         int centreLeafZ = Math.floorDiv((int) Math.floor(centerZ), LEAF_PIXELS);
         int minLeafX = Math.floorDiv((int) Math.floor(centerX - radiusBlocks), LEAF_PIXELS);
@@ -66,30 +67,55 @@ public final class XaeroMapDataProvider {
                     int leafX = centreLeafX + dx;
                     int leafZ = centreLeafZ + dz;
                     if (leafX < minLeafX || leafX > maxLeafX || leafZ < minLeafZ || leafZ > maxLeafZ) continue;
-                    if (requestLeaf(leafX, leafZ, nativeLevel)) queued++;
+                    if (requestLeaf(leafX, leafZ)) queued++;
                 }
             }
         }
     }
 
     /**
-     * Returns a copy of Xaero's exact decoded RGBA 64x64 leaf buffer.
+     * Returns a copy of Xaero's decoded RGBA 64x64 leaf buffer.
      *
-     * leafX/leafZ are MapChunk coordinates: one leaf is four Minecraft chunks (64 blocks).
-     * They are NOT a map LOD and must never be passed as the cave-layer parameter.
+     * leafX/leafZ are the native LOD-0 map coordinates used by MapProcessor#getMapChunk.
      */
-    public LeafSnapshot getLeaf(int mapLevel, int leafX, int leafZ) {
+    public LeafSnapshot getLeaf(int ignoredMapLevel, int leafX, int leafZ) {
         if (processor == null) return null;
 
         try {
             int caveLayer = processor.getCurrentCaveLayer();
             MapTileChunk chunk = processor.getMapChunk(leafX, leafZ, caveLayer);
-            if (chunk == null || !chunk.hasHadTerrain()) return null;
+            if (chunk == null) {
+                diagnostics = "Xaero MapChunk unavailable at " + leafX + "," + leafZ
+                        + " layer " + caveLayer + "; waiting for region decode.";
+                requestLeaf(leafX, leafZ);
+                return null;
+            }
+            if (!chunk.hasHadTerrain()) {
+                diagnostics = "Xaero MapChunk " + leafX + "," + leafZ
+                        + " exists but has no decoded terrain yet; waiting for MapSaveLoad.";
+                requestLeaf(leafX, leafZ);
+                return null;
+            }
 
             LeafRegionTexture texture = chunk.getLeafTexture();
-            if (texture == null || texture.isColorBufferCompressed()) return null;
+            if (texture == null) {
+                diagnostics = "Xaero MapChunk " + leafX + "," + leafZ
+                        + " has terrain but no LeafRegionTexture yet.";
+                return null;
+            }
+            if (texture.isColorBufferCompressed()) {
+                diagnostics = "Xaero leaf " + leafX + "," + leafZ
+                        + " is GPU-compressed; direct RGBA buffer unavailable."
+                        + " Disable Xaero texture compression for this integration test.";
+                return null;
+            }
+
             ByteBuffer source = texture.getDirectColorBuffer();
-            if (source == null) return null;
+            if (source == null) {
+                diagnostics = "Xaero leaf " + leafX + "," + leafZ
+                        + " has no direct color buffer yet; waiting for texture decode/upload.";
+                return null;
+            }
 
             int expected = LEAF_PIXELS * LEAF_PIXELS * 4;
             if (source.capacity() < expected) {
@@ -103,6 +129,7 @@ public final class XaeroMapDataProvider {
             copy.limit(expected);
             byte[] rgba = new byte[expected];
             copy.get(rgba);
+            diagnostics = "Xaero native terrain buffer ready at " + leafX + "," + leafZ + ".";
             return new LeafSnapshot(0, leafX, leafZ, texture.getTextureVersion(), rgba);
         } catch (Throwable t) {
             diagnostics = "Xaero leaf read failed: " + t.getClass().getSimpleName();
@@ -119,6 +146,7 @@ public final class XaeroMapDataProvider {
         requestedRegions.clear();
         processor = null;
         identity = null;
+        tickCounter = 0;
         diagnostics = "Xaero adapter cleared.";
     }
 
@@ -129,6 +157,7 @@ public final class XaeroMapDataProvider {
 
         identity = newIdentity;
         requestedRegions.clear();
+        tickCounter = 0;
         processor = null;
 
         try {
@@ -147,7 +176,7 @@ public final class XaeroMapDataProvider {
                 return false;
             }
             processor = candidate;
-            diagnostics = "Xaero native MapProcessor connected; using LOD 0 MapChunk coordinates.";
+            diagnostics = "Xaero native MapProcessor connected; requesting LOD 0 terrain.";
             return true;
         } catch (Throwable t) {
             diagnostics = "Xaero API connection failed: " + t.getClass().getSimpleName();
@@ -156,24 +185,37 @@ public final class XaeroMapDataProvider {
         }
     }
 
-    private boolean requestLeaf(int leafX, int leafZ, int ignoredLevel) {
+    private boolean requestLeaf(int leafX, int leafZ) {
         if (processor == null) return false;
 
         int caveLayer = processor.getCurrentCaveLayer();
         int regionX = Math.floorDiv(leafX, 8);
         int regionZ = Math.floorDiv(leafZ, 8);
         long key = pack(caveLayer, regionX, regionZ);
-        if (requestedRegions.containsKey(key)) return false;
+
+        Long lastRequest = requestedRegions.get(key);
+        if (lastRequest != null && tickCounter - lastRequest < REGION_RETRY_TICKS) return false;
 
         try {
-            // Xaero's native coordinate order is X, Z, cave layer, create/load.
             MapRegion region = processor.getLeafMapRegion(regionX, regionZ, caveLayer, true);
-            if (region == null) return false;
-            if (!region.hasHadTerrain() || !region.isLoaded()) {
-                processor.getMapSaveLoad().requestLoad(region, "flightcomputer", false);
+            if (region == null) {
+                diagnostics = "Xaero region " + regionX + "," + regionZ
+                        + " could not be obtained for layer " + caveLayer + ".";
+                return false;
             }
-            requestedRegions.put(key, region.getReloadVersion());
-            return true;
+
+            boolean loaded = region.isLoaded() && region.hasHadTerrain();
+            if (!loaded) {
+                processor.getMapSaveLoad().requestLoad(region, "flightcomputer", false);
+                requestedRegions.put(key, tickCounter);
+                diagnostics = "Requested Xaero region " + regionX + "," + regionZ
+                        + " layer " + caveLayer + "; waiting for decode.";
+                return true;
+            }
+
+            // It is already decoded. Keep the entry fresh so we do not spam the load queue.
+            requestedRegions.put(key, tickCounter);
+            return false;
         } catch (Throwable t) {
             diagnostics = "Xaero region request failed: " + t.getClass().getSimpleName();
             LOGGER.debug("[FlightComputer] Failed to request Xaero region {},{} layer {}", regionX, regionZ, caveLayer, t);
