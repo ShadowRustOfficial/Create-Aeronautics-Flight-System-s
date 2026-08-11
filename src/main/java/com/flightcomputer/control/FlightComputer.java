@@ -1,6 +1,5 @@
 package com.flightcomputer.control;
 
-import java.util.List;
 import java.util.Map;
 
 /** One independent controller instance. Stabilisation and autopilot are concurrent objectives. */
@@ -12,7 +11,6 @@ public final class FlightComputer {
     private final ThrustAllocator allocator = new ThrustAllocator();
     private final MPCNavigator navigator;
     private FlightMode mode = FlightMode.STABILIZE;
-
     private double pitchStick, rollStick, yawRateStick, verticalStick, longitudinalStick, lateralStick;
     public double maxManualTiltRadians = Math.toRadians(25);
     public double maxManualYawRate = Math.toRadians(60);
@@ -39,14 +37,24 @@ public final class FlightComputer {
     public double distanceToTarget() { VehicleState state = stateProvider.getState(); return state != null && navigator.hasTarget() ? navigator.distanceToTarget(state) : -1; }
     public boolean isCruisePathBlocked() { return mode == FlightMode.CRUISE && navigator.isPathBlocked(); }
 
-    public void tick(double dt) {
+    /** Backwards-compatible tick: both control layers are enabled. */
+    public void tick(double dt) { tick(dt, true, navigator.hasTarget()); }
+
+    /** Runs only the control layers explicitly enabled by the authoritative controller state. */
+    public void tick(double dt, boolean stabiliserEnabled, boolean autopilotEnabled) {
         VehicleState state = stateProvider.getState();
         if (state == null) return;
-        StabilizationSetpoint stabiliseSetpoint = StabilizationSetpoint.manualNudge(pitchStick, rollStick, yawRateStick, verticalStick, longitudinalStick, lateralStick,
-                maxManualTiltRadians, maxManualYawRate, maxManualSpeed);
-        Map<ControlAxis, Double> stabiliseCommands = stabilizeStabilizer.computeCommands(state, stabiliseSetpoint, dt);
+        Map<ControlAxis, Double> stabiliseCommands = Map.of();
+        if (stabiliserEnabled) {
+            StabilizationSetpoint stabiliseSetpoint = StabilizationSetpoint.manualNudge(pitchStick, rollStick, yawRateStick, verticalStick, longitudinalStick, lateralStick,
+                    maxManualTiltRadians, maxManualYawRate, maxManualSpeed);
+            stabiliseCommands = stabilizeStabilizer.computeCommands(state, stabiliseSetpoint, dt);
+        } else {
+            stabilizeStabilizer.resetAll();
+        }
+
         Map<ControlAxis, Double> autopilotCommands = Map.of();
-        if (navigator.hasTarget()) {
+        if (autopilotEnabled && navigator.hasTarget()) {
             ticksSinceReplan++;
             if (ticksSinceReplan >= Math.max(1, replanIntervalTicks) || navigator.distanceToTarget(state) < 3.0) {
                 latestCruiseSetpoint = navigator.plan(state, cruiseMaxSpeed, estimateCruiseDeceleration(state));
@@ -55,6 +63,9 @@ public final class FlightComputer {
             autopilotCommands = cruiseStabilizer.computeCommands(state, latestCruiseSetpoint, dt);
             mode = FlightMode.CRUISE;
             if (navigator.distanceToTarget(state) < 1.0) disengageCruise();
+        } else if (!autopilotEnabled) {
+            cruiseStabilizer.resetAll();
+            ticksSinceReplan = 0;
         }
         allocator.applyCombined(registry, stabiliseCommands, autopilotCommands);
     }
