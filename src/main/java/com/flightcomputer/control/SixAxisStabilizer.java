@@ -12,8 +12,8 @@ public final class SixAxisStabilizer {
     private final AxisPID longitudinalPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
     private final AxisPID lateralPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
 
-    /** Configure once for the actual physics units/world gravity. */
-    public double gravity = 32.0;
+    /** Sable/Create Propulsion use SI-like vehicle physics; do not use Minecraft's 32 px/s^2 scale here. */
+    public double gravity = 9.81;
 
     public Map<ControlAxis, Double> computeCommands(VehicleState state, StabilizationSetpoint sp, double dt) {
         Map<ControlAxis, Double> out = new EnumMap<>(ControlAxis.class);
