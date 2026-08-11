@@ -16,12 +16,12 @@ import java.util.Set;
  * reference only; terrain acquisition, caching and rendering remain Flight Computer-owned.
  *
  * Generated tiles remain resident for the lifetime of the active world/dimension.
- * Moving the viewport therefore changes what is requested, not what is retained.
+ * Moving the viewport changes what is requested, not what is retained.
  */
 public final class TerrainMapCache {
     /** Never evict a tile during the active world/dimension session. */
     private static final Map<Long, int[]> CACHE = new HashMap<>();
-    /** Tiles requested but not yet copied into the facade cache. */
+    /** Client chunks that have been observed and are waiting for CPU generation. */
     private static final Set<Long> REQUESTED = new HashSet<>();
     private static final LiveWorldMapProvider PROVIDER = new LiveWorldMapProvider();
     private static String activeIdentity;
@@ -50,9 +50,10 @@ public final class TerrainMapCache {
     }
 
     /**
-     * Requests every chunk intersecting the map's working square rather than only
-     * its perimeter. This makes the initial map fill deterministic while the
-     * no-eviction caches ensure revisiting an area never regenerates its terrain.
+     * Scans the requested map area but only accepts chunks that are already loaded
+     * by the logical client. This never asks Minecraft/server to load a chunk.
+     * As the player moves and new client chunks arrive, subsequent scans discover
+     * them and add them to the permanent session cache.
      */
     public static void requestViewport(ClientLevel level, int centerWorldX, int centerWorldZ,
                                        int radiusBlocks, int sampleStepBlocks) {
@@ -67,7 +68,11 @@ public final class TerrainMapCache {
 
         for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
             for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
-                requestChunk(level, ChunkPos.asLong(chunkX, chunkZ));
+                // Critical: hasChunk is a read-only client-side availability check.
+                // Do not replace this with getChunk(...), which could initiate loading.
+                if (level.hasChunk(chunkX, chunkZ)) {
+                    requestChunk(level, ChunkPos.asLong(chunkX, chunkZ));
+                }
             }
         }
     }
@@ -83,6 +88,12 @@ public final class TerrainMapCache {
         for (Long key : Set.copyOf(REQUESTED)) {
             int chunkX = ChunkPos.getX(key);
             int chunkZ = ChunkPos.getZ(key);
+            if (!level.hasChunk(chunkX, chunkZ)) {
+                // A client chunk can unload between scans. Leave it out of the
+                // generation queue; a later scan will rediscover it if it returns.
+                REQUESTED.remove(key);
+                continue;
+            }
             PROVIDER.requestChunkTile(level, chunkX, chunkZ);
             int[] tile = PROVIDER.getCachedChunkTile(level, chunkX, chunkZ);
             if (tile != null) {
@@ -109,6 +120,9 @@ public final class TerrainMapCache {
 
     private static void requestChunk(ClientLevel level, long key) {
         if (level == null || CACHE.containsKey(key)) return;
+        int chunkX = ChunkPos.getX(key);
+        int chunkZ = ChunkPos.getZ(key);
+        if (!level.hasChunk(chunkX, chunkZ)) return;
         REQUESTED.add(key);
     }
 
