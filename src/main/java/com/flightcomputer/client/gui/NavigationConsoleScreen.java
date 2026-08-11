@@ -123,10 +123,16 @@ public final class NavigationConsoleScreen extends Screen {
     private Component terrainLabel() { return Component.literal("TERRAIN: " + (showTerrain ? "ON" : "OFF")); }
     private Component flightMapLabel() { return Component.literal("FLIGHT MAP: " + (showFlightMap ? "ON" : "OFF")); }
 
+    private Vec3 resolvePlayerWorldPosition() {
+        if (minecraft == null || minecraft.level == null || minecraft.player == null) return null;
+        return worldPositionResolver.resolve(minecraft.level, minecraft.player.position());
+    }
+
     private void centrePlayer() {
-        if (minecraft != null && minecraft.player != null) {
-            mapCenterX = minecraft.player.getX();
-            mapCenterZ = minecraft.player.getZ();
+        Vec3 playerWorld = resolvePlayerWorldPosition();
+        if (playerWorld != null) {
+            mapCenterX = playerWorld.x;
+            mapCenterZ = playerWorld.z;
         }
     }
 
@@ -179,7 +185,7 @@ public final class NavigationConsoleScreen extends Screen {
 
     @Override
     public void onClose() {
-        mapProvider.clear();
+        // Terrain warming continues independently on the client tick. Do not cancel or clear it here.
         super.onClose();
     }
 
@@ -224,7 +230,6 @@ public final class NavigationConsoleScreen extends Screen {
         int mapWidth = mapR - mapL, mapHeight = mapB - mapT;
         g.fill(mapL, mapT, mapR, mapB, MAP_BG);
 
-        // Hard viewport boundary: terrain and map markers cannot paint into the UI chrome.
         g.enableScissor(mapL, mapT, mapR, mapB);
         if (showTerrain && minecraft != null && minecraft.level != null) renderTerrain(g, minecraft.level, mapL, mapT, mapR, mapB);
         if (showFlightMap) renderPositionOverlay(g, mapL, mapT, mapWidth, mapHeight);
@@ -254,17 +259,12 @@ public final class NavigationConsoleScreen extends Screen {
                     g.fill(px, py, px + tilePixels, py + tilePixels, 0xFF171B1E);
                     continue;
                 }
-
-                // Batch adjacent equal samples into one rectangle. This preserves the
-                // exact 2x2 visual resolution while cutting GUI fill calls dramatically
-                // on flat/low-variation terrain, which is especially important while panning.
                 for (int sy = 0; sy < tilePixels; sy += sourceStep) {
                     int runStart = 0;
                     int runColor = tile[sy * tilePixels];
                     for (int sx = sourceStep; sx <= tilePixels; sx += sourceStep) {
                         int color = sx < tilePixels ? tile[sy * tilePixels + sx] : Integer.MIN_VALUE;
                         if (color != runColor) {
-                            int runWidth = sx - runStart;
                             g.fill(px + runStart, py + sy, px + sx, py + sy + sourceStep, runColor);
                             runStart = sx;
                             runColor = color;
@@ -276,10 +276,12 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void renderPositionOverlay(GuiGraphics g, int left, int top, int width, int height) {
-        if (minecraft == null || minecraft.player == null) return;
-        int playerX = worldToScreenX(minecraft.player.getX(), left, width);
-        int playerZ = worldToScreenZ(minecraft.player.getZ(), top, height);
-        drawTriangle(g, playerX, playerZ, 4, RED);
+        Vec3 playerWorld = resolvePlayerWorldPosition();
+        if (playerWorld != null) {
+            int playerX = worldToScreenX(playerWorld.x, left, width);
+            int playerZ = worldToScreenZ(playerWorld.z, top, height);
+            drawTriangle(g, playerX, playerZ, 4, RED);
+        }
         int controllerX = worldToScreenX(controllerWorldX, left, width);
         int controllerZ = worldToScreenZ(controllerWorldZ, top, height);
         drawDiamond(g, controllerX, controllerZ, 4, CYAN_BRIGHT);
