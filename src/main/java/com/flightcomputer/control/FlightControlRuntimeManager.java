@@ -16,9 +16,12 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Server runtime bridge for the Flight Controller. This is the point where the persistent
- * controller state is connected to the real control core, thruster banks, MPC navigator,
- * thermal load and client telemetry.
+ * Server runtime bridge for the Flight Controller. The controller is a real-time control
+ * computer, while Sable remains authoritative for the actual rigid-body physics.
+ *
+ * <p>Important: Sable Sub-Level plot coordinates are never treated as world coordinates.
+ * When the controller itself lives in a ServerSubLevel its logical pose is used directly;
+ * only parent-world positions are passed to navigation/telemetry.</p>
  */
 public final class FlightControlRuntimeManager {
     private FlightControlRuntimeManager() { }
@@ -28,7 +31,6 @@ public final class FlightControlRuntimeManager {
         return RUNTIMES.computeIfAbsent(controller.getControllerId(), id -> new Runtime());
     }
 
-    /** Compatibility entry point used by FlightControllerBlock.tick(). */
     public static void tick(FlightControllerBlockEntity controller) {
         if (controller == null || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
         Runtime runtime = runtime(controller);
@@ -60,7 +62,6 @@ public final class FlightControlRuntimeManager {
         return runtime.targetActive && runtime.target != null;
     }
 
-    /** Sends the authoritative runtime snapshot to nearby clients for route/diagnostic UI. */
     public static void sendTelemetry(FlightControllerBlockEntity controller) {
         if (controller == null || !(controller.getLevel() instanceof ServerLevel level)) return;
         Runtime runtime = runtime(controller);
@@ -70,6 +71,7 @@ public final class FlightControlRuntimeManager {
         Vec3 target = runtime.targetActive ? runtime.target : null;
         double distance = target == null ? -1.0D : target.distanceTo(new Vec3(state.x, state.y, state.z));
         double speed = Math.sqrt(state.vx * state.vx + state.vy * state.vy + state.vz * state.vz);
+        if (!Double.isFinite(speed)) speed = 0.0D;
         double heading = Math.toDegrees(Math.atan2(state.vx, state.vz));
         FlightComputerNetwork.TelemetryPayload payload = new FlightComputerNetwork.TelemetryPayload(
                 controller.getControllerId(), state.x, state.y, state.z, speed, heading,
@@ -113,12 +115,24 @@ public final class FlightControlRuntimeManager {
             Level level = controller.getLevel();
             Vec3 local = Vec3.atCenterOf(controller.getBlockPos());
             Vec3 world = project(level, local);
+            if (world == null || !finite(world)) return;
+
             VehicleState state = snapshot == null ? new VehicleState() : snapshot;
             state.x = world.x; state.y = world.y; state.z = world.z;
             if (previousPosition != null) {
-                state.vx = (world.x - previousPosition.x) * 20.0D;
-                state.vy = (world.y - previousPosition.y) * 20.0D;
-                state.vz = (world.z - previousPosition.z) * 20.0D;
+                double dx = world.x - previousPosition.x;
+                double dy = world.y - previousPosition.y;
+                double dz = world.z - previousPosition.z;
+                // A failed coordinate transform must never become a physics impulse or a
+                // 500-million-m/s telemetry value. Sable physics itself remains authoritative.
+                if (Double.isFinite(dx) && Double.isFinite(dy) && Double.isFinite(dz)
+                        && Math.abs(dx) < 100.0D && Math.abs(dy) < 100.0D && Math.abs(dz) < 100.0D) {
+                    state.vx = dx * 20.0D;
+                    state.vy = dy * 20.0D;
+                    state.vz = dz * 20.0D;
+                } else {
+                    state.vx = state.vy = state.vz = 0.0D;
+                }
             }
 
             Object subLevel = containing(level, local);
@@ -134,7 +148,7 @@ public final class FlightControlRuntimeManager {
                 }
                 Object tracker = invokeNoArg(subLevel, "getMassTracker", "massTracker");
                 Object mass = tracker == null ? null : invokeNoArg(tracker, "getMass", "mass");
-                if (mass instanceof Number n && n.doubleValue() > 0) state.mass = n.doubleValue();
+                if (mass instanceof Number n && Double.isFinite(n.doubleValue()) && n.doubleValue() > 0) state.mass = n.doubleValue();
                 double[] inertia = readInertia(tracker);
                 if (inertia == null) inertia = readInertia(subLevel);
                 if (inertia != null) {
@@ -152,7 +166,8 @@ public final class FlightControlRuntimeManager {
                 estimateInertiaFromVehicleEnvelope(state, registry);
             }
             if(previousPosition!=null){
-                state.yawRate=angleDelta(state.yaw,previousYaw)*20; state.pitchRate=angleDelta(state.pitch,previousPitch)*20;
+                state.yawRate=angleDelta(state.yaw,previousYaw)*20;
+                state.pitchRate=angleDelta(state.pitch,previousPitch)*20;
                 state.rollRate=angleDelta(state.roll,previousRoll)*20;
             }
             state.timestampNanos=System.nanoTime();
@@ -223,31 +238,59 @@ public final class FlightControlRuntimeManager {
             for(String name:names){Object v=invokeNoArg(target,name);if(v instanceof Number n&&n.doubleValue()>0)return n.doubleValue();}
             return -1;
         }
-        private Object helper; private Method getContaining, projectOut; private boolean initialized, available;
-        private Vec3 project(Level level, Vec3 local){
-            if(!ensure())return local;
-            try{
-                Object subLevel = containing(level, local);
-                if(subLevel == null)return local;
-                Object pose = invokeNoArg(subLevel, "logicalPose");
-                if(pose == null)return local;
-                Method transform = pose.getClass().getMethod("transformPosition", Vec3.class);
-                Object value = transform.invoke(pose, local);
-                return value instanceof Vec3 vec ? vec : local;
-            }catch(ReflectiveOperationException|RuntimeException ignored){return local;}
-        }
+
+        private Object helper; private Method getContaining; private boolean initialized, available;
+
+        /**
+         * Resolve the containing Sable body. A controller inside a ServerSubLevel is already
+         * in that sub-level, so the sub-level itself is the physics object; calling the parent
+         * world's getContaining() on its plot coordinates is incorrect.
+         */
         private Object containing(Level level,Vec3 local){
+            if (isServerSubLevel(level)) return level;
             if(!ensure())return null;
             try{return getContaining.invoke(helper,level,local);}
             catch(ReflectiveOperationException|RuntimeException ignored){return null;}
         }
+
+        private Vec3 project(Level level, Vec3 local){
+            try {
+                if (isServerSubLevel(level)) {
+                    Object pose = invokeNoArg(level, "logicalPose");
+                    Vec3 transformed = transformPosition(pose, local);
+                    if (transformed != null) return transformed;
+                    // Do not leak Sable plot coordinates into navigation if the transform API
+                    // is unavailable on a future Sable build.
+                    return null;
+                }
+                if(!ensure()) return local;
+                Object subLevel = containing(level, local);
+                if(subLevel == null)return local;
+                Object pose = invokeNoArg(subLevel, "logicalPose");
+                Vec3 transformed = transformPosition(pose, local);
+                return transformed == null ? local : transformed;
+            } catch (RuntimeException ignored) { return null; }
+        }
+
+        private static Vec3 transformPosition(Object pose, Vec3 local) {
+            if (pose == null) return null;
+            try {
+                Method transform = pose.getClass().getMethod("transformPosition", Vec3.class);
+                Object value = transform.invoke(pose, local);
+                return value instanceof Vec3 vec && finite(vec) ? vec : null;
+            } catch (ReflectiveOperationException | RuntimeException ignored) { return null; }
+        }
+
+        private static boolean isServerSubLevel(Level level) {
+            return level != null && level.getClass().getName().equals("dev.ryanhcode.sable.sublevel.ServerSubLevel");
+        }
+
         private boolean ensure(){
             if(initialized)return available; initialized=true;
             try{
                 Class<?> sable=Class.forName("dev.ryanhcode.sable.companion.SableCompanion",false,getClass().getClassLoader());
                 helper=sable.getField("INSTANCE").get(null);
                 getContaining=helper.getClass().getMethod("getContaining",Level.class,Vec3.class);
-                projectOut=helper.getClass().getMethod("projectOutOfSubLevel",Level.class,Vec3.class);
                 available=true;
             }catch(ReflectiveOperationException|LinkageError|RuntimeException ignored){available=false;}
             return available;
