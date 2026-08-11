@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   edit:
-    if: github.event.head_commit.message != 'Apply Phase 5 source edits'
+    if: startsWith(github.event.head_commit.message, 'Implement concurrent vector flight control runtime')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,39 +21,30 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
           be = Path('src/main/java/com/flightcomputer/block/FlightControllerBlockEntity.java')
           text = be.read_text()
           anchor = '    public double[] getThermalHistory() { return Arrays.copyOf(thermalHistory, thermalHistory.length); }\n'
           insert = anchor + '''\n    /** Adds propulsion/control heat after the normal per-tick thermal accounting. */\n    public void addControlThermalLoad(double normalizedLoad) {\n        if (level == null || level.isClientSide || isThermalLockout()) return;\n        double load = Math.max(0.0D, Math.min(1.0D, normalizedLoad));\n        temperature += FlightComputerConfig.BASE_HEAT_PER_TICK.get() * (1.0D + load * 8.0D);\n        temperature = Math.min(FlightComputerConfig.HEAT_CAPACITY.get() * 1.05D, temperature);\n        setChanged();\n    }\n'''
-          if anchor not in text:
-              raise SystemExit('thermal history anchor missing')
+          if anchor not in text: raise SystemExit('thermal history anchor missing')
           text = text.replace(anchor, insert, 1)
           old = '''    public boolean isOperationPermitted(FlightControllerAction action) {\n        return !isThermalLockout() && powerState != PowerState.NO_POWER && energyStorage.getEnergyStored() > 0;\n    }'''
           new = '''    public boolean isOperationPermitted(FlightControllerAction action) {\n        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) return true;\n        return !isThermalLockout() && powerState != PowerState.NO_POWER && energyStorage.getEnergyStored() > 0;\n    }'''
-          if old not in text:
-              raise SystemExit('operation permission block missing')
+          if old not in text: raise SystemExit('operation permission block missing')
           text = text.replace(old, new, 1)
           old = '''        if (action == FlightControllerAction.TOGGLE_TERRAIN) terrainEnabled = !terrainEnabled;\n        else controllerState = controllerState.apply(action);'''
           new = '''        if (action == FlightControllerAction.TOGGLE_TERRAIN) terrainEnabled = !terrainEnabled;\n        else controllerState = controllerState.apply(action);\n        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) energyStorage.extractEnergy(energyStorage.getEnergyStored(), false);'''
-          if old not in text:
-              raise SystemExit('action transition block missing')
+          if old not in text: raise SystemExit('action transition block missing')
           text = text.replace(old, new, 1)
           old = '''        if (advancedCooling) {\n            temperature = Math.min(temperature,\n                    FlightComputerConfig.HEAT_CAPACITY.get() * FlightComputerConfig.ADVANCED_COOLING_MAX_TEMPERATURE.get());\n        }\n'''
-          if old not in text:
-              raise SystemExit('advanced cooling clamp missing')
+          if old not in text: raise SystemExit('advanced cooling clamp missing')
           text = text.replace(old, '', 1)
           be.write_text(text)
-
           screen = Path('src/main/java/com/flightcomputer/client/gui/NavigationConsoleScreen.java')
           text = screen.read_text()
-          anchor = '    public NavigationConsoleScreen(BlockPos controllerPos) {'
           getter = '''    /** Controller identity used by live telemetry and map overlays. */\n    public BlockPos controllerPos() { return controllerPos; }\n\n'''
-          if getter not in text:
-              text = text.replace(anchor, getter + anchor, 1)
+          if getter not in text: text = text.replace('    public NavigationConsoleScreen(BlockPos controllerPos) {', getter + '    public NavigationConsoleScreen(BlockPos controllerPos) {', 1)
           screen.write_text(text)
           PY
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/main/java/com/flightcomputer/block/FlightControllerBlockEntity.java src/main/java/com/flightcomputer/client/gui/NavigationConsoleScreen.java
