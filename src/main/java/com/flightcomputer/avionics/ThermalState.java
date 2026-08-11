@@ -4,6 +4,7 @@ package com.flightcomputer.avionics;
 public enum ThermalState {
     NORMAL,
     WARM,
-    OVERHEAT_WARNING,
+    HOT,
+    CRITICAL,
     THERMAL_SHUTDOWN
 }
