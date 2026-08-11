@@ -6,6 +6,7 @@ import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.control.FlightControlRuntimeManager;
 import com.flightcomputer.control.FlightMode;
 import com.flightcomputer.control.VectorDirection;
+import com.flightcomputer.item.CoolingUpgradeItem;
 import com.flightcomputer.item.FlightLinkToolItem;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
@@ -32,6 +33,7 @@ public final class FlightComputerNetwork {
     public static final CustomPacketPayload.Type<ControllerActionPayload> CONTROLLER_ACTION_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "controller_action"));
     public static final CustomPacketPayload.Type<LinkVectorPayload> LINK_VECTOR_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "link_vector"));
     public static final CustomPacketPayload.Type<ToolConfigPayload> TOOL_CONFIG_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "tool_config"));
+    public static final CustomPacketPayload.Type<CoolingSlotPayload> COOLING_SLOT_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "cooling_slot"));
     public static final CustomPacketPayload.Type<TelemetryPayload> TELEMETRY_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "telemetry"));
     public static final CustomPacketPayload.Type<SetTargetPayload> SET_TARGET_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "set_target"));
     public static final CustomPacketPayload.Type<ClearTargetPayload> CLEAR_TARGET_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "clear_target"));
@@ -47,6 +49,13 @@ public final class FlightComputerNetwork {
     public record ToolConfigPayload(int modeId, int directionId) implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, ToolConfigPayload> STREAM_CODEC = StreamCodec.composite(ByteBufCodecs.VAR_INT, ToolConfigPayload::modeId, ByteBufCodecs.VAR_INT, ToolConfigPayload::directionId, ToolConfigPayload::new);
         @Override public Type<? extends CustomPacketPayload> type() { return TOOL_CONFIG_TYPE; }
+    }
+    /** slot: 0-2; action: 0 insert one cooling item from main hand, 1 extract slot. */
+    public record CoolingSlotPayload(BlockPos controllerPos, int slot, int action) implements CustomPacketPayload {
+        public static final StreamCodec<ByteBuf, CoolingSlotPayload> STREAM_CODEC = StreamCodec.composite(
+                BlockPos.STREAM_CODEC, CoolingSlotPayload::controllerPos, ByteBufCodecs.VAR_INT, CoolingSlotPayload::slot,
+                ByteBufCodecs.VAR_INT, CoolingSlotPayload::action, CoolingSlotPayload::new);
+        @Override public Type<? extends CustomPacketPayload> type() { return COOLING_SLOT_TYPE; }
     }
     public record SetTargetPayload(BlockPos controllerPos, double x, double y, double z, String name) implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, SetTargetPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, SetTargetPayload::controllerPos, ByteBufCodecs.DOUBLE, SetTargetPayload::x, ByteBufCodecs.DOUBLE, SetTargetPayload::y, ByteBufCodecs.DOUBLE, SetTargetPayload::z, ByteBufCodecs.STRING_UTF8, SetTargetPayload::name, SetTargetPayload::new);
@@ -86,6 +95,7 @@ public final class FlightComputerNetwork {
                 .playToServer(CONTROLLER_ACTION_TYPE,ControllerActionPayload.STREAM_CODEC,FlightComputerNetwork::handleAction)
                 .playToServer(LINK_VECTOR_TYPE,LinkVectorPayload.STREAM_CODEC,FlightComputerNetwork::handleVectorLink)
                 .playToServer(TOOL_CONFIG_TYPE,ToolConfigPayload.STREAM_CODEC,FlightComputerNetwork::handleToolConfig)
+                .playToServer(COOLING_SLOT_TYPE,CoolingSlotPayload.STREAM_CODEC,FlightComputerNetwork::handleCoolingSlot)
                 .playToServer(SET_TARGET_TYPE,SetTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetTarget)
                 .playToServer(CLEAR_TARGET_TYPE,ClearTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleClearTarget)
                 .playToClient(TELEMETRY_TYPE,TelemetryPayload.STREAM_CODEC,FlightComputerNetwork::handleTelemetry);}
@@ -94,12 +104,14 @@ public final class FlightComputerNetwork {
     private static void handleAction(ControllerActionPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.pos(),64))return;BlockEntity be=player.level().getBlockEntity(p.pos());if(be instanceof FlightControllerBlockEntity fc)FlightControllerAction.fromNetworkId(p.actionId()).ifPresent(fc::applyAction);});}
     private static void handleVectorLink(LinkVectorPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||!near(player,p.targetPos(),1024))return;FlightMode[] modes=FlightMode.values();VectorDirection[] dirs=VectorDirection.values();if(p.modeId()<0||p.modeId()>=modes.length||p.directionId()<0||p.directionId()>=dirs.length)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||player.level().getBlockState(p.targetPos()).isAir())return;fc.bindVector(modes[p.modeId()],dirs[p.directionId()],p.targetPos());});}
     private static void handleToolConfig(ToolConfigPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player))return;if(p.modeId()<0||p.modeId()>=FlightMode.values().length||p.directionId()<0||p.directionId()>=VectorDirection.values().length)return;FlightLinkToolItem.setSelection(player.getUUID(),p.modeId(),p.directionId());});}
+    private static void handleCoolingSlot(CoolingSlotPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||p.slot()<0||p.slot()>=3)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||fc.isThermalLockout())return;var handler=fc.getUpgradeHandler();if(p.action()==0){var hand=player.getMainHandItem();if(hand.isEmpty()||!(hand.getItem() instanceof CoolingUpgradeItem))return;var remainder=handler.insertItem(p.slot(),hand.copyWithCount(1),false);if(remainder.isEmpty())hand.shrink(1);}else if(p.action()==1){var extracted=handler.extractItem(p.slot(),1,false);if(!extracted.isEmpty()&&!player.addItem(extracted))player.drop(extracted,false);}fc.setChanged();});}
     private static void handleSetTarget(SetTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||Double.isNaN(p.x())||Double.isNaN(p.y())||Double.isNaN(p.z()))return;FlightControlRuntimeManager.setTarget(fc,new Vec3(p.x(),p.y(),p.z()),p.name());});}
     private static void handleClearTarget(ClearTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(be instanceof FlightControllerBlockEntity fc)FlightControlRuntimeManager.clearTarget(fc);});}
     private static void handleTelemetry(TelemetryPayload p,IPayloadContext c){if(FMLEnvironment.dist==Dist.CLIENT)c.enqueueWork(()->com.flightcomputer.client.FlightComputerTelemetryClient.accept(p));}
     public static void sendControllerAction(BlockPos pos,FlightControllerAction action){PacketDistributor.sendToServer(new ControllerActionPayload(pos,action.networkId()));}
     public static void sendVectorLink(BlockPos cp,BlockPos tp,FlightMode m,VectorDirection d){PacketDistributor.sendToServer(new LinkVectorPayload(cp,tp,m.ordinal(),d.ordinal()));}
     public static void sendToolConfig(FlightMode mode,VectorDirection direction){PacketDistributor.sendToServer(new ToolConfigPayload(mode.ordinal(),direction.ordinal()));}
+    public static void sendCoolingSlot(BlockPos cp,int slot,int action){PacketDistributor.sendToServer(new CoolingSlotPayload(cp,slot,action));}
     public static void sendTarget(BlockPos cp,double x,double y,double z,String name){PacketDistributor.sendToServer(new SetTargetPayload(cp,x,y,z,name));}
     public static void clearTarget(BlockPos cp){PacketDistributor.sendToServer(new ClearTargetPayload(cp));}
     public static void sendTelemetry(ServerPlayer player,TelemetryPayload payload){PacketDistributor.sendToPlayer(player,payload);}
