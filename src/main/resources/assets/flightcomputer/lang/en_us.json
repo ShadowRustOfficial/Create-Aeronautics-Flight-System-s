@@ -1,8 +1,16 @@
 {
   "key.categories.flightcomputer": "Flight Computer",
   "key.flightcomputer.open_map": "Open Flight Map",
+  "key.flightcomputer.link_focus": "UZ Focus",
+  "key.flightcomputer.link_mode_toggle": "UZ Mode",
+  "key.flightcomputer.link_vector_next": "UZ Next Face",
   "block.flightcomputer.flight_controller": "Flight Controller",
+  "block.flightcomputer.debug_power_generator": "Debug Power Generator",
   "item.flightcomputer.flight_controller": "Flight Controller",
-  "itemGroup.flightcomputer": "Flight Computer",
-  "item.flightcomputer.flight_link_tool": "Flight Link Tool"
+  "item.flightcomputer.flight_link_tool": "Flight Link Tool",
+  "item.flightcomputer.debug_power_generator": "Debug Power Generator",
+  "item.flightcomputer.basic_cooling": "Basic Cooling Upgrade",
+  "item.flightcomputer.improved_cooling": "Improved Cooling Upgrade",
+  "item.flightcomputer.advanced_cooling": "Advanced Cooling Upgrade",
+  "itemGroup.flightcomputer": "Flight Computer"
 }
