@@ -12,10 +12,7 @@ import net.minecraft.world.phys.Vec3;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Bridges the persistent Operations tab into the existing, proven controller/runtime path.
- * This intentionally does not replace the propulsion allocator: it supplies intent to it.
- */
+/** Bridges persistent Operations intent into the live controller/runtime path. */
 public final class FlightOperationsRuntimeBridge {
     private static final Pattern COORDINATES = Pattern.compile("^\\s*(-?\\d+(?:\\.\\d+)?)\\s*[, ]\\s*(-?\\d+(?:\\.\\d+)?)\\s*[, ]\\s*(-?\\d+(?:\\.\\d+)?)\\s*$");
 
@@ -28,17 +25,17 @@ public final class FlightOperationsRuntimeBridge {
         FlightOperationsState operations = holder.getFlightOperations();
         FlightControllerState current = controller.getControllerState();
 
+        // Operations that explicitly own a navigation target update the shared runtime target.
+        // Normal route targets are intentionally left alone here so the Route page can keep
+        // its destination until the user clears or aborts it.
         if (operations.emergencyReturn()) {
             Vec3 home = parseCoordinates(operations.defensiveHome());
             if (home != null) FlightControlRuntimeManager.setTarget(controller, home, "EMERGENCY RETURN");
         } else if (operations.combatAssist() && operations.combatMode() == com.flightcomputer.avionics.CombatMode.DEFENSIVE) {
             Vec3 home = parseCoordinates(operations.defensiveHome());
             if (home != null) FlightControlRuntimeManager.setTarget(controller, home, "DEFENSIVE HOME");
-        } else {
-            FlightControlRuntimeManager.clearTarget(controller);
         }
 
-        // Emergency return deliberately remains an assisted return, not an uncontrolled shutdown.
         if (operations.emergencyReturn()) {
             if (!current.engaged()) controller.applyAction(FlightControllerAction.TOGGLE_ENGAGED);
             if (!controller.getControllerState().stabiliser()) controller.applyAction(FlightControllerAction.TOGGLE_STABILISER);
