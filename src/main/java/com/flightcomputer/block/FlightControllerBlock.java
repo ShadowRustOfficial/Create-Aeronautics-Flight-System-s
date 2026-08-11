@@ -60,6 +60,7 @@ public class FlightControllerBlock extends BaseEntityBlock {
             if (blockEntity instanceof FlightControllerBlockEntity controller) {
                 controller.serverTick();
                 FlightControlRuntimeManager.tick(controller);
+                FlightControlRuntimeManager.sendTelemetry(controller);
             }
         };
     }
