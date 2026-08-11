@@ -22,6 +22,11 @@ public record FlightControllerState(
                 yield new FlightControllerState(engaged, enabled, nextMode,
                         altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
             }
+            case TOGGLE_AUTOPILOT -> {
+                boolean enabled = engaged && flightMode != FlightMode.AUTOPILOT;
+                yield new FlightControllerState(engaged, stabiliser, enabled ? FlightMode.AUTOPILOT : FlightMode.MANUAL,
+                        altitudeHold, headingHold, positionHold, velocityHold, enabled || navigationEnabled, routeActive);
+            }
             case CYCLE_MODE -> {
                 FlightMode next = flightMode.next();
                 boolean nextStabiliser = next == FlightMode.STABILIZED;
@@ -39,9 +44,9 @@ public record FlightControllerState(
                     altitudeHold, headingHold, positionHold, !velocityHold, navigationEnabled, routeActive);
             case TOGGLE_NAVIGATION -> new FlightControllerState(engaged, stabiliser, flightMode,
                     altitudeHold, headingHold, positionHold, velocityHold, !navigationEnabled, routeActive);
-            case START_ROUTE -> new FlightControllerState(true, true, FlightMode.AUTOPILOT,
+            case START_ROUTE -> new FlightControllerState(true, stabiliser, FlightMode.AUTOPILOT,
                     altitudeHold, headingHold, positionHold, velocityHold, true, true);
-            case ABORT_ROUTE -> new FlightControllerState(engaged, true, FlightMode.STABILIZED,
+            case ABORT_ROUTE -> new FlightControllerState(engaged, stabiliser, FlightMode.STABILIZED,
                     altitudeHold, headingHold, positionHold, velocityHold, false, false);
             case EMERGENCY_SHUTDOWN -> new FlightControllerState(false, false, FlightMode.DISENGAGED,
                     false, false, false, false, false, false);
