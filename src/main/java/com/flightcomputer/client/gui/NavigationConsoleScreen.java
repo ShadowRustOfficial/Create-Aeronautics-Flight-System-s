@@ -54,6 +54,8 @@ public final class NavigationConsoleScreen extends Screen {
     private boolean draggingMap;
     private EditBox targetInput;
 
+    public BlockPos controllerPos() { return controllerPos; }
+
     public NavigationConsoleScreen(BlockPos controllerPos) {
         super(Component.literal("Navigation Console"));
         this.controllerPos = controllerPos;
