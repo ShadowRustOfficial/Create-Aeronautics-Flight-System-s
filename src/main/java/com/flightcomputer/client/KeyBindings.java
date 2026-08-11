@@ -25,14 +25,6 @@ public final class KeyBindings {
     public static final KeyMapping LINK_VECTOR_NEXT = new KeyMapping(
             "key.flightcomputer.link_vector_next", InputConstants.Type.KEYSYM, InputConstants.KEY_B, "key.categories.flightcomputer");
 
-    /** Push while LINK_FOCUS is held to cycle NORTH/EAST/SOUTH/WEST/UP/DOWN. */
-    public static final KeyMapping LINK_VECTOR_NEXT = new KeyMapping(
-            "key.flightcomputer.link_vector_next",
-            InputConstants.Type.KEYSYM,
-            InputConstants.KEY_B,
-            "key.categories.flightcomputer"
-    );
-
     @SubscribeEvent
     public static void register(RegisterKeyMappingsEvent event) {
         event.register(OPEN_MAP);
