@@ -10,15 +10,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 /**
- * Resolves a Flight Controller's local Sub-Level position into parent-world coordinates.
- * Sable remains an optional runtime integration: no compile-time Sable dependency is required.
- *
- * This follows the exact pattern used by Aeronautics/Simulated-Project's SimMovementContext:
- * Sable.HELPER.getContaining(level, Vec3) -> SubLevel.logicalPose() -> transformPosition(Vec3).
- *
- * We also support Sable's BlockPos overload because SimLevelUtil uses it for containment checks.
- * The placed BlockEntity/BlockState are queried first when available, but their BlockPos is still
- * the Sub-Level's local/storage coordinate and is NOT itself world space.
+ * Resolves local Sub-Level coordinates into parent-world coordinates.
+ * Sable remains an optional runtime integration with no compile-time dependency.
  */
 public final class FlightControllerWorldPositionResolver {
     private static final String SABLE_CLASS = "dev.ryanhcode.sable.Sable";
@@ -36,7 +29,23 @@ public final class FlightControllerWorldPositionResolver {
         if (level == null || localPosition == null) return null;
         BlockEntity blockEntity = level.getBlockEntity(localPosition);
         if (blockEntity != null) return resolve(level, blockEntity);
-        return resolve(level, localPosition, null, null);
+        return resolve(level, center(localPosition));
+    }
+
+    /** Precise coordinate overload for entities/players; does not quantize to a BlockPos. */
+    public Vec3 resolve(Level level, Vec3 localPosition) {
+        if (level == null || localPosition == null) return null;
+        if (!ensureInitialized()) return localPosition;
+        try {
+            Object subLevel = getContainingVec3 == null ? null : getContainingVec3.invoke(sableHelper, level, localPosition);
+            if (subLevel == null) return localPosition;
+            Object pose = logicalPose.invoke(subLevel);
+            if (pose == null) return localPosition;
+            Object result = transformPosition.invoke(pose, localPosition);
+            return result instanceof Vec3 worldPosition ? worldPosition : localPosition;
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return localPosition;
+        }
     }
 
     public Vec3 resolve(Level level, BlockEntity blockEntity) {
@@ -48,25 +57,17 @@ public final class FlightControllerWorldPositionResolver {
 
     private Vec3 resolve(Level level, BlockPos localPosition, BlockEntity blockEntity, BlockState state) {
         if (level == null || localPosition == null) return null;
-
-        // The BE/state are deliberately not used as coordinates. They identify the placed
-        // controller and confirm the lookup path; localPosition remains its local Sub-Level pos.
         Vec3 local = center(localPosition);
         if (!ensureInitialized()) return local;
 
         try {
             Object subLevel = null;
-            if (getContainingVec3 != null) {
-                subLevel = getContainingVec3.invoke(sableHelper, level, local);
-            }
-            if (subLevel == null && getContainingBlockPos != null) {
-                subLevel = getContainingBlockPos.invoke(sableHelper, level, localPosition);
-            }
+            if (getContainingVec3 != null) subLevel = getContainingVec3.invoke(sableHelper, level, local);
+            if (subLevel == null && getContainingBlockPos != null) subLevel = getContainingBlockPos.invoke(sableHelper, level, localPosition);
             if (subLevel == null) return local;
 
             Object pose = logicalPose.invoke(subLevel);
             if (pose == null) return local;
-
             Object result = transformPosition.invoke(pose, local);
             return result instanceof Vec3 worldPosition ? worldPosition : local;
         } catch (ReflectiveOperationException | RuntimeException ignored) {
@@ -89,9 +90,6 @@ public final class FlightControllerWorldPositionResolver {
                 sableHelper = helperField.get(null);
                 if (sableHelper == null) throw new IllegalStateException("Sable HELPER is null");
 
-                // Resolve against Sable's public helper contract rather than the concrete helper
-                // implementation. This avoids a false-negative when the implementation class
-                // changes while the API remains stable.
                 Class<?> helperType = Class.forName(SABLE_HELPER_CLASS, false, getClass().getClassLoader());
                 getContainingVec3 = findMethod(helperType, "getContaining", Level.class, Vec3.class);
                 getContainingBlockPos = findMethod(helperType, "getContaining", Level.class, BlockPos.class);
@@ -99,12 +97,9 @@ public final class FlightControllerWorldPositionResolver {
                     throw new NoSuchMethodException("Sable SubLevelHelper.getContaining overloads not found");
                 }
 
-                Class<?> subLevelClass = getContainingVec3 != null
-                        ? getContainingVec3.getReturnType()
-                        : getContainingBlockPos.getReturnType();
+                Class<?> subLevelClass = getContainingVec3 != null ? getContainingVec3.getReturnType() : getContainingBlockPos.getReturnType();
                 logicalPose = subLevelClass.getMethod("logicalPose");
-                Class<?> poseClass = logicalPose.getReturnType();
-                transformPosition = poseClass.getMethod("transformPosition", Vec3.class);
+                transformPosition = logicalPose.getReturnType().getMethod("transformPosition", Vec3.class);
                 available = true;
             } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
                 available = false;
@@ -116,11 +111,8 @@ public final class FlightControllerWorldPositionResolver {
     }
 
     private static Method findMethod(Class<?> type, String name, Class<?>... parameters) {
-        try {
-            return type.getMethod(name, parameters);
-        } catch (NoSuchMethodException ignored) {
-            return null;
-        }
+        try { return type.getMethod(name, parameters); }
+        catch (NoSuchMethodException ignored) { return null; }
     }
 
     private static Vec3 center(BlockPos pos) {
