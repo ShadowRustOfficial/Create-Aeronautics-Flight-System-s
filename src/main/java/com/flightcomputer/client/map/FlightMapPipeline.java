@@ -56,7 +56,12 @@ public final class FlightMapPipeline {
     public void tick(ClientLevel level, int maxRequests) {
         if (provider == null || level == null) return;
         diagnostics.state(FlightMapProviderState.WAITING);
+
+        // Observe the chunks Minecraft has already delivered to this client before
+        // servicing normal viewport requests. The provider must not load missing chunks.
+        provider.observeLoadedClientChunks(level);
         provider.tick(level);
+
         int budget = Math.max(0, maxRequests);
         while (budget-- > 0) {
             FlightMapTileRequest request = scheduler.poll();
