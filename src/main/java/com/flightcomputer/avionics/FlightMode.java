@@ -7,7 +7,13 @@ public enum FlightMode {
     STABILIZED,
     AUTOPILOT;
 
+    /** Cycle only usable operating modes; DISENGAGED is entered by disengaging the controller. */
     public FlightMode next() {
-        return values()[(ordinal() + 1) % values().length];
+        return switch (this) {
+            case DISENGAGED -> MANUAL;
+            case MANUAL -> STABILIZED;
+            case STABILIZED -> AUTOPILOT;
+            case AUTOPILOT -> MANUAL;
+        };
     }
 }
