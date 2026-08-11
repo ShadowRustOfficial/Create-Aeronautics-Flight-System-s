@@ -32,15 +32,20 @@ public final class FlightComputerConfig {
         b.push("flight_controller");
         ENERGY_CAPACITY = b.comment("Maximum FE stored by one Flight Controller. Default: 20,000,000 FE.").defineInRange("energyCapacityFe", 20000000, 1, Integer.MAX_VALUE);
         ENERGY_INPUT_PER_TICK = b.defineInRange("energyInputFePerTick", 12000, 1, Integer.MAX_VALUE);
-        IDLE_OPERATION_COST = b.defineInRange("idleOperationCostFePerTick", 1250, 1, Integer.MAX_VALUE);
-        BASE_OPERATION_COST = b.defineInRange("baseOperationCostFePerTick", 750, 0, Integer.MAX_VALUE);
-        TERRAIN_OPERATION_COST = b.defineInRange("terrainOperationCostFePerTick", 500, 0, Integer.MAX_VALUE);
-        ADVANCED_COOLING_EXTRA_COST = b.defineInRange("advancedCoolingExtraCostFePerTick", 2500, 0, Integer.MAX_VALUE);
+
+        // Deliberately moderate baseline costs so normal flight does not drain a 20M FE controller too quickly.
+        IDLE_OPERATION_COST = b.defineInRange("idleOperationCostFePerTick", 500, 1, Integer.MAX_VALUE);
+        BASE_OPERATION_COST = b.defineInRange("baseOperationCostFePerTick", 300, 0, Integer.MAX_VALUE);
+        TERRAIN_OPERATION_COST = b.defineInRange("terrainOperationCostFePerTick", 200, 0, Integer.MAX_VALUE);
+        ADVANCED_COOLING_EXTRA_COST = b.defineInRange("advancedCoolingExtraCostFePerTick", 1000, 0, Integer.MAX_VALUE);
+
         MEDIUM_THRESHOLD = b.defineInRange("mediumThresholdPercent", 50, 1, 99);
         LOW_THRESHOLD = b.defineInRange("lowThresholdPercent", 25, 1, 98);
         CRITICAL_THRESHOLD = b.defineInRange("criticalThresholdPercent", 10, 1, 97);
+
+        // Lower heat generation and retain the same normalized 0-100 heat capacity.
         HEAT_CAPACITY = b.defineInRange("heatCapacity", 100.0D, 1.0D, 1000000.0D);
-        BASE_HEAT_PER_TICK = b.defineInRange("baseHeatPerTick", 0.08D, 0.0D, 10000.0D);
+        BASE_HEAT_PER_TICK = b.defineInRange("baseHeatPerTick", 0.04D, 0.0D, 10000.0D);
         COOLING_PER_TICK = b.defineInRange("coolingPerTick", 0.04D, 0.0D, 10000.0D);
         BASIC_COOLING_MODIFIER = b.defineInRange("basicCoolingModifier", 1.75D, 1.0D, 1000.0D);
         IMPROVED_COOLING_MODIFIER = b.defineInRange("improvedCoolingModifier", 3.0D, 1.0D, 1000.0D);
