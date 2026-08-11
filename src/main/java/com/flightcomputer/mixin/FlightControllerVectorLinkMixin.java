@@ -1,55 +1,55 @@
 package com.flightcomputer.mixin;
 
+import com.flightcomputer.avionics.FlightMode;
 import com.flightcomputer.block.FlightControllerBlockEntity;
+import com.flightcomputer.control.VectorDirection;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.nbt.CompoundTag;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.EnumMap;
-import java.util.LinkedHashMap;
-import java.util.Map;
 
-/**
- * Keeps vector links in controller-local coordinates. Sable sub-levels move and rotate, so storing
- * the original world BlockPos makes a thruster disappear as soon as the craft is assembled/moved.
- */
+/** Keeps vector links in controller-local plot coordinates and migrates old absolute links once. */
 @Mixin(FlightControllerBlockEntity.class)
 public abstract class FlightControllerVectorLinkMixin {
-    @Redirect(
-            method = "bindVector",
+    private static final String FORMAT_TAG = "FlightComputerVectorLinkFormat";
+    private static final int CURRENT_FORMAT = 1;
+
+    @Shadow @Final private EnumMap<FlightMode, EnumMap<VectorDirection, BlockPos>> vectorLinks;
+
+    @Redirect(method = "bindVector",
             at = @At(value = "INVOKE", target = "Ljava/util/EnumMap;put(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"))
     private Object flightcomputer$storeLocalLink(EnumMap<?, ?> map, Object key, Object value) {
         if (value instanceof BlockPos target) {
             FlightControllerBlockEntity controller = (FlightControllerBlockEntity) (Object) this;
-            BlockPos origin = controller.getBlockPos();
-            value = target.subtract(origin);
+            value = target.subtract(controller.getBlockPos());
         }
-        @SuppressWarnings({"rawtypes", "unchecked"})
-        EnumMap raw = (EnumMap) map;
+        @SuppressWarnings({"rawtypes", "unchecked"}) EnumMap raw = (EnumMap) map;
         return raw.put(key, value);
     }
 
-    @Redirect(
-            method = "getVectorLinks",
-            at = @At(value = "INVOKE", target = "Ljava/util/Map;copyOf(Ljava/util/Map;)Ljava/util/Map;"))
-    private Map<?, ?> flightcomputer$normalizeStoredLinks(Map<?, ?> stored) {
+    @Inject(method = "loadAdditional", at = @At("TAIL"))
+    private void flightcomputer$migrateOldAbsoluteLinks(CompoundTag tag, HolderLookup.Provider registries, CallbackInfo ci) {
+        if (tag.getInt(FORMAT_TAG) >= CURRENT_FORMAT) return;
         FlightControllerBlockEntity controller = (FlightControllerBlockEntity) (Object) this;
         BlockPos origin = controller.getBlockPos();
-        Map<Object, Object> normalized = new LinkedHashMap<>();
-        for (Map.Entry<?, ?> entry : stored.entrySet()) {
-            Object value = entry.getValue();
-            if (value instanceof BlockPos pos) {
-                int dx = pos.getX() - origin.getX();
-                int dy = pos.getY() - origin.getY();
-                int dz = pos.getZ() - origin.getZ();
-                // Old revisions stored absolute world positions. Current links are local offsets.
-                // A working vehicle bank is intentionally local and within the registry scan range.
-                if (Math.abs(dx) > 128 || Math.abs(dy) > 128 || Math.abs(dz) > 128)
-                    value = pos.subtract(origin);
+        for (EnumMap<VectorDirection, BlockPos> bank : vectorLinks.values()) {
+            for (VectorDirection direction : VectorDirection.values()) {
+                BlockPos stored = bank.get(direction);
+                if (stored != null) bank.put(direction, stored.subtract(origin));
             }
-            normalized.put(entry.getKey(), value);
         }
-        return Map.copyOf(normalized);
+    }
+
+    @Inject(method = "saveAdditional", at = @At("TAIL"))
+    private void flightcomputer$writeLinkFormat(CompoundTag tag, HolderLookup.Provider registries, CallbackInfo ci) {
+        tag.putInt(FORMAT_TAG, CURRENT_FORMAT);
     }
 }
