@@ -59,4 +59,4 @@ jobs:
           git diff --cached --quiet || git commit -m "Apply Phase 5 runtime integration"
           git push origin HEAD:phase-5-validation
       - name: Compile and validate
-        run: ./gradlew build --no-daemon
+        run: bash ./gradlew build --no-daemon
