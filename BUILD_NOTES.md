@@ -50,3 +50,9 @@ Neither Xaero's Minimap nor Xaero's World Map publish an official, documented AP
 - Added `FlightComputerNetwork.ControllerActionPayload`.
 - Added `ControllerLinkRegistry`, `VectorLink`, `FlightLinkToolItem`, and `LinkOverlayScreen` as the next-stage link system scaffold.
 - Added `ModCreativeTabs`.
+
+## Phase 5.2 runtime integration
+- Connected the server tick to the real thruster registry, six-axis stabiliser, MPC navigator, allocator and thermal load path.
+- Published live route/thermal/power telemetry to nearby clients.
+- Kept thermal and cooling as standalone consoles and exposed navigation buttons to them from every navigation page.
+- Moved route waypoint/waystone selection into the Route page itself.
