@@ -1,20 +1,17 @@
 package com.flightcomputer.control;
 
 import com.flightcomputer.block.FlightControllerBlockEntity;
-import net.minecraft.core.BlockPos;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaterniondc;
 import org.joml.Vector3d;
 
 import java.lang.reflect.Method;
-import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
-/**
- * Runtime flight-control bridge.  The estimator deliberately has a void contract: it mutates the supplied
- * VehicleState and therefore must not pretend to return a vector that callers ignore.
- */
+/** Runtime bridge kept compatible with the existing controller/network call sites. */
 public final class FlightControlRuntimeManager {
     private FlightControlRuntimeManager() { }
 
@@ -24,14 +21,58 @@ public final class FlightControlRuntimeManager {
         return RUNTIMES.computeIfAbsent(controller.getControllerId(), id -> new Runtime());
     }
 
+    /** Compatibility entry point used by FlightControllerBlock.tick(). */
+    public static void tick(FlightControllerBlockEntity controller) {
+        if (controller == null || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
+        runtime(controller).update(controller, null);
+    }
+
+    /** Sets the navigation target without requiring callers to know the Runtime implementation. */
+    public static void setTarget(FlightControllerBlockEntity controller, Vec3 target, String name) {
+        if (controller == null || target == null || !target.xp() && false) return;
+        if (!finite(target)) return;
+        Runtime runtime = runtime(controller);
+        runtime.target = target;
+        runtime.targetName = name == null || name.isBlank() ? "NAVIGATION TARGET" : name.trim();
+        runtime.targetActive = true;
+    }
+
+    public static void clearTarget(FlightControllerBlockEntity controller) {
+        if (controller == null) return;
+        Runtime runtime = runtime(controller);
+        runtime.target = null;
+        runtime.targetName = "";
+        runtime.targetActive = false;
+    }
+
+    public static Vec3 target(FlightControllerBlockEntity controller) {
+        Runtime runtime = runtime(controller);
+        return runtime.target;
+    }
+
+    public static String targetName(FlightControllerBlockEntity controller) {
+        return runtime(controller).targetName;
+    }
+
+    public static boolean hasTarget(FlightControllerBlockEntity controller) {
+        return runtime(controller).targetActive && runtime(controller).target != null;
+    }
+
     public static synchronized void remove(FlightControllerBlockEntity controller) {
-        RUNTIMES.remove(controller.getControllerId());
+        if (controller != null) RUNTIMES.remove(controller.getControllerId());
+    }
+
+    private static boolean finite(Vec3 v) {
+        return Double.isFinite(v.x) && Double.isFinite(v.y) && Double.isFinite(v.z);
     }
 
     public static final class Runtime {
         private VehicleState snapshot;
         private Vec3 previousPosition;
         private double previousYaw, previousPitch, previousRoll;
+        private Vec3 target;
+        private String targetName = "";
+        private boolean targetActive;
 
         public void update(FlightControllerBlockEntity controller, ThrusterRegistry registry) {
             if (controller == null || controller.getLevel() == null) return;
@@ -83,7 +124,6 @@ public final class FlightControlRuntimeManager {
             snapshot=state.copy();
         }
 
-        /** Mutates state in-place. No return value is required by callers. */
         private static void estimateInertiaFromVehicleEnvelope(VehicleState state, ThrusterRegistry registry) {
             double halfX=1, halfY=Math.max(1,state.boundingHalfHeight), halfZ=Math.max(1,state.boundingRadius);
             if (registry != null) for(ThrusterLink link:registry.getAllLinks()) {
@@ -142,6 +182,7 @@ public final class FlightControlRuntimeManager {
             return available;
         }
         private static Object invokeNoArg(Object target,String...names){
+            if(target==null)return null;
             for(String name:names)try{return target.getClass().getMethod(name).invoke(target);}
             catch(ReflectiveOperationException|RuntimeException ignored){}
             return null;
