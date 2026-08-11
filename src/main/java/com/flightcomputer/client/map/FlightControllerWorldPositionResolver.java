@@ -17,8 +17,8 @@ import java.lang.reflect.Method;
  * Sable.HELPER.getContaining(level, Vec3) -> SubLevel.logicalPose() -> transformPosition(Vec3).
  *
  * We also support Sable's BlockPos overload because SimLevelUtil uses it for containment checks.
- * The BlockEntity/BlockState are intentionally treated as identity/validation data only: their
- * BlockPos is still the Sub-Level's local/storage coordinate and is NOT itself world space.
+ * The placed BlockEntity/BlockState are queried first when available, but their BlockPos is still
+ * the Sub-Level's local/storage coordinate and is NOT itself world space.
  */
 public final class FlightControllerWorldPositionResolver {
     private static final String SABLE_CLASS = "dev.ryanhcode.sable.Sable";
@@ -33,6 +33,9 @@ public final class FlightControllerWorldPositionResolver {
     private Method transformPosition;
 
     public Vec3 resolve(Level level, BlockPos localPosition) {
+        if (level == null || localPosition == null) return null;
+        BlockEntity blockEntity = level.getBlockEntity(localPosition);
+        if (blockEntity != null) return resolve(level, blockEntity);
         return resolve(level, localPosition, null, null);
     }
 
@@ -46,8 +49,8 @@ public final class FlightControllerWorldPositionResolver {
     private Vec3 resolve(Level level, BlockPos localPosition, BlockEntity blockEntity, BlockState state) {
         if (level == null || localPosition == null) return null;
 
-        // The BE/state are deliberately not used as coordinates. They confirm that we are
-        // resolving the placed controller, while localPosition remains its local Sub-Level pos.
+        // The BE/state are deliberately not used as coordinates. They identify the placed
+        // controller and confirm the lookup path; localPosition remains its local Sub-Level pos.
         Vec3 local = center(localPosition);
         if (!ensureInitialized()) return local;
 
