@@ -12,15 +12,18 @@ import java.util.Set;
 /**
  * Flight Computer-owned compatibility facade over the native terrain provider.
  *
- * This class deliberately has no integration with Xaero, JourneyMap, or VoxelMap.
- * JourneyMap is an architectural reference only; all acquisition, caching and
- * rendering data is owned by Flight Computer.
+ * No external map-mod integration is performed here. JourneyMap is an architectural
+ * reference only; terrain acquisition, caching and rendering remain Flight Computer-owned.
+ *
+ * Generated tiles remain resident for the lifetime of the active world/dimension.
+ * Moving the viewport changes what is requested, not what is retained.
  */
 public final class TerrainMapCache {
+    /** Never evict a tile during the active world/dimension session. */
     private static final Map<Long, int[]> CACHE = new HashMap<>();
+    /** Client chunks that have been observed and are waiting for CPU generation. */
     private static final Set<Long> REQUESTED = new HashSet<>();
     private static final LiveWorldMapProvider PROVIDER = new LiveWorldMapProvider();
-    private static final int MAX_REQUESTED_CHUNKS = 4096;
     private static String activeIdentity;
 
     private TerrainMapCache() {}
@@ -46,32 +49,55 @@ public final class TerrainMapCache {
         requestViewport(level, centerWorldX, centerWorldZ, radiusBlocks, 16);
     }
 
+    /**
+     * Scans the requested map area but only accepts chunks that are already loaded
+     * by the logical client. This never asks Minecraft/server to load a chunk.
+     * As the player moves and new client chunks arrive, subsequent scans discover
+     * them and add them to the permanent session cache.
+     */
     public static void requestViewport(ClientLevel level, int centerWorldX, int centerWorldZ,
                                        int radiusBlocks, int sampleStepBlocks) {
         ensureLevel(level);
-        if (level == null || REQUESTED.size() >= MAX_REQUESTED_CHUNKS) return;
+        if (level == null) return;
+
         int radius = Math.max(16, radiusBlocks);
-        int step = Math.max(1, sampleStepBlocks);
-        requestChunk(level, ChunkPos.asLong(Math.floorDiv(centerWorldX, 16), Math.floorDiv(centerWorldZ, 16)));
-        for (int distance = step; distance <= radius && REQUESTED.size() < MAX_REQUESTED_CHUNKS; distance += step) {
-            requestSampleLine(level, centerWorldX - distance, centerWorldZ - distance,
-                    centerWorldX + distance, centerWorldZ - distance, step);
-            requestSampleLine(level, centerWorldX - distance, centerWorldZ + distance,
-                    centerWorldX + distance, centerWorldZ + distance, step);
-            requestSampleLine(level, centerWorldX - distance, centerWorldZ - distance,
-                    centerWorldX - distance, centerWorldZ + distance, step);
-            requestSampleLine(level, centerWorldX + distance, centerWorldZ - distance,
-                    centerWorldX + distance, centerWorldZ + distance, step);
+        int minChunkX = Math.floorDiv(centerWorldX - radius, 16);
+        int maxChunkX = Math.floorDiv(centerWorldX + radius, 16);
+        int minChunkZ = Math.floorDiv(centerWorldZ - radius, 16);
+        int maxChunkZ = Math.floorDiv(centerWorldZ + radius, 16);
+
+        for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+            for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+                // Critical: hasChunk is a read-only client-side availability check.
+                // Do not replace this with getChunk(...), which could initiate loading.
+                if (level.hasChunk(chunkX, chunkZ)) {
+                    requestChunk(level, ChunkPos.asLong(chunkX, chunkZ));
+                }
+            }
         }
     }
 
+    /**
+     * Advances requests from the client-thread facade into the native provider.
+     * The provider captures Minecraft data here, then performs expensive generation
+     * on its bounded CPU worker pool. Completed tiles are read back from its cache.
+     */
     public static void tick(ClientLevel level) {
         ensureLevel(level);
         if (level == null) return;
         for (Long key : Set.copyOf(REQUESTED)) {
-            int[] tile = PROVIDER.getChunkTile(level, ChunkPos.getX(key), ChunkPos.getZ(key));
+            int chunkX = ChunkPos.getX(key);
+            int chunkZ = ChunkPos.getZ(key);
+            if (!level.hasChunk(chunkX, chunkZ)) {
+                // A client chunk can unload between scans. Leave it out of the
+                // generation queue; a later scan will rediscover it if it returns.
+                REQUESTED.remove(key);
+                continue;
+            }
+            PROVIDER.requestChunkTile(level, chunkX, chunkZ);
+            int[] tile = PROVIDER.getCachedChunkTile(level, chunkX, chunkZ);
             if (tile != null) {
-                CACHE.put(key, tile);
+                CACHE.putIfAbsent(key, tile);
                 REQUESTED.remove(key);
             }
         }
@@ -80,7 +106,9 @@ public final class TerrainMapCache {
     public static String diagnostics() {
         return "Native Flight Computer terrain provider"
                 + "\nloaded=" + CACHE.size()
-                + "\npending=" + REQUESTED.size();
+                + "\npending=" + REQUESTED.size()
+                + "\nproviderQueued=" + PROVIDER.queuedTiles()
+                + "\nproviderCached=" + PROVIDER.cachedTiles();
     }
 
     public static void clear() {
@@ -90,18 +118,12 @@ public final class TerrainMapCache {
         activeIdentity = null;
     }
 
-    private static void requestSampleLine(ClientLevel level, int x1, int z1, int x2, int z2, int step) {
-        int dx = Integer.compare(x2, x1);
-        int dz = Integer.compare(z2, z1);
-        int length = Math.max(Math.abs(x2 - x1), Math.abs(z2 - z1));
-        for (int offset = 0; offset <= length && REQUESTED.size() < MAX_REQUESTED_CHUNKS; offset += step) {
-            requestChunk(level, ChunkPos.asLong(Math.floorDiv(x1 + dx * offset, 16), Math.floorDiv(z1 + dz * offset, 16)));
-        }
-    }
-
     private static void requestChunk(ClientLevel level, long key) {
-        if (CACHE.containsKey(key) || !REQUESTED.add(key)) return;
-        if (REQUESTED.size() > MAX_REQUESTED_CHUNKS) REQUESTED.remove(key);
+        if (level == null || CACHE.containsKey(key)) return;
+        int chunkX = ChunkPos.getX(key);
+        int chunkZ = ChunkPos.getZ(key);
+        if (!level.hasChunk(chunkX, chunkZ)) return;
+        REQUESTED.add(key);
     }
 
     private static long key(int worldX, int worldZ) {

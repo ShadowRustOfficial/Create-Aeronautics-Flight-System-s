@@ -4,24 +4,30 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.BlockPos;
 
-/** Renders only Flight Computer-owned position indicators; Xaero owns waypoint rendering. */
+/** Renders Flight Computer-owned position indicators over the native map. */
 public final class FlightMapPositionOverlay {
-    public void render(GuiGraphics graphics, XaeroMapViewport.Snapshot view,
-                       int mapLeft, int mapTop, int mapWidth, int mapHeight, BlockPos controllerPos) {
+    public void render(GuiGraphics graphics, int mapLeft, int mapTop, int mapWidth, int mapHeight,
+                       double centerX, double centerZ, BlockPos controllerPos) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null || !view.finite()) return;
-
+        if (minecraft.level == null) return;
         if (minecraft.player != null) {
-            int x = view.worldToViewportX(minecraft.player.getX(), mapLeft, mapWidth);
-            int y = view.worldToViewportY(minecraft.player.getZ(), mapTop, mapHeight);
+            int x = worldToViewportX(minecraft.player.getX(), centerX, mapLeft, mapWidth);
+            int y = worldToViewportY(minecraft.player.getZ(), centerZ, mapTop, mapHeight);
             drawTriangle(graphics, x, y, 4, 0xFFFF3333);
         }
-
         if (controllerPos != null) {
-            int x = view.worldToViewportX(controllerPos.getX() + 0.5D, mapLeft, mapWidth);
-            int y = view.worldToViewportY(controllerPos.getZ() + 0.5D, mapTop, mapHeight);
+            int x = worldToViewportX(controllerPos.getX() + 0.5D, centerX, mapLeft, mapWidth);
+            int y = worldToViewportY(controllerPos.getZ() + 0.5D, centerZ, mapTop, mapHeight);
             drawDiamond(graphics, x, y, 4, 0xFF66D9FF);
         }
+    }
+
+    private static int worldToViewportX(double worldX, double centerX, int left, int width) {
+        return (int)Math.round(left + width / 2.0D + (worldX - centerX));
+    }
+
+    private static int worldToViewportY(double worldZ, double centerZ, int top, int height) {
+        return (int)Math.round(top + height / 2.0D + (worldZ - centerZ));
     }
 
     private static void drawTriangle(GuiGraphics graphics, int x, int y, int radius, int color) {

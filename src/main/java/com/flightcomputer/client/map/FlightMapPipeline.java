@@ -2,10 +2,7 @@ package com.flightcomputer.client.map;
 
 import net.minecraft.client.multiplayer.ClientLevel;
 
-/**
- * Provider-neutral terrain pipeline. The UI asks for tiles; the pipeline owns request state,
- * provider work and diagnostics. Rendering consumes completed cache entries only.
- */
+/** Provider-neutral terrain pipeline. Rendering consumes completed cache entries only. */
 public final class FlightMapPipeline {
     private final FlightMapRequestScheduler scheduler;
     private final FlightMapDiagnostics diagnostics;
@@ -21,8 +18,10 @@ public final class FlightMapPipeline {
         this.provider = provider;
         this.scheduler = scheduler;
         this.diagnostics = diagnostics;
-        diagnostics.provider(FlightMapProviderKind.NONE);
-        diagnostics.state(FlightMapProviderState.DISCOVERING);
+        diagnostics.provider(provider == null
+                ? FlightMapProviderKind.NONE
+                : FlightMapProviderKind.NATIVE_JOURNEYMAP_INSPIRED);
+        diagnostics.state(provider == null ? FlightMapProviderState.FAILED : FlightMapProviderState.DISCOVERING);
     }
 
     public void setProvider(FlightMapDataProvider next, FlightMapProviderKind kind) {
@@ -33,7 +32,7 @@ public final class FlightMapPipeline {
         diagnostics.state(next == null ? FlightMapProviderState.FAILED : FlightMapProviderState.DISCOVERING);
     }
 
-    /** Render-only fast path. A miss is scheduled; no provider decoder is entered here. */
+    /** Render-only fast path. A miss is scheduled; no world scan or generation occurs here. */
     public int[] getCachedTile(ClientLevel level, int chunkX, int chunkZ) {
         if (provider == null || level == null) return null;
         int[] tile = provider.getCachedChunkTile(level, chunkX, chunkZ);
@@ -42,27 +41,38 @@ public final class FlightMapPipeline {
             return tile;
         }
         diagnostics.cacheMiss();
-        if (scheduler.offer(chunkX, chunkZ, 50)) diagnostics.pending(scheduler.size());
+        // The provider owns in-flight state. A tile that is already generating must
+        // never be re-enqueued just because the renderer sees another cache miss.
+        if (!provider.isTilePending(chunkX, chunkZ)) {
+            if (scheduler.offer(chunkX, chunkZ, 50)) diagnostics.pending(scheduler.size());
+        }
         return null;
     }
 
     /**
-     * Client-thread bounded work pump. Providers may stage work internally, but this layer
-     * never blocks waiting for a decoder or texture upload.
+     * Client-thread request pump. Providers capture Minecraft state here and may then
+     * perform pure CPU work asynchronously. The render path never waits for completion.
      */
     public void tick(ClientLevel level, int maxRequests) {
         if (provider == null || level == null) return;
         diagnostics.state(FlightMapProviderState.WAITING);
+
+        // Observe the chunks Minecraft has already delivered to this client before
+        // servicing normal viewport requests. The provider must not load missing chunks.
+        provider.observeLoadedClientChunks(level);
         provider.tick(level);
+
         int budget = Math.max(0, maxRequests);
         while (budget-- > 0) {
             FlightMapTileRequest request = scheduler.poll();
             if (request == null) break;
+            // A request may have become in-flight between frames; do not capture it twice.
+            if (provider.isTilePending(request.chunkX(), request.chunkZ())) continue;
             diagnostics.requested();
             provider.requestChunkTile(level, request.chunkX(), request.chunkZ());
-            int[] tile = provider.getCachedChunkTile(level, request.chunkX(), request.chunkZ());
-            if (tile != null) diagnostics.decoded();
-            else diagnostics.retry();
+            if (provider.getCachedChunkTile(level, request.chunkX(), request.chunkZ()) != null) {
+                diagnostics.decoded();
+            }
         }
         diagnostics.pending(scheduler.size());
         diagnostics.state(scheduler.isEmpty() ? FlightMapProviderState.READY : FlightMapProviderState.WAITING);
