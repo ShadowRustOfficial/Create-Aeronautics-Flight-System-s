@@ -26,6 +26,8 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
     private static final int MAX_JOBS = 64;
     private static final int LOADED_SCAN_INTERVAL_TICKS = 10;
     private static final int MAX_SCAN_RADIUS_CHUNKS = 64;
+    /** Bound the amount of Minecraft-world sampling performed by one client scan. */
+    private static final int MAX_NEW_CAPTURES_PER_SCAN = 8;
 
     /**
      * Session-persistent terrain cache. Deliberately unbounded: generated terrain is
@@ -94,7 +96,7 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
      */
     @Override
     public synchronized void observeLoadedClientChunks(ClientLevel level) {
-        if (level == null || level.isClientSide() == false) return;
+        if (level == null || !level.isClientSide()) return;
         if (level.getChunkSource() == null) return;
 
         var player = net.minecraft.client.Minecraft.getInstance().player;
@@ -112,12 +114,22 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
         int radius = (int) Math.ceil((Math.sqrt(loadedCount) - 1.0D) * 0.5D) + 2;
         radius = Math.max(2, Math.min(MAX_SCAN_RADIUS_CHUNKS, radius));
 
+        int newCaptures = 0;
         for (int chunkZ = playerChunk.z - radius; chunkZ <= playerChunk.z + radius; chunkZ++) {
             for (int chunkX = playerChunk.x - radius; chunkX <= playerChunk.x + radius; chunkX++) {
+                if (newCaptures >= MAX_NEW_CAPTURES_PER_SCAN) return;
+
+                // Only spend a client-thread capture on a tile that is genuinely new.
+                // This lets successive scans walk through the loaded area without
+                // repeatedly sampling already-cached chunks.
+                long key = key(chunkX, chunkZ);
+                if (cache.containsKey(key) || running.containsKey(key) || queued.contains(key)) continue;
+
                 // hasChunk is the important boundary: only chunks already loaded on
                 // this client are handed to the Flight Map conversion pipeline.
                 if (level.hasChunk(chunkX, chunkZ)) {
                     requestChunkTile(level, chunkX, chunkZ);
+                    newCaptures++;
                 }
             }
         }
