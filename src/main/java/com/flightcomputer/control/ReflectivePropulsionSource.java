@@ -52,6 +52,21 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
         return new ReflectivePropulsionSource(blockEntity, direction, mountOffset, accessor, type);
     }
 
+    /** Returns the physical facing of this propulsion block when its implementation exposes one. */
+    public VectorDirection getPhysicalDirection() {
+        if (accessor.facing == null) return null;
+        Object value = invoke(accessor.facing);
+        if (!(value instanceof Direction facing)) return null;
+        return switch (facing) {
+            case NORTH -> VectorDirection.NORTH;
+            case SOUTH -> VectorDirection.SOUTH;
+            case EAST -> VectorDirection.EAST;
+            case WEST -> VectorDirection.WEST;
+            case UP -> VectorDirection.UP;
+            case DOWN -> VectorDirection.DOWN;
+        };
+    }
+
     @Override public String getId() { return blockEntity.getBlockPos().asLong() + "@" + blockEntity.getLevel().dimension().location(); }
     @Override public PropulsionType getType() { return type; }
     @Override public VectorDirection getDirection() { return direction; }
