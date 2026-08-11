@@ -1,6 +1,10 @@
 package com.flightcomputer.control;
 
+import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
+import com.flightcomputer.network.FlightComputerNetwork;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaterniondc;
@@ -11,7 +15,11 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/** Runtime bridge kept compatible with the existing controller/network call sites. */
+/**
+ * Server runtime bridge for the Flight Controller. This is the point where the persistent
+ * controller state is connected to the real control core, thruster banks, MPC navigator,
+ * thermal load and client telemetry.
+ */
 public final class FlightControlRuntimeManager {
     private FlightControlRuntimeManager() { }
     private static final Map<UUID, Runtime> RUNTIMES = new HashMap<>();
@@ -23,7 +31,9 @@ public final class FlightControlRuntimeManager {
     /** Compatibility entry point used by FlightControllerBlock.tick(). */
     public static void tick(FlightControllerBlockEntity controller) {
         if (controller == null || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
-        runtime(controller).update(controller, null);
+        Runtime runtime = runtime(controller);
+        runtime.update(controller);
+        runtime.control(controller);
     }
 
     public static void setTarget(FlightControllerBlockEntity controller, Vec3 target, String name) {
@@ -49,6 +59,36 @@ public final class FlightControlRuntimeManager {
         return runtime.targetActive && runtime.target != null;
     }
 
+    /** Sends the authoritative runtime snapshot to nearby clients for route/diagnostic UI. */
+    public static void sendTelemetry(FlightControllerBlockEntity controller) {
+        if (controller == null || !(controller.getLevel() instanceof ServerLevel level)) return;
+        Runtime runtime = runtime(controller);
+        VehicleState state = runtime.snapshot;
+        if (state == null) return;
+
+        Vec3 target = runtime.targetActive ? runtime.target : null;
+        double distance = target == null ? -1.0D : target.distanceTo(new Vec3(state.x, state.y, state.z));
+        double speed = Math.sqrt(state.vx * state.vx + state.vy * state.vy + state.vz * state.vz);
+        double heading = Math.toDegrees(Math.atan2(state.vx, state.vz));
+        FlightComputerNetwork.TelemetryPayload payload = new FlightComputerNetwork.TelemetryPayload(
+                controller.getControllerId(), state.x, state.y, state.z, speed, heading,
+                Math.toDegrees(state.pitch), Math.toDegrees(state.roll),
+                target != null, target == null ? 0.0D : target.x, target == null ? 0.0D : target.y,
+                target == null ? 0.0D : target.z, runtime.targetName, distance,
+                controller.getTemperature(), controller.getMaxTemperature(), controller.getThermalState().ordinal(),
+                controller.getThermalCooldownTicksRemaining(), controller.getEnergyStorage().getEnergyStored(),
+                controller.getEnergyStorage().getMaxEnergyStored(), controller.getCoolingTier().ordinal(),
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+        for (ServerPlayer player : level.players()) {
+            if (player.distanceToSqr(controller.getBlockPos().getX() + 0.5D,
+                    controller.getBlockPos().getY() + 0.5D,
+                    controller.getBlockPos().getZ() + 0.5D) <= 128.0D * 128.0D) {
+                FlightComputerNetwork.sendTelemetry(player, payload);
+            }
+        }
+    }
+
     public static synchronized void remove(FlightControllerBlockEntity controller) {
         if (controller != null) RUNTIMES.remove(controller.getControllerId());
     }
@@ -64,8 +104,10 @@ public final class FlightControlRuntimeManager {
         private Vec3 target;
         private String targetName = "";
         private boolean targetActive;
+        private FlightComputer computer;
+        private Vec3 lastNavigatorTarget;
 
-        public void update(FlightControllerBlockEntity controller, ThrusterRegistry registry) {
+        public void update(FlightControllerBlockEntity controller) {
             if (controller == null || controller.getLevel() == null) return;
             Level level = controller.getLevel();
             Vec3 local = Vec3.atCenterOf(controller.getBlockPos());
@@ -77,6 +119,7 @@ public final class FlightControlRuntimeManager {
                 state.vy = (world.y - previousPosition.y) * 20.0D;
                 state.vz = (world.z - previousPosition.z) * 20.0D;
             }
+
             Object subLevel = containing(level, local);
             boolean physicalInertia = false;
             if (subLevel != null) try {
@@ -102,7 +145,11 @@ public final class FlightControlRuntimeManager {
                 double halfHeight=readDouble(subLevel,"getBoundingHalfHeight","boundingHalfHeight","getHalfHeight");
                 if(halfHeight>0) state.boundingHalfHeight=Math.max(1.0D,halfHeight);
             } catch (ReflectiveOperationException | RuntimeException ignored) { }
-            if (!physicalInertia) estimateInertiaFromVehicleEnvelope(state, registry);
+
+            if (!physicalInertia) {
+                ThrusterRegistry registry = computer == null ? null : computer.getRegistry();
+                estimateInertiaFromVehicleEnvelope(state, registry);
+            }
             if(previousPosition!=null){
                 state.yawRate=angleDelta(state.yaw,previousYaw)*20; state.pitchRate=angleDelta(state.pitch,previousPitch)*20;
                 state.rollRate=angleDelta(state.roll,previousRoll)*20;
@@ -110,6 +157,39 @@ public final class FlightControlRuntimeManager {
             state.timestampNanos=System.nanoTime();
             previousPosition=world; previousYaw=state.yaw; previousPitch=state.pitch; previousRoll=state.roll;
             snapshot=state.copy();
+        }
+
+        private void control(FlightControllerBlockEntity controller) {
+            if (controller == null || controller.getLevel() == null || controller.getLevel().isClientSide() || snapshot == null) return;
+            if (computer == null) computer = new FlightComputer(() -> snapshot);
+
+            ThrusterRegistry registry = computer.getRegistry();
+            registry.refresh(controller.getLevel(), controller.getBlockPos(),
+                    controller.getVectorLinks(FlightMode.STABILIZE),
+                    controller.getVectorLinks(FlightMode.CRUISE),
+                    controller.getLevel().getGameTime());
+
+            if (targetActive && target != null) {
+                if (lastNavigatorTarget == null || !target.equals(lastNavigatorTarget)) {
+                    computer.getNavigator().setTarget(target.x, target.y, target.z);
+                    lastNavigatorTarget = target;
+                }
+            } else if (computer.getNavigator().hasTarget()) {
+                computer.getNavigator().clearTarget();
+                lastNavigatorTarget = null;
+            }
+
+            FlightControllerState state = controller.getControllerState();
+            boolean powered = controller.isEngaged() && !controller.isThermalLockout()
+                    && controller.getEnergyStorage().getEnergyStored() > 0;
+            boolean stabiliserEnabled = powered && (controller.isStabiliser()
+                    || state.flightMode() == com.flightcomputer.avionics.FlightMode.STABILIZED
+                    || state.flightMode() == com.flightcomputer.avionics.FlightMode.AUTOPILOT);
+            boolean autopilotEnabled = powered && state.flightMode() == com.flightcomputer.avionics.FlightMode.AUTOPILOT
+                    && targetActive && target != null;
+
+            computer.tick(1.0D / 20.0D, stabiliserEnabled, autopilotEnabled);
+            if (powered) controller.addControlThermalLoad(computer.getAllocator().getLastThermalLoad());
         }
 
         private static void estimateInertiaFromVehicleEnvelope(VehicleState state, ThrusterRegistry registry) {
@@ -166,8 +246,8 @@ public final class FlightControlRuntimeManager {
         }
         private static Object invokeNoArg(Object target,String...names){
             if(target==null)return null;
-            for(String name:names)try{return target.getClass().getMethod(name).invoke(target);}
-            catch(ReflectiveOperationException|RuntimeException ignored){}
+            for(String name:names)try{return target.getClass().getMethod(name).invoke(target);
+            } catch(ReflectiveOperationException|RuntimeException ignored){}
             return null;
         }
         private static double angleDelta(double current,double previous){double d=current-previous;while(d>Math.PI)d-=Math.PI*2;while(d<-Math.PI)d+=Math.PI*2;return d;}
