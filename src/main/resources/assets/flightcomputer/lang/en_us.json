@@ -7,7 +7,7 @@
   "block.flightcomputer.flight_controller": "Flight Controller",
   "block.flightcomputer.debug_power_generator": "Debug Power Generator",
   "item.flightcomputer.flight_controller": "Flight Controller",
-  "item.flightcomputer.flight_link_tool": "Flight Link Tool",
+  "item.flightcomputer.flight_link_tool": "Aero Flight Link Tool",
   "item.flightcomputer.debug_power_generator": "Debug Power Generator",
   "item.flightcomputer.basic_cooling": "Basic Cooling Upgrade",
   "item.flightcomputer.improved_cooling": "Improved Cooling Upgrade",
