@@ -7,6 +7,8 @@ import com.flightcomputer.avionics.FlightOperationsHolder;
 import com.flightcomputer.avionics.FlightOperationsState;
 import com.flightcomputer.avionics.FlightOperationsHolder;
 import com.flightcomputer.avionics.FlightOperationsState;
+import com.flightcomputer.avionics.FlightOperationsHolder;
+import com.flightcomputer.avionics.FlightOperationsState;
 import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.avionics.ThermalState;
@@ -72,6 +74,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     private UUID controllerId = UUID.randomUUID();
     private FlightOperationsState flightOperations = new FlightOperationsState();
     private FlightOperationsState flightOperations = new FlightOperationsState();
+    private FlightOperationsState flightOperations = new FlightOperationsState();
     private UUID linkedControllerId;
     private boolean terrainEnabled = true;
     private final EnumMap<FlightMode, EnumMap<VectorDirection, BlockPos>> vectorLinks =
@@ -102,6 +105,8 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     }
 
     public UUID getControllerId() { return controllerId; }
+    @Override public FlightOperationsState getFlightOperations() { return flightOperations; }
+    @Override public void setFlightOperations(FlightOperationsState state) { flightOperations = state == null ? new FlightOperationsState() : state; markDirtyAndSync(); }
     @Override public FlightOperationsState getFlightOperations() { return flightOperations; }
     @Override public void setFlightOperations(FlightOperationsState state) { flightOperations = state == null ? new FlightOperationsState() : state; markDirtyAndSync(); }
     @Override public FlightOperationsState getFlightOperations() { return flightOperations; }
@@ -352,6 +357,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         tag.putUUID("ControllerId", controllerId);
         flightOperations.save(tag);
         flightOperations.save(tag);
+        flightOperations.save(tag);
         if (linkedControllerId != null) tag.putUUID("LinkedControllerId", linkedControllerId);
         tag.putBoolean("TerrainEnabled", terrainEnabled);
         controllerState.save(tag);
@@ -387,6 +393,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         super.loadAdditional(tag, registries);
         boolean firstClientLoad = renderedModePulseId == -1 && renderedDisplayPulseId == -1;
         controllerId = tag.hasUUID("ControllerId") ? tag.getUUID("ControllerId") : UUID.randomUUID();
+        flightOperations = FlightOperationsState.load(tag);
         flightOperations = FlightOperationsState.load(tag);
         flightOperations = FlightOperationsState.load(tag);
         linkedControllerId = tag.hasUUID("LinkedControllerId") ? tag.getUUID("LinkedControllerId") : null;
