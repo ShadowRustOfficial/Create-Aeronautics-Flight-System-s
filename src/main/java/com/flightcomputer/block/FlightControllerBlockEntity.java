@@ -3,6 +3,8 @@ package com.flightcomputer.block;
 import com.flightcomputer.FlightComputerConfig;
 import com.flightcomputer.avionics.FlightControllerAction;
 import com.flightcomputer.avionics.FlightControllerActionResult;
+import com.flightcomputer.avionics.FlightOperationsHolder;
+import com.flightcomputer.avionics.FlightOperationsState;
 import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.avionics.ThermalState;
@@ -38,7 +40,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /** Server-authoritative controller state, FE storage, thermal protection and persistent vector links. */
-public class FlightControllerBlockEntity extends BlockEntity implements GeoBlockEntity {
+public class FlightControllerBlockEntity extends BlockEntity implements GeoBlockEntity, FlightOperationsHolder {
     private final AnimatableInstanceCache animatableCache = GeckoLibUtil.createInstanceCache(this);
 
     private final EnergyStorage energyStorage = new EnergyStorage(
@@ -66,6 +68,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     };
 
     private UUID controllerId = UUID.randomUUID();
+    private FlightOperationsState flightOperations = new FlightOperationsState();
     private UUID linkedControllerId;
     private boolean terrainEnabled = true;
     private final EnumMap<FlightMode, EnumMap<VectorDirection, BlockPos>> vectorLinks =
@@ -96,6 +99,8 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     }
 
     public UUID getControllerId() { return controllerId; }
+    @Override public FlightOperationsState getFlightOperations() { return flightOperations; }
+    @Override public void setFlightOperations(FlightOperationsState state) { flightOperations = state == null ? new FlightOperationsState() : state; markDirtyAndSync(); }
     public UUID getLinkedControllerId() { return linkedControllerId; }
     public boolean isTerrainEnabled() { return terrainEnabled; }
     public FlightControllerState getControllerState() { return controllerState; }
@@ -340,6 +345,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     @Override protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.saveAdditional(tag, registries);
         tag.putUUID("ControllerId", controllerId);
+        flightOperations.save(tag);
         if (linkedControllerId != null) tag.putUUID("LinkedControllerId", linkedControllerId);
         tag.putBoolean("TerrainEnabled", terrainEnabled);
         controllerState.save(tag);
@@ -375,6 +381,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         super.loadAdditional(tag, registries);
         boolean firstClientLoad = renderedModePulseId == -1 && renderedDisplayPulseId == -1;
         controllerId = tag.hasUUID("ControllerId") ? tag.getUUID("ControllerId") : UUID.randomUUID();
+        flightOperations = FlightOperationsState.load(tag);
         linkedControllerId = tag.hasUUID("LinkedControllerId") ? tag.getUUID("LinkedControllerId") : null;
         terrainEnabled = !tag.contains("TerrainEnabled") || tag.getBoolean("TerrainEnabled");
         controllerState = FlightControllerState.load(tag);

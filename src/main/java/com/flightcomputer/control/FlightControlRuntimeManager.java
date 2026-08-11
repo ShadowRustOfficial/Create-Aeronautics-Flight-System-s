@@ -32,6 +32,7 @@ public final class FlightControlRuntimeManager {
     public static void tick(FlightControllerBlockEntity controller) {
         if (controller == null || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
         Runtime runtime = runtime(controller);
+        FlightOperationsRuntimeBridge.reconcile(controller);
         runtime.update(controller);
         runtime.control(controller);
     }
