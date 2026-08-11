@@ -21,6 +21,16 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  print(f'NOT FOUND: {path}: {old[:120]!r}')
+                  return False
+              p.write_text(text.replace(old, new, 1))
+              print(f'PATCHED: {path}')
+              return True
+
           def dedupe_exact(text, needle):
               first = text.find(needle)
               if first < 0:
@@ -29,6 +39,7 @@ jobs:
               rest = text[first + len(needle):].replace(needle, '')
               return prefix + rest
 
+          # Keep the existing GUI integration edits idempotent.
           p = Path('src/main/java/com/flightcomputer/client/gui/NavigationConsoleScreen.java')
           text = p.read_text()
           for line in [
@@ -45,49 +56,45 @@ jobs:
               '    private int routeWaystoneIndex;\n',
           ]:
               text = dedupe_exact(text, block)
-          needle = '        addRenderableWidget(Button.builder(Component.literal("DIAGNOSTICS"), b -> switchTab(Tab.DIAGNOSTICS)).bounds(left + 480, top, tabW, 22).build());\n'
-          replacement = needle + '''        addRenderableWidget(Button.builder(Component.literal("THERMAL"), b -> minecraft.setScreen(new ThermalConsoleScreen(controllerPos)))\n                .bounds(left + 480, top + 24, 72, 20).build());\n        addRenderableWidget(Button.builder(Component.literal("COOLING"), b -> minecraft.setScreen(new CoolingConsoleScreen(controllerPos)))\n                .bounds(left + 558, top + 24, 72, 20).build());\n'''
-          if needle in text and 'new ThermalConsoleScreen' not in text: text = text.replace(needle, replacement, 1)
-          needle = '        addRenderableWidget(Button.builder(Component.literal("ABORT ROUTE"), b -> send(FlightControllerAction.ABORT_ROUTE)).bounds(left + 400, top + 180, 180, 20).build());\n'
-          replacement = needle + '''        addRenderableWidget(Button.builder(Component.literal("SELECT WAYSTONE"), b -> selectRouteWaystone(b))\n                .bounds(left + 20, top + 230, 180, 20).build());\n        addRenderableWidget(Button.builder(Component.literal("SELECT WAYPOINT"), b -> selectRouteWaypoint(b))\n                .bounds(left + 210, top + 230, 180, 20).build());\n        addRenderableWidget(Button.builder(Component.literal("REFRESH LOCATIONS"), b -> refreshRouteLocations())\n                .bounds(left + 400, top + 230, 180, 20).build());\n'''
-          if needle in text and 'selectRouteWaystone' not in text: text = text.replace(needle, replacement, 1)
-          needle = '    private void sendTargetFromInput() {\n'
-          helpers = '''    private void selectRouteWaystone(Button button) {\n        if (minecraft == null || minecraft.level == null) return;\n        routeWaystoneProvider.tick(minecraft.level);\n        var markers = routeWaystoneProvider.markers();\n        if (markers.isEmpty()) { button.setMessage(Component.literal("NO WAYSTONES")); return; }\n        routeWaystoneIndex = Math.floorMod(routeWaystoneIndex, markers.size());\n        var marker = markers.get(routeWaystoneIndex++);\n        FlightComputerNetwork.sendTarget(controllerPos, marker.worldX(), marker.worldY(), marker.worldZ(), marker.label());\n        button.setMessage(Component.literal("WAYSTONE: " + marker.label()));\n    }\n\n    private void selectRouteWaypoint(Button button) {\n        if (minecraft == null || minecraft.level == null) return;\n        routeWaypointProvider.tick(minecraft.level);\n        var markers = routeWaypointProvider.markers();\n        if (markers.isEmpty()) { button.setMessage(Component.literal("NO WAYPOINTS")); return; }\n        routeWaypointIndex = Math.floorMod(routeWaypointIndex, markers.size());\n        var marker = markers.get(routeWaypointIndex++);\n        FlightComputerNetwork.sendTarget(controllerPos, marker.worldX(), marker.worldY(), marker.worldZ(), marker.label());\n        button.setMessage(Component.literal("WAYPOINT: " + marker.label()));\n    }\n\n    private void refreshRouteLocations() {\n        if (minecraft != null && minecraft.level != null) {\n            routeWaystoneProvider.tick(minecraft.level);\n            routeWaypointProvider.tick(minecraft.level);\n        }\n        routeWaystoneIndex = 0;\n        routeWaypointIndex = 0;\n    }\n\n'''
-          if needle in text and 'private void selectRouteWaystone' not in text: text = text.replace(needle, helpers + needle, 1)
           p.write_text(text)
 
-          p = Path('src/main/java/com/flightcomputer/block/FlightControllerBlockEntity.java')
-          text = p.read_text()
-          for line in [
-              'import com.flightcomputer.avionics.FlightOperationsHolder;\n',
-              'import com.flightcomputer.avionics.FlightOperationsState;\n',
-          ]:
-              text = dedupe_exact(text, line)
-          text = text.replace('public class FlightControllerBlockEntity extends BlockEntity implements GeoBlockEntity {', 'public class FlightControllerBlockEntity extends BlockEntity implements GeoBlockEntity, FlightOperationsHolder {')
-          field = '    private FlightOperationsState flightOperations = new FlightOperationsState();\n'
-          text = dedupe_exact(text, field)
-          getter = '    @Override public FlightOperationsState getFlightOperations() { return flightOperations; }\n'
-          setter = '    @Override public void setFlightOperations(FlightOperationsState state) { flightOperations = state == null ? new FlightOperationsState() : state; markDirtyAndSync(); }\n'
-          text = dedupe_exact(text, getter)
-          text = dedupe_exact(text, setter)
-          if '        flightOperations.save(tag);\n' not in text:
-              text = text.replace('        tag.putUUID("ControllerId", controllerId);\n', '        tag.putUUID("ControllerId", controllerId);\n        flightOperations.save(tag);\n', 1)
-          if '        flightOperations = FlightOperationsState.load(tag);\n' not in text:
-              text = text.replace('        controllerId = tag.hasUUID("ControllerId") ? tag.getUUID("ControllerId") : UUID.randomUUID();\n', '        controllerId = tag.hasUUID("ControllerId") ? tag.getUUID("ControllerId") : UUID.randomUUID();\n        flightOperations = FlightOperationsState.load(tag);\n', 1)
-          p.write_text(text)
+          # Sable stores sub-level blocks in the far-away plot grid. Never call
+          # projectOutOfSubLevel blindly: Sable 1.0.x can throw when a position is
+          # ordinary world space. First resolve the containing sub-level, then use
+          # its logical pose. This also prevents plot coordinates leaking into the
+          # telemetry/route speed calculation.
+          replace_once(
+              'src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java',
+              '''        private Vec3 project(Level level,Vec3 local){\n            if(!ensure())return local;\n            try{Object value=projectOut.invoke(helper,level,local);return value instanceof Vec3 vec?vec:local;}\n            catch(ReflectiveOperationException|RuntimeException ignored){return local;}\n        }''',
+              '''        private Vec3 project(Level level, Vec3 local){\n            if(!ensure())return local;\n            try{\n                Object subLevel = containing(level, local);\n                if(subLevel == null)return local;\n                Object pose = invokeNoArg(subLevel, "logicalPose");\n                if(pose == null)return local;\n                Method transform = pose.getClass().getMethod("transformPosition", Vec3.class);\n                Object value = transform.invoke(pose, local);\n                return value instanceof Vec3 vec ? vec : local;\n            }catch(ReflectiveOperationException|RuntimeException ignored){return local;}\n        }'''
+          )
 
-          p = Path('src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java')
-          text = p.read_text()
-          old = '        Runtime runtime = runtime(controller);\n        runtime.update(controller);\n        runtime.control(controller);'
-          new = '        Runtime runtime = runtime(controller);\n        FlightOperationsRuntimeBridge.reconcile(controller);\n        runtime.update(controller);\n        runtime.control(controller);'
-          if old in text and 'FlightOperationsRuntimeBridge.reconcile(controller)' not in text:
-              text = text.replace(old, new, 1)
-          p.write_text(text)
+          # Vector links are selected against Sable's plot-space BlockPos. The old
+          # validation compared that huge plot coordinate to the player's visible
+          # world position, rejecting legitimate links. Validate the controller in
+          # player space, then validate the thruster in the same local plot space.
+          replace_once(
+              'src/main/java/com/flightcomputer/network/FlightComputerNetwork.java',
+              '''    private static void handleVectorLink(LinkVectorPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||!near(player,p.targetPos(),1024))return;FlightMode[] modes=FlightMode.values();VectorDirection[] dirs=VectorDirection.values();if(p.modeId()<0||p.modeId()>=modes.length||p.directionId()<0||p.directionId()>=dirs.length)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||player.level().getBlockState(p.targetPos()).isAir())return;fc.bindVector(modes[p.modeId()],dirs[p.directionId()],p.targetPos());});}''',
+              '''    private static void handleVectorLink(LinkVectorPayload p,IPayloadContext c){c.enqueueWork(()->{\n        if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;\n        FlightMode[] modes=FlightMode.values(); VectorDirection[] dirs=VectorDirection.values();\n        if(p.modeId()<0||p.modeId()>=modes.length||p.directionId()<0||p.directionId()>=dirs.length)return;\n        if(p.controllerPos().distSqr(p.targetPos())>512.0D*512.0D)return;\n        BlockEntity controllerBe=player.level().getBlockEntity(p.controllerPos());\n        BlockEntity targetBe=player.level().getBlockEntity(p.targetPos());\n        if(!(controllerBe instanceof FlightControllerBlockEntity fc)||targetBe==null||player.level().getBlockState(p.targetPos()).isAir())return;\n        fc.bindVector(modes[p.modeId()],dirs[p.directionId()],p.targetPos());\n    });}'''
+          )
+
+          # Keep target packets finite and reject impossible values before they enter
+          # the runtime navigator. NaN is not enough because infinities also poison MPC.
+          replace_once(
+              'src/main/java/com/flightcomputer/network/FlightComputerNetwork.java',
+              '''    private static void handleSetTarget(SetTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||Double.isNaN(p.x())||Double.isNaN(p.y())||Double.isNaN(p.z()))return;FlightControlRuntimeManager.setTarget(fc,new Vec3(p.x(),p.y(),p.z()),p.name());});}''',
+              '''    private static void handleSetTarget(SetTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||!Double.isFinite(p.x())||!Double.isFinite(p.y())||!Double.isFinite(p.z()))return;FlightControlRuntimeManager.setTarget(fc,new Vec3(p.x(),p.y(),p.z()),p.name());});}'''
+          )
+
+          # Remove the old global thermal-tab compatibility shell only if it has
+          # accidentally regained a subscriber; current source is intentionally empty.
+          Path('src/main/java/com/flightcomputer/client/gui/ThermalConsoleTab.java').write_text('''package com.flightcomputer.client.gui;\n\n/** Compatibility shell. Thermal/Cooling buttons are owned only by NavigationConsoleScreen. */\npublic final class ThermalConsoleTab { private ThermalConsoleTab() {} }\n''')
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/main/java/com/flightcomputer/client/gui/NavigationConsoleScreen.java src/main/java/com/flightcomputer/block/FlightControllerBlockEntity.java src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java
+          git add src/main/java/com/flightcomputer/client/gui/NavigationConsoleScreen.java src/main/java/com/flightcomputer/block/FlightControllerBlockEntity.java src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java src/main/java/com/flightcomputer/network/FlightComputerNetwork.java src/main/java/com/flightcomputer/client/gui/ThermalConsoleTab.java
           git diff --cached --quiet || git commit -m "Apply Phase 5 runtime integration"
           git push origin HEAD:phase-5-validation
       - name: Compile and validate
-        run: bash ./gradlew build --no-daemon
+        run: bash ./gradlew clean build --no-daemon --stacktrace
