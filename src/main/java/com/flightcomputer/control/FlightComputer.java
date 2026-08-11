@@ -2,7 +2,7 @@ package com.flightcomputer.control;
 
 import java.util.Map;
 
-/** One independent controller instance. Stabilisation and autopilot are concurrent objectives. */
+/** One independent controller instance. Stabilisation and autopilot are independent objectives. */
 public final class FlightComputer {
     private final VehicleStateProvider stateProvider;
     private final ThrusterRegistry registry = new ThrusterRegistry();
@@ -20,7 +20,11 @@ public final class FlightComputer {
     private int ticksSinceReplan;
     private StabilizationSetpoint latestCruiseSetpoint = StabilizationSetpoint.hover();
 
-    public FlightComputer(VehicleStateProvider stateProvider, ObstacleSensor obstacleSensor) { this.stateProvider = stateProvider; this.navigator = new MPCNavigator(obstacleSensor); }
+    public FlightComputer(VehicleStateProvider stateProvider, ObstacleSensor obstacleSensor) {
+        this.stateProvider = stateProvider;
+        this.navigator = new MPCNavigator(obstacleSensor);
+    }
+
     public FlightComputer(VehicleStateProvider stateProvider) { this(stateProvider, null); }
     public ThrusterRegistry getRegistry() { return registry; }
     public ThrustAllocator getAllocator() { return allocator; }
@@ -30,23 +34,48 @@ public final class FlightComputer {
     public SixAxisStabilizer getCruiseStabilizer() { return cruiseStabilizer; }
 
     public void setManualInput(double pitch, double roll, double yawRate, double vertical, double longitudinal, double lateral) {
-        pitchStick = pitch; rollStick = roll; yawRateStick = yawRate; verticalStick = vertical; longitudinalStick = longitudinal; lateralStick = lateral;
+        pitchStick = pitch;
+        rollStick = roll;
+        yawRateStick = yawRate;
+        verticalStick = vertical;
+        longitudinalStick = longitudinal;
+        lateralStick = lateral;
     }
-    public void engageCruise(double targetX, double targetY, double targetZ) { navigator.setTarget(targetX, targetY, targetZ); cruiseStabilizer.resetAll(); ticksSinceReplan = 0; mode = FlightMode.CRUISE; }
-    public void disengageCruise() { mode = FlightMode.STABILIZE; navigator.clearTarget(); latestCruiseSetpoint = StabilizationSetpoint.hover(); }
-    public double distanceToTarget() { VehicleState state = stateProvider.getState(); return state != null && navigator.hasTarget() ? navigator.distanceToTarget(state) : -1; }
+
+    public void engageCruise(double targetX, double targetY, double targetZ) {
+        navigator.setTarget(targetX, targetY, targetZ);
+        cruiseStabilizer.resetAll();
+        ticksSinceReplan = 0;
+        mode = FlightMode.CRUISE;
+    }
+
+    public void disengageCruise() {
+        mode = FlightMode.STABILIZE;
+        navigator.clearTarget();
+        latestCruiseSetpoint = StabilizationSetpoint.hover();
+    }
+
+    public double distanceToTarget() {
+        VehicleState state = stateProvider.getState();
+        return state != null && navigator.hasTarget() ? navigator.distanceToTarget(state) : -1;
+    }
+
     public boolean isCruisePathBlocked() { return mode == FlightMode.CRUISE && navigator.isPathBlocked(); }
 
-    /** Backwards-compatible tick: both control layers are enabled. */
     public void tick(double dt) { tick(dt, true, navigator.hasTarget()); }
 
-    /** Runs only the control layers explicitly enabled by the authoritative controller state. */
+    /**
+     * Runs the two control layers independently. Autopilot does not require the manual stabiliser
+     * flag, and stabilisation does not require a navigation target.
+     */
     public void tick(double dt, boolean stabiliserEnabled, boolean autopilotEnabled) {
         VehicleState state = stateProvider.getState();
         if (state == null) return;
+
         Map<ControlAxis, Double> stabiliseCommands = Map.of();
         if (stabiliserEnabled) {
-            StabilizationSetpoint stabiliseSetpoint = StabilizationSetpoint.manualNudge(pitchStick, rollStick, yawRateStick, verticalStick, longitudinalStick, lateralStick,
+            StabilizationSetpoint stabiliseSetpoint = StabilizationSetpoint.manualNudge(
+                    pitchStick, rollStick, yawRateStick, verticalStick, longitudinalStick, lateralStick,
                     maxManualTiltRadians, maxManualYawRate, maxManualSpeed);
             stabiliseCommands = stabilizeStabilizer.computeCommands(state, stabiliseSetpoint, dt);
         } else {
@@ -63,15 +92,17 @@ public final class FlightComputer {
             autopilotCommands = cruiseStabilizer.computeCommands(state, latestCruiseSetpoint, dt);
             mode = FlightMode.CRUISE;
             if (navigator.distanceToTarget(state) < 1.0) disengageCruise();
-        } else if (!autopilotEnabled) {
+        } else {
             cruiseStabilizer.resetAll();
             ticksSinceReplan = 0;
         }
+
         allocator.applyCombined(registry, state, stabiliseCommands, autopilotCommands);
     }
 
     private double estimateCruiseDeceleration(VehicleState state) {
-        double authority = registry.getVectorAuthority(FlightMode.CRUISE, VectorDirection.NORTH) + registry.getVectorAuthority(FlightMode.CRUISE, VectorDirection.SOUTH);
+        double authority = registry.getVectorAuthority(FlightMode.CRUISE, VectorDirection.NORTH)
+                + registry.getVectorAuthority(FlightMode.CRUISE, VectorDirection.SOUTH);
         return Math.max(0.5, authority / Math.max(state.mass, 1.0e-3));
     }
 }
