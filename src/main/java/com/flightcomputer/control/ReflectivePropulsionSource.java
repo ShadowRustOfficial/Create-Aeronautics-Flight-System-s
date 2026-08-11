@@ -9,13 +9,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Runtime adapter for propulsion mods that are intentionally not compile-time dependencies.
- *
- * <p>The controller itself is allowed to be the propulsion power command source. A
- * redstone/throttle setter is therefore treated as an actuator interface, not as an
- * external power-state requirement. This avoids the old circular condition where
- * getAvailableThrust() required isPowered() before the controller was allowed to call
- * setRedstonePower(), which made stabilisation unable to wake an otherwise usable thruster.</p>
+ * Runtime actuator adapter for propulsion mods that are intentionally not compile-time
+ * dependencies. Create: Propulsion Simulated exposes its actual actuator through
+ * ThrusterBlockEntity#setRedstonePower(int); this adapter drives that API directly.
  */
 public final class ReflectivePropulsionSource implements PropulsionSource {
     private static final double SIMULATED_STANDARD_MAX_THRUST = 600.0D;
@@ -27,6 +23,7 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
     private final double[] mountOffset;
     private final Accessor accessor;
     private final PropulsionType type;
+    private double lastCommandFraction;
 
     private ReflectivePropulsionSource(BlockEntity blockEntity, VectorDirection direction, double[] mountOffset,
                                        Accessor accessor, PropulsionType type) {
@@ -85,14 +82,13 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
     @Override public double getAvailableThrust() {
         if (!isEnabled() || !isOperational()) return 0.0D;
 
-        // Fuel/energy is a real resource gate. A controller-driven redstone/throttle
-        // setter is not: the setter is how this controller supplies the command.
+        // Creative CPS thrusters do not consume fuel. Their redstone/throttle setter is the
+        // actuator command, so requiring isPowered() here creates a circular deadlock.
         if (accessor.fuelAmount != null && accessor.fuelCapacity != null) {
             Object amount = invoke(accessor.fuelAmount);
             Object capacity = invoke(accessor.fuelCapacity);
-            if (amount instanceof Number a && capacity instanceof Number c && c.doubleValue() > 0.0D) {
-                if (a.doubleValue() <= 0.0D) return 0.0D;
-            }
+            if (amount instanceof Number a && capacity instanceof Number c && c.doubleValue() > 0.0D
+                    && a.doubleValue() <= 0.0D) return 0.0D;
         } else if (accessor.redstonePower == null && accessor.thrustSetter == null && accessor.throttleSetter == null && !hasPower()) {
             return 0.0D;
         }
@@ -118,9 +114,7 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
         if (accessor.fuelAmount != null && accessor.fuelCapacity != null) {
             Object amount = invoke(accessor.fuelAmount);
             Object capacity = invoke(accessor.fuelCapacity);
-            if (amount instanceof Number a && capacity instanceof Number c && c.doubleValue() > 0.0D) {
-                return a.doubleValue() > 0.0D;
-            }
+            if (amount instanceof Number a && capacity instanceof Number c && c.doubleValue() > 0.0D) return a.doubleValue() > 0.0D;
         }
         Object powered = invoke(accessor.powered);
         return !(powered instanceof Boolean bool) || bool;
@@ -128,29 +122,37 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
 
     @Override public double[] getMountOffset() { return mountOffset.clone(); }
 
+    /** Last command written to the real propulsion actuator, useful for diagnostics/tests. */
+    public double getLastCommandFraction() { return lastCommandFraction; }
+
     @Override public void applyThrust(double signedFraction) {
         if (!isEnabled() || !isOperational()) {
+            lastCommandFraction = 0.0D;
             invokeInt(accessor.redstonePower, 0);
             return;
         }
 
-        // Fuel is checked only when the implementation exposes a fuel API. For a
-        // controller-driven redstone/throttle actuator, the command itself is what
-        // enables the thruster, so isPowered() must not prevent the command reaching it.
         if (accessor.fuelAmount != null && accessor.fuelCapacity != null && !hasPower()) {
+            lastCommandFraction = 0.0D;
             invokeInt(accessor.redstonePower, 0);
             if (accessor.thrustSetter != null) invokeNumber(accessor.thrustSetter, 0.0D);
             else if (accessor.throttleSetter != null) invokeNumber(accessor.throttleSetter, 0.0D);
+            blockEntity.setChanged();
             return;
         }
 
         double fraction = Math.max(0.0D, Math.min(1.0D, signedFraction));
+        lastCommandFraction = fraction;
         if (accessor.redstonePower != null) {
+            // This is the actual CPS control input. CPS reads it in its normal server tick,
+            // calculates currentThrust, and its Sable physics tick then applies the impulse.
             invokeInt(accessor.redstonePower, (int) Math.round(fraction * 15.0D));
-            return;
+        } else if (accessor.thrustSetter != null) {
+            invokeNumber(accessor.thrustSetter, fraction * getMaxThrust());
+        } else if (accessor.throttleSetter != null) {
+            invokeNumber(accessor.throttleSetter, fraction);
         }
-        if (accessor.thrustSetter != null) invokeNumber(accessor.thrustSetter, fraction * getMaxThrust());
-        else if (accessor.throttleSetter != null) invokeNumber(accessor.throttleSetter, fraction);
+        blockEntity.setChanged();
     }
 
     private Object invoke(Method method) {
