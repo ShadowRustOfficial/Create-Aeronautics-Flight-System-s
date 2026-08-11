@@ -14,12 +14,16 @@ import java.util.Set;
  *
  * No external map-mod integration is performed here. JourneyMap is an architectural
  * reference only; terrain acquisition, caching and rendering remain Flight Computer-owned.
+ *
+ * Generated tiles remain resident for the lifetime of the active world/dimension.
+ * Moving the viewport therefore changes what is requested, not what is retained.
  */
 public final class TerrainMapCache {
+    /** Never evict a tile during the active world/dimension session. */
     private static final Map<Long, int[]> CACHE = new HashMap<>();
+    /** Tiles requested but not yet copied into the facade cache. */
     private static final Set<Long> REQUESTED = new HashSet<>();
     private static final LiveWorldMapProvider PROVIDER = new LiveWorldMapProvider();
-    private static final int MAX_REQUESTED_CHUNKS = 4096;
     private static String activeIdentity;
 
     private TerrainMapCache() {}
@@ -45,22 +49,26 @@ public final class TerrainMapCache {
         requestViewport(level, centerWorldX, centerWorldZ, radiusBlocks, 16);
     }
 
+    /**
+     * Requests every chunk intersecting the map's working square rather than only
+     * its perimeter. This makes the initial map fill deterministic while the
+     * no-eviction caches ensure revisiting an area never regenerates its terrain.
+     */
     public static void requestViewport(ClientLevel level, int centerWorldX, int centerWorldZ,
                                        int radiusBlocks, int sampleStepBlocks) {
         ensureLevel(level);
-        if (level == null || REQUESTED.size() >= MAX_REQUESTED_CHUNKS) return;
+        if (level == null) return;
+
         int radius = Math.max(16, radiusBlocks);
-        int step = Math.max(1, sampleStepBlocks);
-        requestChunk(level, ChunkPos.asLong(Math.floorDiv(centerWorldX, 16), Math.floorDiv(centerWorldZ, 16)));
-        for (int distance = step; distance <= radius && REQUESTED.size() < MAX_REQUESTED_CHUNKS; distance += step) {
-            requestSampleLine(level, centerWorldX - distance, centerWorldZ - distance,
-                    centerWorldX + distance, centerWorldZ - distance, step);
-            requestSampleLine(level, centerWorldX - distance, centerWorldZ + distance,
-                    centerWorldX + distance, centerWorldZ + distance, step);
-            requestSampleLine(level, centerWorldX - distance, centerWorldZ - distance,
-                    centerWorldX - distance, centerWorldZ + distance, step);
-            requestSampleLine(level, centerWorldX + distance, centerWorldZ - distance,
-                    centerWorldX + distance, centerWorldZ + distance, step);
+        int minChunkX = Math.floorDiv(centerWorldX - radius, 16);
+        int maxChunkX = Math.floorDiv(centerWorldX + radius, 16);
+        int minChunkZ = Math.floorDiv(centerWorldZ - radius, 16);
+        int maxChunkZ = Math.floorDiv(centerWorldZ + radius, 16);
+
+        for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+            for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+                requestChunk(level, ChunkPos.asLong(chunkX, chunkZ));
+            }
         }
     }
 
@@ -78,7 +86,7 @@ public final class TerrainMapCache {
             PROVIDER.requestChunkTile(level, chunkX, chunkZ);
             int[] tile = PROVIDER.getCachedChunkTile(level, chunkX, chunkZ);
             if (tile != null) {
-                CACHE.put(key, tile);
+                CACHE.putIfAbsent(key, tile);
                 REQUESTED.remove(key);
             }
         }
@@ -99,18 +107,9 @@ public final class TerrainMapCache {
         activeIdentity = null;
     }
 
-    private static void requestSampleLine(ClientLevel level, int x1, int z1, int x2, int z2, int step) {
-        int dx = Integer.compare(x2, x1);
-        int dz = Integer.compare(z2, z1);
-        int length = Math.max(Math.abs(x2 - x1), Math.abs(z2 - z1));
-        for (int offset = 0; offset <= length && REQUESTED.size() < MAX_REQUESTED_CHUNKS; offset += step) {
-            requestChunk(level, ChunkPos.asLong(Math.floorDiv(x1 + dx * offset, 16), Math.floorDiv(z1 + dz * offset, 16)));
-        }
-    }
-
     private static void requestChunk(ClientLevel level, long key) {
-        if (level == null || CACHE.containsKey(key) || !REQUESTED.add(key)) return;
-        if (REQUESTED.size() > MAX_REQUESTED_CHUNKS) REQUESTED.remove(key);
+        if (level == null || CACHE.containsKey(key)) return;
+        REQUESTED.add(key);
     }
 
     private static long key(int worldX, int worldZ) {
