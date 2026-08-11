@@ -18,35 +18,32 @@ import java.util.concurrent.Future;
  * Native terrain provider. Minecraft data is sampled only on the client thread;
  * expensive tile shading runs on bounded CPU workers and never touches Minecraft objects.
  *
- * Generated tiles are retained for the lifetime of the active world/dimension. The
- * renderer may move its viewport without evicting already-generated terrain, so
- * revisiting an area is a cache read rather than another CPU generation pass.
+ * Generated tiles are retained for the lifetime of the active client world/dimension.
+ * The cache is shared by all Flight Map screens so closing and reopening the GUI is a
+ * cache read, not a regeneration pass. A client-level lifecycle owner calls
+ * clearSessionCache() when the world/dimension actually changes.
  */
 public final class LiveWorldMapProvider implements FlightMapDataProvider {
     private static final int MAX_JOBS = 64;
     private static final int LOADED_SCAN_INTERVAL_TICKS = 10;
     private static final int MAX_SCAN_RADIUS_CHUNKS = 64;
-    /** Bound the amount of Minecraft-world sampling performed by one client scan. */
     private static final int MAX_NEW_CAPTURES_PER_SCAN = 8;
 
-    /**
-     * Session-persistent terrain cache. Deliberately unbounded: generated terrain is
-     * authoritative for this client-world session and must not be evicted merely
-     * because the map viewport moved elsewhere.
-     */
-    private final Map<Long, int[]> cache = new HashMap<>();
-    private final ArrayBlockingQueue<Long> queued = new ArrayBlockingQueue<>(MAX_JOBS);
-    private final Map<Long, Future<?>> running = new HashMap<>();
-    private final ExecutorService workers;
+    /** Shared active-session cache: map screens must never evict it on close. */
+    private static final Map<Long, int[]> CACHE = new HashMap<>();
+    private static final ArrayBlockingQueue<Long> QUEUED = new ArrayBlockingQueue<>(MAX_JOBS);
+    private static final Map<Long, Future<?>> RUNNING = new HashMap<>();
+    private static final ExecutorService WORKERS = createWorkers();
+
     private final CpuTerrainTileGenerator generator = new CpuTerrainTileGenerator();
     private int loadedScanTicks;
     private int lastPlayerChunkX = Integer.MIN_VALUE;
     private int lastPlayerChunkZ = Integer.MIN_VALUE;
 
-    public LiveWorldMapProvider() {
+    private static ExecutorService createWorkers() {
         int cores = Runtime.getRuntime().availableProcessors();
         int workerCount = Math.max(1, Math.min(4, cores - 2));
-        workers = Executors.newFixedThreadPool(workerCount, runnable -> {
+        return Executors.newFixedThreadPool(workerCount, runnable -> {
             Thread thread = new Thread(runnable, "FlightComputer-Terrain");
             thread.setDaemon(true);
             return thread;
@@ -55,47 +52,48 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
 
     @Override
     public synchronized int[] getCachedChunkTile(ClientLevel level, int chunkX, int chunkZ) {
-        return cache.get(key(chunkX, chunkZ));
+        synchronized (CACHE) {
+            return CACHE.get(key(chunkX, chunkZ));
+        }
     }
 
     @Override
-    public synchronized void requestChunkTile(ClientLevel level, int chunkX, int chunkZ) {
+    public void requestChunkTile(ClientLevel level, int chunkX, int chunkZ) {
         if (level == null) return;
         long key = key(chunkX, chunkZ);
-        if (cache.containsKey(key) || running.containsKey(key) || queued.contains(key)) return;
-        if (queued.remainingCapacity() == 0 || !level.hasChunk(chunkX, chunkZ)) return;
+        synchronized (CACHE) {
+            if (CACHE.containsKey(key) || RUNNING.containsKey(key) || QUEUED.contains(key)) return;
+            if (QUEUED.remainingCapacity() == 0 || !level.hasChunk(chunkX, chunkZ)) return;
 
-        TerrainChunkSnapshot snapshot = capture(level, chunkX, chunkZ);
-        if (snapshot == null || !queued.offer(key)) return;
-        Future<?> future = workers.submit(() -> {
-            int[] result = generator.generate(snapshot);
-            synchronized (LiveWorldMapProvider.this) {
-                cache.put(key, result);
-                running.remove(key);
-                queued.remove(key);
-            }
-        });
-        running.put(key, future);
+            TerrainChunkSnapshot snapshot = capture(level, chunkX, chunkZ);
+            if (snapshot == null || !QUEUED.offer(key)) return;
+            Future<?> future = WORKERS.submit(() -> {
+                int[] result = generator.generate(snapshot);
+                synchronized (CACHE) {
+                    CACHE.put(key, result);
+                    RUNNING.remove(key);
+                    QUEUED.remove(key);
+                }
+            });
+            RUNNING.put(key, future);
+        }
     }
 
     @Override
-    public synchronized boolean isTilePending(int chunkX, int chunkZ) {
+    public boolean isTilePending(int chunkX, int chunkZ) {
         long key = key(chunkX, chunkZ);
-        return running.containsKey(key) || queued.contains(key);
+        synchronized (CACHE) {
+            return RUNNING.containsKey(key) || QUEUED.contains(key);
+        }
     }
 
     /**
-     * Converts the chunks already resident in the client's chunk cache into Flight
-     * Map work. This deliberately uses ClientLevel#hasChunk only: it never asks the
-     * client to load/generate a chunk and never reaches the logical server.
-     *
-     * We scan around the local player because the client chunk cache is maintained
-     * around the player's client-side view distance. The scan is throttled and only
-     * repeats immediately when the player crosses a chunk boundary, so this does not
-     * become a per-frame O(view-distance^2) cost.
+     * Converts chunks already resident in the client's chunk cache into Flight Map work.
+     * It never requests a missing chunk. This method is safe to call continuously from
+     * the client tick even when no map GUI is open.
      */
     @Override
-    public synchronized void observeLoadedClientChunks(ClientLevel level) {
+    public void observeLoadedClientChunks(ClientLevel level) {
         if (level == null || !level.isClientSide()) return;
         if (level.getChunkSource() == null) return;
 
@@ -118,15 +116,10 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
         for (int chunkZ = playerChunk.z - radius; chunkZ <= playerChunk.z + radius; chunkZ++) {
             for (int chunkX = playerChunk.x - radius; chunkX <= playerChunk.x + radius; chunkX++) {
                 if (newCaptures >= MAX_NEW_CAPTURES_PER_SCAN) return;
-
-                // Only spend a client-thread capture on a tile that is genuinely new.
-                // This lets successive scans walk through the loaded area without
-                // repeatedly sampling already-cached chunks.
                 long key = key(chunkX, chunkZ);
-                if (cache.containsKey(key) || running.containsKey(key) || queued.contains(key)) continue;
-
-                // hasChunk is the important boundary: only chunks already loaded on
-                // this client are handed to the Flight Map conversion pipeline.
+                synchronized (CACHE) {
+                    if (CACHE.containsKey(key) || RUNNING.containsKey(key) || QUEUED.contains(key)) continue;
+                }
                 if (level.hasChunk(chunkX, chunkZ)) {
                     requestChunkTile(level, chunkX, chunkZ);
                     newCaptures++;
@@ -160,19 +153,40 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
 
     @Override public synchronized void tick(ClientLevel level) { }
 
+    /**
+     * Provider lifecycle reset. Deliberately does not clear the shared terrain cache:
+     * GUI close/reopen must preserve generated terrain. Use clearSessionCache() when
+     * Minecraft changes the active ClientLevel/dimension.
+     */
     @Override
-    public synchronized void clear() {
-        for (Future<?> future : running.values()) future.cancel(false);
-        running.clear();
-        queued.clear();
-        cache.clear();
+    public void clear() {
+        synchronized (CACHE) {
+            for (Future<?> future : RUNNING.values()) future.cancel(false);
+            RUNNING.clear();
+            QUEUED.clear();
+        }
         loadedScanTicks = 0;
         lastPlayerChunkX = Integer.MIN_VALUE;
         lastPlayerChunkZ = Integer.MIN_VALUE;
     }
 
-    public synchronized int cachedTiles() { return cache.size(); }
-    public synchronized int queuedTiles() { return queued.size(); }
+    /** Clears all active-world terrain and in-flight work on a real ClientLevel change. */
+    public static void clearSessionCache() {
+        synchronized (CACHE) {
+            for (Future<?> future : RUNNING.values()) future.cancel(false);
+            RUNNING.clear();
+            QUEUED.clear();
+            CACHE.clear();
+        }
+    }
+
+    public int cachedTiles() {
+        synchronized (CACHE) { return CACHE.size(); }
+    }
+
+    public int queuedTiles() {
+        synchronized (CACHE) { return QUEUED.size(); }
+    }
 
     private long key(int x, int z) { return ((long) x << 32) ^ (z & 0xFFFFFFFFL); }
 }
