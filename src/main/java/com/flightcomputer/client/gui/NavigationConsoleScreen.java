@@ -4,6 +4,7 @@ import com.flightcomputer.avionics.FlightControllerAction;
 import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
+import com.flightcomputer.client.map.FlightControllerWorldPositionResolver;
 import com.flightcomputer.client.map.FlightMapDiagnostics;
 import com.flightcomputer.client.map.FlightMapPipeline;
 import com.flightcomputer.client.map.FlightMapProviderKind;
@@ -15,6 +16,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.phys.Vec3;
 
 /** Flight Computer-owned navigation console. No external map-mod integration is required. */
 public final class NavigationConsoleScreen extends Screen {
@@ -32,6 +34,7 @@ public final class NavigationConsoleScreen extends Screen {
     private final BlockPos controllerPos;
     private final LiveWorldMapProvider mapProvider = new LiveWorldMapProvider();
     private final FlightMapPipeline mapPipeline = new FlightMapPipeline(mapProvider);
+    private final FlightControllerWorldPositionResolver worldPositionResolver = new FlightControllerWorldPositionResolver();
 
     private Tab tab = Tab.MAP;
     private FlightControllerBlockEntity controller;
@@ -39,6 +42,9 @@ public final class NavigationConsoleScreen extends Screen {
     private boolean showFlightMap = true;
     private double mapCenterX;
     private double mapCenterZ;
+    private double controllerWorldX;
+    private double controllerWorldY;
+    private double controllerWorldZ;
     private boolean draggingMap;
 
     public NavigationConsoleScreen(BlockPos controllerPos) {
@@ -46,12 +52,21 @@ public final class NavigationConsoleScreen extends Screen {
         this.controllerPos = controllerPos;
         this.mapCenterX = controllerPos.getX() + 0.5D;
         this.mapCenterZ = controllerPos.getZ() + 0.5D;
+        this.controllerWorldX = mapCenterX;
+        this.controllerWorldY = controllerPos.getY() + 0.5D;
+        this.controllerWorldZ = mapCenterZ;
     }
 
     @Override
     protected void init() {
         controller = getController();
         if (controller != null) showTerrain = controller.isTerrainEnabled();
+        updateControllerWorldPosition();
+        if (controller != null) {
+            mapCenterX = controllerWorldX;
+            mapCenterZ = controllerWorldZ;
+        }
+
         int left = Math.max(10, (width - 640) / 2);
         int top = 20;
         int tabW = 150;
@@ -116,8 +131,18 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void centreController() {
-        mapCenterX = controllerPos.getX() + 0.5D;
-        mapCenterZ = controllerPos.getZ() + 0.5D;
+        updateControllerWorldPosition();
+        mapCenterX = controllerWorldX;
+        mapCenterZ = controllerWorldZ;
+    }
+
+    private void updateControllerWorldPosition() {
+        if (minecraft == null || minecraft.level == null) return;
+        Vec3 resolved = worldPositionResolver.resolve(minecraft.level, controllerPos);
+        if (resolved == null) return;
+        controllerWorldX = resolved.x;
+        controllerWorldY = resolved.y;
+        controllerWorldZ = resolved.z;
     }
 
     private void switchTab(Tab next) {
@@ -148,6 +173,7 @@ public final class NavigationConsoleScreen extends Screen {
         super.tick();
         if (minecraft == null || minecraft.level == null) return;
         if (!controllerPowered()) { minecraft.setScreen(null); return; }
+        updateControllerWorldPosition();
         mapPipeline.tick(minecraft.level, 4);
     }
 
@@ -228,12 +254,21 @@ public final class NavigationConsoleScreen extends Screen {
                     g.fill(px, py, px + tilePixels, py + tilePixels, 0xFF171B1E);
                     continue;
                 }
-                // Render 2x2 source samples instead of the old 4x4 blocks. This keeps
-                // the CPU renderer inexpensive while substantially improving map detail.
+
+                // Batch adjacent equal samples into one rectangle. This preserves the
+                // exact 2x2 visual resolution while cutting GUI fill calls dramatically
+                // on flat/low-variation terrain, which is especially important while panning.
                 for (int sy = 0; sy < tilePixels; sy += sourceStep) {
-                    for (int sx = 0; sx < tilePixels; sx += sourceStep) {
-                        g.fill(px + sx, py + sy, px + sx + sourceStep, py + sy + sourceStep,
-                                tile[sy * tilePixels + sx]);
+                    int runStart = 0;
+                    int runColor = tile[sy * tilePixels];
+                    for (int sx = sourceStep; sx <= tilePixels; sx += sourceStep) {
+                        int color = sx < tilePixels ? tile[sy * tilePixels + sx] : Integer.MIN_VALUE;
+                        if (color != runColor) {
+                            int runWidth = sx - runStart;
+                            g.fill(px + runStart, py + sy, px + sx, py + sy + sourceStep, runColor);
+                            runStart = sx;
+                            runColor = color;
+                        }
                     }
                 }
             }
@@ -245,8 +280,8 @@ public final class NavigationConsoleScreen extends Screen {
         int playerX = worldToScreenX(minecraft.player.getX(), left, width);
         int playerZ = worldToScreenZ(minecraft.player.getZ(), top, height);
         drawTriangle(g, playerX, playerZ, 4, RED);
-        int controllerX = worldToScreenX(controllerPos.getX() + 0.5D, left, width);
-        int controllerZ = worldToScreenZ(controllerPos.getZ() + 0.5D, top, height);
+        int controllerX = worldToScreenX(controllerWorldX, left, width);
+        int controllerZ = worldToScreenZ(controllerWorldZ, top, height);
         drawDiamond(g, controllerX, controllerZ, 4, CYAN_BRIGHT);
     }
 
@@ -305,13 +340,11 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "DECODED: " + d.decodedCount() + "  FAILED: " + d.failedCount(), left + 20, top + 222, MUTED);
         g.drawString(font, "STATE: " + d.state().name(), left + 20, top + 246, d.state().name().equals("READY") ? GREEN : CYAN_BRIGHT);
         g.drawString(font, "POSITION", left + 405, top + 150, TEXT);
-        g.drawString(font, String.format("CTRL X  %.2f", (double) controllerPos.getX()), left + 405, top + 174, MUTED);
-        g.drawString(font, String.format("CTRL Y  %.2f", (double) controllerPos.getY()), left + 405, top + 196, MUTED);
-        g.drawString(font, String.format("CTRL Z  %.2f", (double) controllerPos.getZ()), left + 405, top + 218, MUTED);
-        if (minecraft != null && minecraft.player != null) {
-            g.drawString(font, String.format("PLAYER X  %.2f", minecraft.player.getX()), left + 405, top + 240, MUTED);
-            g.drawString(font, String.format("PLAYER Z  %.2f", minecraft.player.getZ()), left + 405, top + 262, MUTED);
-        }
+        g.drawString(font, String.format("CTRL LOCAL X  %.2f", (double) controllerPos.getX()), left + 405, top + 174, MUTED);
+        g.drawString(font, String.format("CTRL LOCAL Z  %.2f", (double) controllerPos.getZ()), left + 405, top + 196, MUTED);
+        g.drawString(font, String.format("WORLD X  %.2f", controllerWorldX), left + 405, top + 218, CYAN_BRIGHT);
+        g.drawString(font, String.format("WORLD Y  %.2f", controllerWorldY), left + 405, top + 240, CYAN_BRIGHT);
+        g.drawString(font, String.format("WORLD Z  %.2f", controllerWorldZ), left + 405, top + 262, CYAN_BRIGHT);
     }
 
     private String formatEnergy(long value) { return String.format("%,d", Math.max(0L, value)); }
