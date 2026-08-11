@@ -2,6 +2,7 @@ package com.flightcomputer.client.map;
 
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
@@ -23,6 +24,8 @@ import java.util.concurrent.Future;
  */
 public final class LiveWorldMapProvider implements FlightMapDataProvider {
     private static final int MAX_JOBS = 64;
+    private static final int LOADED_SCAN_INTERVAL_TICKS = 10;
+    private static final int MAX_SCAN_RADIUS_CHUNKS = 64;
 
     /**
      * Session-persistent terrain cache. Deliberately unbounded: generated terrain is
@@ -34,6 +37,9 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
     private final Map<Long, Future<?>> running = new HashMap<>();
     private final ExecutorService workers;
     private final CpuTerrainTileGenerator generator = new CpuTerrainTileGenerator();
+    private int loadedScanTicks;
+    private int lastPlayerChunkX = Integer.MIN_VALUE;
+    private int lastPlayerChunkZ = Integer.MIN_VALUE;
 
     public LiveWorldMapProvider() {
         int cores = Runtime.getRuntime().availableProcessors();
@@ -76,6 +82,47 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
         return running.containsKey(key) || queued.contains(key);
     }
 
+    /**
+     * Converts the chunks already resident in the client's chunk cache into Flight
+     * Map work. This deliberately uses ClientLevel#hasChunk only: it never asks the
+     * client to load/generate a chunk and never reaches the logical server.
+     *
+     * We scan around the local player because the client chunk cache is maintained
+     * around the player's client-side view distance. The scan is throttled and only
+     * repeats immediately when the player crosses a chunk boundary, so this does not
+     * become a per-frame O(view-distance^2) cost.
+     */
+    @Override
+    public synchronized void observeLoadedClientChunks(ClientLevel level) {
+        if (level == null || level.isClientSide() == false) return;
+        if (level.getChunkSource() == null) return;
+
+        var player = net.minecraft.client.Minecraft.getInstance().player;
+        if (player == null) return;
+
+        ChunkPos playerChunk = player.chunkPosition();
+        loadedScanTicks++;
+        boolean moved = playerChunk.x != lastPlayerChunkX || playerChunk.z != lastPlayerChunkZ;
+        if (!moved && loadedScanTicks < LOADED_SCAN_INTERVAL_TICKS) return;
+        loadedScanTicks = 0;
+        lastPlayerChunkX = playerChunk.x;
+        lastPlayerChunkZ = playerChunk.z;
+
+        int loadedCount = Math.max(1, level.getChunkSource().getLoadedChunksCount());
+        int radius = (int) Math.ceil((Math.sqrt(loadedCount) - 1.0D) * 0.5D) + 2;
+        radius = Math.max(2, Math.min(MAX_SCAN_RADIUS_CHUNKS, radius));
+
+        for (int chunkZ = playerChunk.z - radius; chunkZ <= playerChunk.z + radius; chunkZ++) {
+            for (int chunkX = playerChunk.x - radius; chunkX <= playerChunk.x + radius; chunkX++) {
+                // hasChunk is the important boundary: only chunks already loaded on
+                // this client are handed to the Flight Map conversion pipeline.
+                if (level.hasChunk(chunkX, chunkZ)) {
+                    requestChunkTile(level, chunkX, chunkZ);
+                }
+            }
+        }
+    }
+
     private TerrainChunkSnapshot capture(ClientLevel level, int chunkX, int chunkZ) {
         int[] colors = new int[256];
         int[] heights = new int[256];
@@ -107,6 +154,9 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
         running.clear();
         queued.clear();
         cache.clear();
+        loadedScanTicks = 0;
+        lastPlayerChunkX = Integer.MIN_VALUE;
+        lastPlayerChunkZ = Integer.MIN_VALUE;
     }
 
     public synchronized int cachedTiles() { return cache.size(); }
