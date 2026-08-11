@@ -5,6 +5,8 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Vector3d;
+import org.joml.Vector3dc;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -12,18 +14,24 @@ import java.lang.reflect.Method;
 /**
  * Resolves local Sub-Level coordinates into parent-world coordinates.
  * Sable remains an optional runtime integration with no compile-time dependency.
+ *
+ * <p>The authoritative Sable path is ActiveSableCompanion.getContainingClient(...),
+ * not SubLevelHelper.getContaining(...). A BlockEntity is therefore resolved through
+ * the exact client Sub-Level containing it, then its logical pose transforms the
+ * BlockEntity's local/storage coordinate into world space.</p>
  */
 public final class FlightControllerWorldPositionResolver {
     private static final String SABLE_CLASS = "dev.ryanhcode.sable.Sable";
-    private static final String SABLE_HELPER_CLASS = "dev.ryanhcode.sable.api.SubLevelHelper";
+    private static final String ACTIVE_COMPANION_CLASS = "dev.ryanhcode.sable.ActiveSableCompanion";
+    private static final String CLIENT_SUB_LEVEL_ACCESS_CLASS = "dev.ryanhcode.sable.companion.ClientSubLevelAccess";
 
     private volatile boolean initialized;
     private volatile boolean available;
     private Object sableHelper;
-    private Method getContainingVec3;
-    private Method getContainingBlockPos;
+    private Method getContainingClientBlockEntity;
+    private Method getContainingClientVector;
     private Method logicalPose;
-    private Method transformPosition;
+    private Method transformPositionVec3;
 
     public Vec3 resolve(Level level, BlockPos localPosition) {
         if (level == null || localPosition == null) return null;
@@ -37,12 +45,9 @@ public final class FlightControllerWorldPositionResolver {
         if (level == null || localPosition == null) return null;
         if (!ensureInitialized()) return localPosition;
         try {
-            Object subLevel = getContainingVec3 == null ? null : getContainingVec3.invoke(sableHelper, level, localPosition);
+            Object subLevel = findContainingClient(localPosition);
             if (subLevel == null) return localPosition;
-            Object pose = logicalPose.invoke(subLevel);
-            if (pose == null) return localPosition;
-            Object result = transformPosition.invoke(pose, localPosition);
-            return result instanceof Vec3 worldPosition ? worldPosition : localPosition;
+            return transform(subLevel, localPosition);
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             return localPosition;
         }
@@ -61,15 +66,19 @@ public final class FlightControllerWorldPositionResolver {
         if (!ensureInitialized()) return local;
 
         try {
-            Object subLevel = null;
-            if (getContainingVec3 != null) subLevel = getContainingVec3.invoke(sableHelper, level, local);
-            if (subLevel == null && getContainingBlockPos != null) subLevel = getContainingBlockPos.invoke(sableHelper, level, localPosition);
+            // This is the authoritative Sable lookup for a placed BlockEntity.
+            // It resolves the Sub-Level containing the actual controller rather than
+            // interpreting the Sub-Level's storage BlockPos as a parent-world position.
+            Object subLevel = blockEntity == null ? null
+                    : getContainingClientBlockEntity.invoke(sableHelper, blockEntity);
+
+            // If there is no BlockEntity available, retain the precise-coordinate path.
+            if (subLevel == null && blockEntity == null) {
+                subLevel = findContainingClient(local);
+            }
             if (subLevel == null) return local;
 
-            Object pose = logicalPose.invoke(subLevel);
-            if (pose == null) return local;
-            Object result = transformPosition.invoke(pose, local);
-            return result instanceof Vec3 worldPosition ? worldPosition : local;
+            return transform(subLevel, local);
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             return local;
         }
@@ -78,6 +87,19 @@ public final class FlightControllerWorldPositionResolver {
     public boolean isSableAvailable() {
         ensureInitialized();
         return available;
+    }
+
+    private Object findContainingClient(Vec3 position) throws ReflectiveOperationException {
+        if (getContainingClientVector == null) return null;
+        Vector3d point = new Vector3d(position.x, position.y, position.z);
+        return getContainingClientVector.invoke(sableHelper, (Vector3dc) point);
+    }
+
+    private Vec3 transform(Object subLevel, Vec3 local) throws ReflectiveOperationException {
+        Object pose = logicalPose.invoke(subLevel);
+        if (pose == null) return local;
+        Object result = transformPositionVec3.invoke(pose, local);
+        return result instanceof Vec3 worldPosition ? worldPosition : local;
     }
 
     private boolean ensureInitialized() {
@@ -90,16 +112,19 @@ public final class FlightControllerWorldPositionResolver {
                 sableHelper = helperField.get(null);
                 if (sableHelper == null) throw new IllegalStateException("Sable HELPER is null");
 
-                Class<?> helperType = Class.forName(SABLE_HELPER_CLASS, false, getClass().getClassLoader());
-                getContainingVec3 = findMethod(helperType, "getContaining", Level.class, Vec3.class);
-                getContainingBlockPos = findMethod(helperType, "getContaining", Level.class, BlockPos.class);
-                if (getContainingVec3 == null && getContainingBlockPos == null) {
-                    throw new NoSuchMethodException("Sable SubLevelHelper.getContaining overloads not found");
+                Class<?> companionType = Class.forName(ACTIVE_COMPANION_CLASS, false, getClass().getClassLoader());
+                if (!companionType.isInstance(sableHelper)) {
+                    throw new IllegalStateException("Sable HELPER is not an ActiveSableCompanion");
                 }
 
-                Class<?> subLevelClass = getContainingVec3 != null ? getContainingVec3.getReturnType() : getContainingBlockPos.getReturnType();
-                logicalPose = subLevelClass.getMethod("logicalPose");
-                transformPosition = logicalPose.getReturnType().getMethod("transformPosition", Vec3.class);
+                getContainingClientBlockEntity = companionType.getMethod("getContainingClient", BlockEntity.class);
+                getContainingClientVector = companionType.getMethod("getContainingClient", Vector3dc.class);
+
+                Class<?> accessType = Class.forName(CLIENT_SUB_LEVEL_ACCESS_CLASS, false, getClass().getClassLoader());
+                logicalPose = accessType.getMethod("logicalPose");
+                Class<?> poseType = logicalPose.getReturnType();
+                transformPositionVec3 = poseType.getMethod("transformPosition", Vec3.class);
+
                 available = true;
             } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
                 available = false;
@@ -108,11 +133,6 @@ public final class FlightControllerWorldPositionResolver {
             }
         }
         return available;
-    }
-
-    private static Method findMethod(Class<?> type, String name, Class<?>... parameters) {
-        try { return type.getMethod(name, parameters); }
-        catch (NoSuchMethodException ignored) { return null; }
     }
 
     private static Vec3 center(BlockPos pos) {
