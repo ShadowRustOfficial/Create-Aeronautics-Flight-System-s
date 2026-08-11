@@ -2,6 +2,7 @@ package com.flightcomputer.control;
 
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.network.FlightComputerNetwork;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
