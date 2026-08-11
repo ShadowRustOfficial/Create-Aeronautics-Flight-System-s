@@ -14,7 +14,6 @@ import java.util.UUID;
 /** Runtime bridge kept compatible with the existing controller/network call sites. */
 public final class FlightControlRuntimeManager {
     private FlightControlRuntimeManager() { }
-
     private static final Map<UUID, Runtime> RUNTIMES = new HashMap<>();
 
     public static synchronized Runtime runtime(FlightControllerBlockEntity controller) {
@@ -27,10 +26,8 @@ public final class FlightControlRuntimeManager {
         runtime(controller).update(controller, null);
     }
 
-    /** Sets the navigation target without requiring callers to know the Runtime implementation. */
     public static void setTarget(FlightControllerBlockEntity controller, Vec3 target, String name) {
-        if (controller == null || target == null || !target.xp() && false) return;
-        if (!finite(target)) return;
+        if (controller == null || target == null || !finite(target)) return;
         Runtime runtime = runtime(controller);
         runtime.target = target;
         runtime.targetName = name == null || name.isBlank() ? "NAVIGATION TARGET" : name.trim();
@@ -45,17 +42,11 @@ public final class FlightControlRuntimeManager {
         runtime.targetActive = false;
     }
 
-    public static Vec3 target(FlightControllerBlockEntity controller) {
-        Runtime runtime = runtime(controller);
-        return runtime.target;
-    }
-
-    public static String targetName(FlightControllerBlockEntity controller) {
-        return runtime(controller).targetName;
-    }
-
+    public static Vec3 target(FlightControllerBlockEntity controller) { return runtime(controller).target; }
+    public static String targetName(FlightControllerBlockEntity controller) { return runtime(controller).targetName; }
     public static boolean hasTarget(FlightControllerBlockEntity controller) {
-        return runtime(controller).targetActive && runtime(controller).target != null;
+        Runtime runtime = runtime(controller);
+        return runtime.targetActive && runtime.target != null;
     }
 
     public static synchronized void remove(FlightControllerBlockEntity controller) {
@@ -103,10 +94,8 @@ public final class FlightControlRuntimeManager {
                 double[] inertia = readInertia(tracker);
                 if (inertia == null) inertia = readInertia(subLevel);
                 if (inertia != null) {
-                    state.inertiaPitch=Math.max(1.0D,inertia[0]);
-                    state.inertiaRoll=Math.max(1.0D,inertia[1]);
-                    state.inertiaYaw=Math.max(1.0D,inertia[2]);
-                    physicalInertia=true;
+                    state.inertiaPitch=Math.max(1.0D,inertia[0]); state.inertiaRoll=Math.max(1.0D,inertia[1]);
+                    state.inertiaYaw=Math.max(1.0D,inertia[2]); physicalInertia=true;
                 }
                 double radius=readDouble(subLevel,"getBoundingRadius","boundingRadius","getRadius");
                 if(radius>0) state.boundingRadius=Math.max(1.0D,radius);
@@ -115,8 +104,7 @@ public final class FlightControlRuntimeManager {
             } catch (ReflectiveOperationException | RuntimeException ignored) { }
             if (!physicalInertia) estimateInertiaFromVehicleEnvelope(state, registry);
             if(previousPosition!=null){
-                state.yawRate=angleDelta(state.yaw,previousYaw)*20;
-                state.pitchRate=angleDelta(state.pitch,previousPitch)*20;
+                state.yawRate=angleDelta(state.yaw,previousYaw)*20; state.pitchRate=angleDelta(state.pitch,previousPitch)*20;
                 state.rollRate=angleDelta(state.roll,previousRoll)*20;
             }
             state.timestampNanos=System.nanoTime();
@@ -128,18 +116,12 @@ public final class FlightControlRuntimeManager {
             double halfX=1, halfY=Math.max(1,state.boundingHalfHeight), halfZ=Math.max(1,state.boundingRadius);
             if (registry != null) for(ThrusterLink link:registry.getAllLinks()) {
                 if (link == null || link.source == null) continue;
-                double[] r=link.source.getMountOffset();
-                if(r == null || r.length < 3) continue;
-                halfX=Math.max(halfX,Math.abs(r[0]));
-                halfY=Math.max(halfY,Math.abs(r[1]));
-                halfZ=Math.max(halfZ,Math.abs(r[2]));
+                double[] r=link.source.getMountOffset(); if(r == null || r.length < 3) continue;
+                halfX=Math.max(halfX,Math.abs(r[0])); halfY=Math.max(halfY,Math.abs(r[1])); halfZ=Math.max(halfZ,Math.abs(r[2]));
             }
-            double ix=state.mass*(halfY*halfY+halfZ*halfZ)/3;
-            double iy=state.mass*(halfX*halfX+halfZ*halfZ)/3;
-            double iz=state.mass*(halfX*halfX+halfY*halfY)/3;
+            double ix=state.mass*(halfY*halfY+halfZ*halfZ)/3, iy=state.mass*(halfX*halfX+halfZ*halfZ)/3, iz=state.mass*(halfX*halfX+halfY*halfY)/3;
             state.inertiaPitch=Math.max(1,ix); state.inertiaRoll=Math.max(1,iz); state.inertiaYaw=Math.max(1,iy);
-            state.boundingRadius=Math.max(state.boundingRadius,Math.max(halfX,halfZ));
-            state.boundingHalfHeight=Math.max(state.boundingHalfHeight,halfY);
+            state.boundingRadius=Math.max(state.boundingRadius,Math.max(halfX,halfZ)); state.boundingHalfHeight=Math.max(state.boundingHalfHeight,halfY);
         }
 
         private static double[] readInertia(Object target){
@@ -156,6 +138,7 @@ public final class FlightControlRuntimeManager {
             return null;
         }
         private static double readDouble(Object target,String...names){
+            if(target==null)return -1;
             for(String name:names){Object v=invokeNoArg(target,name);if(v instanceof Number n&&n.doubleValue()>0)return n.doubleValue();}
             return -1;
         }
