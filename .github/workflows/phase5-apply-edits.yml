@@ -16,15 +16,35 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: Apply Phase 5 integration edits
+      - name: Apply Phase 5 integration edits and de-duplicate generated declarations
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
+          def dedupe_exact(text, needle):
+              first = text.find(needle)
+              if first < 0:
+                  return text
+              prefix = text[:first + len(needle)]
+              rest = text[first + len(needle):].replace(needle, '')
+              return prefix + rest
+
           p = Path('src/main/java/com/flightcomputer/client/gui/NavigationConsoleScreen.java')
           text = p.read_text()
-          text = text.replace('import com.flightcomputer.client.map.WaystoneMapProvider;\n', 'import com.flightcomputer.client.map.WaypointMapProvider;\nimport com.flightcomputer.client.map.WaystoneMapProvider;\nimport com.flightcomputer.client.gui.CoolingConsoleScreen;\nimport com.flightcomputer.client.gui.ThermalConsoleScreen;\n')
-          text = text.replace('    private EditBox targetInput;\n', '    private EditBox targetInput;\n    private final WaypointMapProvider routeWaypointProvider = new WaypointMapProvider();\n    private final WaystoneMapProvider routeWaystoneProvider = new WaystoneMapProvider();\n    private int routeWaypointIndex;\n    private int routeWaystoneIndex;\n')
+          for line in [
+              'import com.flightcomputer.client.map.WaypointMapProvider;\n',
+              'import com.flightcomputer.client.map.WaystoneMapProvider;\n',
+              'import com.flightcomputer.client.gui.CoolingConsoleScreen;\n',
+              'import com.flightcomputer.client.gui.ThermalConsoleScreen;\n',
+          ]:
+              text = dedupe_exact(text, line)
+          for block in [
+              '    private final WaypointMapProvider routeWaypointProvider = new WaypointMapProvider();\n',
+              '    private final WaystoneMapProvider routeWaystoneProvider = new WaystoneMapProvider();\n',
+              '    private int routeWaypointIndex;\n',
+              '    private int routeWaystoneIndex;\n',
+          ]:
+              text = dedupe_exact(text, block)
           needle = '        addRenderableWidget(Button.builder(Component.literal("DIAGNOSTICS"), b -> switchTab(Tab.DIAGNOSTICS)).bounds(left + 480, top, tabW, 22).build());\n'
           replacement = needle + '''        addRenderableWidget(Button.builder(Component.literal("THERMAL"), b -> minecraft.setScreen(new ThermalConsoleScreen(controllerPos)))\n                .bounds(left + 480, top + 24, 72, 20).build());\n        addRenderableWidget(Button.builder(Component.literal("COOLING"), b -> minecraft.setScreen(new CoolingConsoleScreen(controllerPos)))\n                .bounds(left + 558, top + 24, 72, 20).build());\n'''
           if needle in text and 'new ThermalConsoleScreen' not in text: text = text.replace(needle, replacement, 1)
@@ -38,19 +58,30 @@ jobs:
 
           p = Path('src/main/java/com/flightcomputer/block/FlightControllerBlockEntity.java')
           text = p.read_text()
-          text = text.replace('import com.flightcomputer.avionics.FlightControllerActionResult;\n', 'import com.flightcomputer.avionics.FlightControllerActionResult;\nimport com.flightcomputer.avionics.FlightOperationsHolder;\nimport com.flightcomputer.avionics.FlightOperationsState;\n')
+          for line in [
+              'import com.flightcomputer.avionics.FlightOperationsHolder;\n',
+              'import com.flightcomputer.avionics.FlightOperationsState;\n',
+          ]:
+              text = dedupe_exact(text, line)
           text = text.replace('public class FlightControllerBlockEntity extends BlockEntity implements GeoBlockEntity {', 'public class FlightControllerBlockEntity extends BlockEntity implements GeoBlockEntity, FlightOperationsHolder {')
-          text = text.replace('    private UUID controllerId = UUID.randomUUID();\n', '    private UUID controllerId = UUID.randomUUID();\n    private FlightOperationsState flightOperations = new FlightOperationsState();\n')
-          text = text.replace('    public UUID getControllerId() { return controllerId; }\n', '    public UUID getControllerId() { return controllerId; }\n    @Override public FlightOperationsState getFlightOperations() { return flightOperations; }\n    @Override public void setFlightOperations(FlightOperationsState state) { flightOperations = state == null ? new FlightOperationsState() : state; markDirtyAndSync(); }\n')
-          text = text.replace('        tag.putUUID("ControllerId", controllerId);\n', '        tag.putUUID("ControllerId", controllerId);\n        flightOperations.save(tag);\n')
-          text = text.replace('        controllerId = tag.hasUUID("ControllerId") ? tag.getUUID("ControllerId") : UUID.randomUUID();\n', '        controllerId = tag.hasUUID("ControllerId") ? tag.getUUID("ControllerId") : UUID.randomUUID();\n        flightOperations = FlightOperationsState.load(tag);\n')
+          field = '    private FlightOperationsState flightOperations = new FlightOperationsState();\n'
+          text = dedupe_exact(text, field)
+          getter = '    @Override public FlightOperationsState getFlightOperations() { return flightOperations; }\n'
+          setter = '    @Override public void setFlightOperations(FlightOperationsState state) { flightOperations = state == null ? new FlightOperationsState() : state; markDirtyAndSync(); }\n'
+          text = dedupe_exact(text, getter)
+          text = dedupe_exact(text, setter)
+          if '        flightOperations.save(tag);\n' not in text:
+              text = text.replace('        tag.putUUID("ControllerId", controllerId);\n', '        tag.putUUID("ControllerId", controllerId);\n        flightOperations.save(tag);\n', 1)
+          if '        flightOperations = FlightOperationsState.load(tag);\n' not in text:
+              text = text.replace('        controllerId = tag.hasUUID("ControllerId") ? tag.getUUID("ControllerId") : UUID.randomUUID();\n', '        controllerId = tag.hasUUID("ControllerId") ? tag.getUUID("ControllerId") : UUID.randomUUID();\n        flightOperations = FlightOperationsState.load(tag);\n', 1)
           p.write_text(text)
 
           p = Path('src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java')
           text = p.read_text()
           old = '        Runtime runtime = runtime(controller);\n        runtime.update(controller);\n        runtime.control(controller);'
           new = '        Runtime runtime = runtime(controller);\n        FlightOperationsRuntimeBridge.reconcile(controller);\n        runtime.update(controller);\n        runtime.control(controller);'
-          if old in text and 'FlightOperationsRuntimeBridge.reconcile(controller)' not in text: text = text.replace(old, new, 1)
+          if old in text and 'FlightOperationsRuntimeBridge.reconcile(controller)' not in text:
+              text = text.replace(old, new, 1)
           p.write_text(text)
           PY
           git config user.name "github-actions[bot]"
