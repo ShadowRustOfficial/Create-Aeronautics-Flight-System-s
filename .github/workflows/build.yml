@@ -2,9 +2,9 @@ name: Build Verification
 
 on:
   push:
-    branches: [main]
+    branches: [main, phase-5-validation]
   pull_request:
-    branches: [main]
+    branches: [main, phase-5-validation]
 
 permissions:
   contents: read
@@ -22,4 +22,4 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x gradlew
       - name: Build
-        run: ./gradlew build --no-daemon
+        run: ./gradlew build --no-daemon --stacktrace
