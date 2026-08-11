@@ -12,13 +12,23 @@ public record FlightControllerState(
 
     public FlightControllerState apply(FlightControllerAction action) {
         return switch (action) {
-            case TOGGLE_ENGAGED -> new FlightControllerState(!engaged, stabiliser,
-                    !engaged ? FlightMode.MANUAL : FlightMode.DISENGAGED,
-                    altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
-            case TOGGLE_STABILISER -> new FlightControllerState(engaged, !stabiliser, flightMode,
-                    altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
-            case CYCLE_MODE -> new FlightControllerState(engaged, stabiliser, flightMode.next(),
-                    altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
+            case TOGGLE_ENGAGED -> engaged
+                    ? new FlightControllerState(false, false, FlightMode.DISENGAGED, false, false, false, false, false, false)
+                    : new FlightControllerState(true, false, FlightMode.MANUAL,
+                            altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
+            case TOGGLE_STABILISER -> {
+                boolean enabled = !stabiliser;
+                FlightMode nextMode = enabled ? FlightMode.STABILIZED : (flightMode == FlightMode.STABILIZED ? FlightMode.MANUAL : flightMode);
+                yield new FlightControllerState(engaged, enabled, nextMode,
+                        altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
+            }
+            case CYCLE_MODE -> {
+                FlightMode next = flightMode.next();
+                boolean nextStabiliser = next == FlightMode.STABILIZED;
+                yield new FlightControllerState(engaged, nextStabiliser, next,
+                        altitudeHold, headingHold, positionHold, velocityHold,
+                        next == FlightMode.AUTOPILOT || navigationEnabled, routeActive);
+            }
             case TOGGLE_ALTITUDE_HOLD -> new FlightControllerState(engaged, stabiliser, flightMode,
                     !altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
             case TOGGLE_HEADING_HOLD -> new FlightControllerState(engaged, stabiliser, flightMode,
@@ -31,9 +41,9 @@ public record FlightControllerState(
                     altitudeHold, headingHold, positionHold, velocityHold, !navigationEnabled, routeActive);
             case START_ROUTE -> new FlightControllerState(true, true, FlightMode.AUTOPILOT,
                     altitudeHold, headingHold, positionHold, velocityHold, true, true);
-            case ABORT_ROUTE -> new FlightControllerState(engaged, stabiliser, FlightMode.STABILIZED,
+            case ABORT_ROUTE -> new FlightControllerState(engaged, true, FlightMode.STABILIZED,
                     altitudeHold, headingHold, positionHold, velocityHold, false, false);
-            case EMERGENCY_SHUTDOWN -> new FlightControllerState(false, stabiliser, FlightMode.DISENGAGED,
+            case EMERGENCY_SHUTDOWN -> new FlightControllerState(false, false, FlightMode.DISENGAGED,
                     false, false, false, false, false, false);
             case PULSE_DISPLAY, TOGGLE_TERRAIN -> this;
         };
