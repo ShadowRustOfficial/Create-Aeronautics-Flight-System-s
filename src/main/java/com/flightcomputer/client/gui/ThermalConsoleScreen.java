@@ -3,17 +3,14 @@ package com.flightcomputer.client.gui;
 import com.flightcomputer.avionics.ThermalState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.client.FlightComputerTelemetryClient;
-import com.flightcomputer.network.FlightComputerNetwork;
-import com.flightcomputer.item.CoolingUpgradeItem;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
-/** Dedicated thermal tab surface for the Flight Computer overlay. */
+/** Dedicated thermal-management tab. Cooling inventory is intentionally kept on its own tab. */
 public final class ThermalConsoleScreen extends Screen {
     private static final int PANEL = 0xE610141A;
     private static final int TEXT = 0xFFE6EEF2;
@@ -37,13 +34,15 @@ public final class ThermalConsoleScreen extends Screen {
     protected void init() {
         controller = getController();
         left = Math.max(10, (width - 640) / 2);
-        top = Math.max(20, (height - 360) / 2);
+        top = Math.max(20, (height - 340) / 2);
         addRenderableWidget(Button.builder(Component.literal("NAVIGATION"), b -> minecraft.setScreen(new NavigationConsoleScreen(controllerPos)))
-                .bounds(left, top, 150, 22).build());
+                .bounds(left, top, 145, 22).build());
         addRenderableWidget(Button.builder(Component.literal("THERMAL"), b -> {})
-                .bounds(left + 160, top, 150, 22).build());
+                .bounds(left + 150, top, 145, 22).build());
+        addRenderableWidget(Button.builder(Component.literal("COOLING"), b -> minecraft.setScreen(new CoolingConsoleScreen(controllerPos)))
+                .bounds(left + 300, top, 145, 22).build());
         addRenderableWidget(Button.builder(Component.literal("CLOSE"), b -> onClose())
-                .bounds(left + 490, top, 150, 22).build());
+                .bounds(left + 490, top, 145, 22).build());
     }
 
     private FlightControllerBlockEntity getController() {
@@ -56,7 +55,7 @@ public final class ThermalConsoleScreen extends Screen {
     public void tick() {
         super.tick();
         controller = getController();
-        if (controller == null) { onClose(); }
+        if (controller == null) onClose();
     }
 
     @Override
@@ -64,7 +63,8 @@ public final class ThermalConsoleScreen extends Screen {
         int right = left + 640;
         int bottom = top + 340;
         g.fill(left - 8, top - 8, right + 8, bottom + 8, PANEL);
-        g.drawString(font, "◈ FLIGHT COMPUTER / THERMAL MANAGEMENT", left, top - 2, TEXT);
+        g.drawString(font, "FLIGHT COMPUTER / THERMAL MANAGEMENT", left, top + 34, TEXT);
+        g.drawString(font, "THERMAL CONTROL / PROTECTION", left, top + 58, MUTED);
 
         double temperature = controller == null ? 0.0D : controller.getTemperature();
         double maximum = controller == null ? 1.0D : Math.max(1.0D, controller.getMaxTemperature());
@@ -72,62 +72,29 @@ public final class ThermalConsoleScreen extends Screen {
         ThermalState state = controller == null ? ThermalState.NORMAL : controller.getThermalState();
         int stateColor = state == ThermalState.THERMAL_SHUTDOWN || state == ThermalState.CRITICAL ? RED : state == ThermalState.HOT ? AMBER : GREEN;
 
-        g.drawString(font, "THERMAL STATUS", left + 20, top + 48, TEXT);
-        g.drawString(font, state.name().replace('_', ' '), left + 250, top + 48, stateColor);
-        g.drawString(font, String.format("TEMPERATURE  %.1f / %.1f", temperature, maximum), left + 20, top + 76, TEXT);
-        g.fill(left + 20, top + 94, left + 620, top + 112, 0xFF20272C);
+        g.drawString(font, "THERMAL STATUS", left + 20, top + 88, TEXT);
+        g.drawString(font, state.name().replace('_', ' '), left + 250, top + 88, stateColor);
+        g.drawString(font, String.format("TEMPERATURE  %.1f / %.1f", temperature, maximum), left + 20, top + 116, TEXT);
+        g.fill(left + 20, top + 134, left + 620, top + 152, 0xFF20272C);
         int bar = (int)(600 * ratio);
-        g.fill(left + 20, top + 94, left + 20 + bar, top + 112, stateColor);
-        g.drawString(font, String.format("%.1f%%", ratio * 100.0D), left + 285, top + 98, TEXT);
+        g.fill(left + 20, top + 134, left + 20 + bar, top + 152, stateColor);
+        g.drawString(font, String.format("%.1f%%", ratio * 100.0D), left + 285, top + 138, TEXT);
 
         int cooldown = controller == null ? 0 : controller.getThermalCooldownTicksRemaining();
-        g.drawString(font, cooldown > 0 ? String.format("COOLDOWN LOCKOUT: %.1f s", cooldown / 20.0D) : "COOLDOWN LOCKOUT: CLEAR", left + 20, top + 132, cooldown > 0 ? RED : GREEN);
-        g.drawString(font, "Cooling upgrades", left + 20, top + 164, CYAN);
-        g.drawString(font, "Insert a cooling module with it in your main hand. Click an occupied slot with an empty hand to remove it.", left + 20, top + 184, MUTED);
-
-        for (int slot = 0; slot < 3; slot++) renderSlot(g, slot);
-        g.drawString(font, "SYSTEM RESPONSE", left + 20, top + 250, CYAN);
-        g.drawString(font, "Thermal load is generated by controller operation and propulsion control; cooling reduces temperature continuously.", left + 20, top + 270, MUTED);
-        g.drawString(font, "THERMAL SHUTDOWN prevents operation until the controller has cooled below the recovery threshold.", left + 20, top + 288, MUTED);
+        g.drawString(font, cooldown > 0 ? String.format("THERMAL LOCKOUT: %.1f s", cooldown / 20.0D) : "THERMAL LOCKOUT: READY", left + 20, top + 176, cooldown > 0 ? RED : GREEN);
+        long energy = controller == null ? 0L : controller.getEnergyStorage().getEnergyStored();
+        long capacity = controller == null ? 1L : controller.getEnergyStorage().getMaxEnergyStored();
+        g.drawString(font, String.format("POWER: %,d / %,d FE", energy, capacity), left + 20, top + 202, TEXT);
 
         var snapshot = controller == null ? null : FlightComputerTelemetryClient.get(controller.getControllerId());
         if (snapshot != null) {
-            g.drawString(font, "TELEMETRY: " + thermalName(snapshot.thermalState()) + " | COOLING TIER " + snapshot.coolingTier(), left + 20, top + 314, TEXT);
+            g.drawString(font, "LIVE TELEMETRY: " + thermalName(snapshot.thermalState()) + " | COOLING TIER " + snapshot.coolingTier(), left + 20, top + 234, CYAN);
         }
+        g.drawString(font, "Cooling modules are managed separately in the COOLING tab.", left + 20, top + 270, MUTED);
+        g.drawString(font, "Thermal shutdown prevents propulsion/control output until recovery.", left + 20, top + 294, MUTED);
 
         super.render(g, mouseX, mouseY, partialTick);
-        g.fill(left + 160, top + 20, left + 310, top + 22, CYAN);
-    }
-
-    private void renderSlot(GuiGraphics g, int slot) {
-        int x = left + 150 + slot * 70;
-        int y = top + 200;
-        g.fill(x, y, x + 52, y + 52, 0xFF0D1114);
-        g.fill(x, y, x + 52, y + 2, CYAN);
-        ItemStack stack = controller == null ? ItemStack.EMPTY : controller.getUpgradeHandler().getStackInSlot(slot);
-        if (!stack.isEmpty()) {
-            g.renderItem(stack, x + 18, y + 10);
-            g.renderItemDecorations(font, stack, x + 18, y + 10);
-        } else {
-            g.drawString(font, "+", x + 22, y + 17, MUTED);
-        }
-        g.drawString(font, Integer.toString(slot + 1), x + 23, y + 39, MUTED);
-    }
-
-    @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0 && controller != null) {
-            for (int slot = 0; slot < 3; slot++) {
-                int x = left + 150 + slot * 70;
-                int y = top + 200;
-                if (mouseX >= x && mouseX <= x + 52 && mouseY >= y && mouseY <= y + 52) {
-                    ItemStack hand = minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getMainHandItem();
-                    FlightComputerNetwork.sendCoolingSlot(controllerPos, slot, hand.isEmpty() ? 1 : 0);
-                    return true;
-                }
-            }
-        }
-        return super.mouseClicked(mouseX, mouseY, button);
+        g.fill(left + 150, top + 20, left + 295, top + 22, CYAN);
     }
 
     private static String thermalName(int id) {
