@@ -13,17 +13,11 @@ import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-/**
- * Provides the Thermal entry point for the navigation console.
- *
- * Thermal is deliberately a separate full-screen console surface. The previous
- * implementation painted a semi-transparent thermal panel over the map during
- * ScreenEvent.Render.Pre, which caused map text and widgets to bleed through it
- * and made the controls disappear when the navigation screen was rebuilt.
- */
+/** Adds only navigation entry buttons; thermal/cooling content is rendered on dedicated screens. */
 @EventBusSubscriber(modid = FlightComputer.MOD_ID, value = Dist.CLIENT)
 public final class ThermalConsoleTab {
-    private static final Map<NavigationConsoleScreen, Button> BUTTONS = new WeakHashMap<>();
+    private static final Map<NavigationConsoleScreen, Button> THERMAL_BUTTONS = new WeakHashMap<>();
+    private static final Map<NavigationConsoleScreen, Button> COOLING_BUTTONS = new WeakHashMap<>();
     private static final Method ADD_RENDERABLE_WIDGET = findAddRenderableWidget();
 
     private ThermalConsoleTab() {}
@@ -31,47 +25,56 @@ public final class ThermalConsoleTab {
     @SubscribeEvent
     public static void onInit(ScreenEvent.Init.Post event) {
         if (event.getScreen() instanceof NavigationConsoleScreen screen) {
-            installButton(screen, event::addListener);
+            installButtons(screen, event::addListener);
         }
     }
 
-    /**
-     * NavigationConsoleScreen rebuilds its widgets when changing pages without
-     * emitting another ScreenEvent.Init.Post. Render.Pre is therefore used as a
-     * small compatibility fallback to restore the Thermal entry point.
-     */
+    /** NavigationConsoleScreen rebuilds widgets while changing pages, so restore the two entry buttons if necessary. */
     @SubscribeEvent
     public static void onRenderPre(ScreenEvent.Render.Pre event) {
         if (!(event.getScreen() instanceof NavigationConsoleScreen screen)) return;
-        if (BUTTONS.containsKey(screen)) return;
-        installButtonReflectively(screen);
+        if (THERMAL_BUTTONS.containsKey(screen) && COOLING_BUTTONS.containsKey(screen)) return;
+        installButtonsReflectively(screen);
     }
 
-    private static void installButton(NavigationConsoleScreen screen, java.util.function.Consumer<Button> adder) {
-        if (BUTTONS.containsKey(screen)) return;
-        Button button = createButton(screen);
-        BUTTONS.put(screen, button);
-        adder.accept(button);
+    private static void installButtons(NavigationConsoleScreen screen, java.util.function.Consumer<Button> adder) {
+        if (THERMAL_BUTTONS.containsKey(screen)) return;
+        Button thermal = createThermalButton(screen);
+        Button cooling = createCoolingButton(screen);
+        THERMAL_BUTTONS.put(screen, thermal);
+        COOLING_BUTTONS.put(screen, cooling);
+        adder.accept(thermal);
+        adder.accept(cooling);
     }
 
-    private static void installButtonReflectively(NavigationConsoleScreen screen) {
-        if (ADD_RENDERABLE_WIDGET == null || BUTTONS.containsKey(screen)) return;
-        Button button = createButton(screen);
+    private static void installButtonsReflectively(NavigationConsoleScreen screen) {
+        if (ADD_RENDERABLE_WIDGET == null || THERMAL_BUTTONS.containsKey(screen)) return;
+        Button thermal = createThermalButton(screen);
+        Button cooling = createCoolingButton(screen);
         try {
-            ADD_RENDERABLE_WIDGET.invoke(screen, button);
-            BUTTONS.put(screen, button);
+            ADD_RENDERABLE_WIDGET.invoke(screen, thermal);
+            ADD_RENDERABLE_WIDGET.invoke(screen, cooling);
+            THERMAL_BUTTONS.put(screen, thermal);
+            COOLING_BUTTONS.put(screen, cooling);
         } catch (ReflectiveOperationException ignored) {
-            // The normal Init.Post path remains the primary path. This fallback
-            // only exists because the navigation screen rebuilds widgets itself.
+            // Init.Post remains the normal registration path.
         }
     }
 
-    private static Button createButton(NavigationConsoleScreen screen) {
+    private static Button createThermalButton(NavigationConsoleScreen screen) {
         int left = Math.max(10, (screen.width - 640) / 2);
         return Button.builder(Component.literal("THERMAL"), b -> {
             Minecraft mc = Minecraft.getInstance();
             if (mc != null) mc.setScreen(new ThermalConsoleScreen(screen.controllerPos()));
-        }).bounds(left + 480, 46, 150, 20).build();
+        }).bounds(left + 480, 46, 75, 20).build();
+    }
+
+    private static Button createCoolingButton(NavigationConsoleScreen screen) {
+        int left = Math.max(10, (screen.width - 640) / 2);
+        return Button.builder(Component.literal("COOLING"), b -> {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc != null) mc.setScreen(new CoolingConsoleScreen(screen.controllerPos()));
+        }).bounds(left + 555, 46, 75, 20).build();
     }
 
     private static Method findAddRenderableWidget() {
