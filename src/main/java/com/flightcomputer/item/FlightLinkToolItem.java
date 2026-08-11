@@ -50,7 +50,7 @@ public class FlightLinkToolItem extends Item {
 
         if (!level.isClientSide && level.getBlockEntity(clicked) instanceof FlightControllerBlockEntity controller) {
             SESSIONS.put(player.getUUID(), new LinkSession(clicked.immutable(), session.mode, session.direction));
-            player.displayClientMessage(Component.literal("LINK TOOL ARMED — " + short(session.mode) + " / " + session.direction.shortName()), true);
+            player.displayClientMessage(Component.literal("LINK TOOL ARMED - " + displayMode(session.mode) + " / " + session.direction.shortName()), true);
             return InteractionResult.SUCCESS;
         }
 
@@ -75,7 +75,7 @@ public class FlightLinkToolItem extends Item {
         VectorDirection physical = reflective.getPhysicalDirection();
         if (physical != null && physical != session.direction) {
             if (!level.isClientSide) player.displayClientMessage(Component.literal(
-                    "Thruster faces " + physical.shortName() + " — select " + physical.shortName() + " for this bank."), true);
+                    "Thruster faces " + physical.shortName() + " - select " + physical.shortName() + " for this bank."), true);
             return InteractionResult.sidedSuccess(level.isClientSide);
         }
 
@@ -86,13 +86,15 @@ public class FlightLinkToolItem extends Item {
             }
             controller.bindVector(session.mode, session.direction, clicked);
             player.displayClientMessage(Component.literal(
-                    "BANK SEEDED " + clicked.toShortString() + " → " + short(session.mode) + " / " + session.direction.shortName()
-                            + " — matching thrusters will be auto-discovered."), true);
+                    "BANK SEEDED " + clicked.toShortString() + " -> " + displayMode(session.mode) + " / " + session.direction.shortName()
+                            + " - matching thrusters will be auto-discovered."), true);
         }
         return InteractionResult.SUCCESS;
     }
 
-    private static String short(FlightMode mode) { return mode == FlightMode.STABILIZE ? "STABILISER" : "AUTOPILOT"; }
+    private static String displayMode(FlightMode mode) {
+        return mode == FlightMode.STABILIZE ? "STABILISER" : "AUTOPILOT";
+    }
 
     public record LinkSession(BlockPos controller, FlightMode mode, VectorDirection direction) { }
 }
