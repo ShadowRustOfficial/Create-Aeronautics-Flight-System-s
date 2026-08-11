@@ -14,7 +14,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Per-controller runtime owner. Terrain/map code is deliberately outside this package. */
+/** Per-controller runtime owner. Uses Sable's real Companion API when available. */
 public final class FlightControlRuntimeManager {
     private static final Map<UUID, Runtime> RUNTIMES = new ConcurrentHashMap<>();
     private static final Map<UUID, Target> TARGETS = new ConcurrentHashMap<>();
@@ -32,23 +32,24 @@ public final class FlightControlRuntimeManager {
         private final FlightComputer computer = new FlightComputer(stateProvider);
         private long lastLinkRefresh = Long.MIN_VALUE;
         private long lastTelemetry = Long.MIN_VALUE;
+
         void tick(FlightControllerBlockEntity controller) {
             Level level = controller.getLevel(); long time = level.getGameTime();
             if (time - lastLinkRefresh >= 5) {
                 computer.getRegistry().refresh(level, controller.getBlockPos(), controller.getVectorLinks(FlightMode.STABILIZE), controller.getVectorLinks(FlightMode.CRUISE), time);
                 lastLinkRefresh = time;
             }
-            // Refresh actuator geometry before state scaling so a large/small vehicle's actual
-            // thruster envelope can be used when its physics API does not expose inertia.
             stateProvider.update(controller, computer.getRegistry());
             Target target = TARGETS.get(controller.getControllerId());
             if (target != null) computer.getNavigator().setTarget(target.position.x, target.position.y, target.position.z); else computer.getNavigator().clearTarget();
             if (controller.isEngaged() && !controller.isThermalLockout()) {
-                computer.tick(0.05D);
+                var state = controller.getControllerState();
+                computer.tick(0.05D, state.stabiliser(), state.navigationEnabled() && state.routeActive() && target != null);
                 controller.addControlThermalLoad(computer.getAllocator().getLastThermalLoad());
             }
             if (time - lastTelemetry >= 5) { lastTelemetry = time; sendTelemetry(controller, target); }
         }
+
         private void sendTelemetry(FlightControllerBlockEntity controller, Target target) {
             VehicleState state = stateProvider.getState(); if (state == null) return;
             double distance = target == null ? -1.0D : Math.sqrt(Math.pow(target.position.x - state.x, 2) + Math.pow(target.position.y - state.y, 2) + Math.pow(target.position.z - state.z, 2));
@@ -77,7 +78,7 @@ public final class FlightControlRuntimeManager {
             Level level=controller.getLevel(); Vec3 local=Vec3.atCenterOf(controller.getBlockPos()); Vec3 world=project(level,local);
             VehicleState state=snapshot==null?new VehicleState():snapshot; state.x=world.x;state.y=world.y;state.z=world.z;
             if(previousPosition!=null){state.vx=(world.x-previousPosition.x)*20.0D;state.vy=(world.y-previousPosition.y)*20.0D;state.vz=(world.z-previousPosition.z)*20.0D;}
-            Object subLevel=containing(level,controller);
+            Object subLevel=containing(level,local);
             boolean physicalInertia=false;
             if(subLevel!=null)try{
                 Object pose=subLevel.getClass().getMethod("logicalPose").invoke(subLevel);
@@ -88,38 +89,22 @@ public final class FlightControlRuntimeManager {
                 if(mass instanceof Number n&&n.doubleValue()>0)state.mass=n.doubleValue();
                 double[] inertia = readInertia(tracker);
                 if(inertia == null) inertia = readInertia(subLevel);
-                if(inertia != null) {
-                    state.inertiaPitch = Math.max(1.0D, inertia[0]); state.inertiaRoll = Math.max(1.0D, inertia[1]); state.inertiaYaw = Math.max(1.0D, inertia[2]); physicalInertia=true;
-                }
-                double radius = readDouble(subLevel,"getBoundingRadius","boundingRadius","getRadius");
-                if(radius > 0) state.boundingRadius=Math.max(1.0D,radius);
-                double halfHeight = readDouble(subLevel,"getBoundingHalfHeight","boundingHalfHeight","getHalfHeight");
-                if(halfHeight > 0) state.boundingHalfHeight=Math.max(1.0D,halfHeight);
+                if(inertia != null) { state.inertiaPitch=Math.max(1.0D,inertia[0]);state.inertiaRoll=Math.max(1.0D,inertia[1]);state.inertiaYaw=Math.max(1.0D,inertia[2]);physicalInertia=true; }
+                double radius=readDouble(subLevel,"getBoundingRadius","boundingRadius","getRadius"); if(radius>0)state.boundingRadius=Math.max(1.0D,radius);
+                double halfHeight=readDouble(subLevel,"getBoundingHalfHeight","boundingHalfHeight","getHalfHeight"); if(halfHeight>0)state.boundingHalfHeight=Math.max(1.0D,halfHeight);
             }catch(ReflectiveOperationException|RuntimeException ignored){}
-            if(!physicalInertia) estimateInertiaFromVehicleEnvelope(state, registry);
+            if(!physicalInertia) estimateInertiaFromVehicleEnvelope(state,registry);
             if(previousPosition!=null){state.yawRate=angleDelta(state.yaw,previousYaw)*20;state.pitchRate=angleDelta(state.pitch,previousPitch)*20;state.rollRate=angleDelta(state.roll,previousRoll)*20;}
             state.timestampNanos=System.nanoTime();previousPosition=world;previousYaw=state.yaw;previousPitch=state.pitch;previousRoll=state.roll;snapshot=state.copy();
         }
 
-        private static void estimateInertiaFromVehicleEnvelope(VehicleState state, ThrusterRegistry registry){
-            double halfX=1.0D,halfY=Math.max(1.0D,state.boundingHalfHeight),halfZ=Math.max(1.0D,state.boundingRadius);
-            for(ThrusterLink link:registry.getAllLinks()){
-                double[] r=link.source.getMountOffset(); halfX=Math.max(halfX,Math.abs(r[0])); halfY=Math.max(halfY,Math.abs(r[1])); halfZ=Math.max(halfZ,Math.abs(r[2]));
-            }
-            // Uniform-box fallback: mass + physical actuator envelope determine inertia.
-            // This makes the same controller gains scale with both vehicle mass and size.
-            double ix=state.mass*(halfY*halfY+halfZ*halfZ)/3.0D;
-            double iy=state.mass*(halfX*halfX+halfZ*halfZ)/3.0D;
-            double iz=state.mass*(halfX*halfX+halfY*halfY)/3.0D;
-            state.inertiaPitch=Math.max(1.0D,ix); state.inertiaRoll=Math.max(1.0D,iz); state.inertiaYaw=Math.max(1.0D,iy);
-            state.boundingRadius=Math.max(state.boundingRadius,Math.max(halfX,halfZ)); state.boundingHalfHeight=Math.max(state.boundingHalfHeight,halfY);
-        }
+        private static void estimateInertiaFromVehicleEnvelope(VehicleState state, ThrusterRegistry registry){double halfX=1,halfY=Math.max(1,state.boundingHalfHeight),halfZ=Math.max(1,state.boundingRadius);for(ThrusterLink link:registry.getAllLinks()){double[] r=link.source.getMountOffset();halfX=Math.max(halfX,Math.abs(r[0]));halfY=Math.max(halfY,Math.abs(r[1]));halfZ=Math.max(halfZ,Math.abs(r[2]));}double ix=state.mass*(halfY*halfY+halfZ*halfZ)/3,iy=state.mass*(halfX*halfX+halfZ*halfZ)/3,iz=state.mass*(halfX*halfX+halfY*halfY)/3;state.inertiaPitch=Math.max(1,ix);state.inertiaRoll=Math.max(1,iz);state.inertiaYaw=Math.max(1,iy);state.boundingRadius=Math.max(state.boundingRadius,Math.max(halfX,halfZ));state.boundingHalfHeight=Math.max(state.boundingHalfHeight,halfY);}
         private static double[] readInertia(Object target){if(target==null)return null;for(String name:new String[]{"getMomentOfInertia","getInertia","momentOfInertia","inertia"}){double[] parsed=parseVector(invokeNoArg(target,name));if(parsed!=null)return parsed;}return null;}
         private static double[] parseVector(Object value){if(value instanceof Vector3d v)return new double[]{Math.abs(v.x),Math.abs(v.y),Math.abs(v.z)};if(value instanceof Vec3 v)return new double[]{Math.abs(v.x),Math.abs(v.y),Math.abs(v.z)};if(value instanceof double[] a&&a.length>=3)return new double[]{Math.abs(a[0]),Math.abs(a[1]),Math.abs(a[2])};return null;}
         private static double readDouble(Object target,String...names){for(String name:names){Object v=invokeNoArg(target,name);if(v instanceof Number n&&n.doubleValue()>0)return n.doubleValue();}return -1;}
         private Vec3 project(Level level,Vec3 local){if(!ensure())return local;try{Object value=projectOut.invoke(helper,level,local);return value instanceof Vec3 vec?vec:local;}catch(ReflectiveOperationException|RuntimeException ignored){return local;}}
-        private Object containing(Level level,FlightControllerBlockEntity controller){if(!ensure())return null;try{return getContaining.invoke(helper,controller);}catch(ReflectiveOperationException|RuntimeException ignored){return null;}}
-        private boolean ensure(){if(initialized)return available;initialized=true;try{Class<?> sable=Class.forName("dev.ryanhcode.sable.Sable",false,getClass().getClassLoader());helper=sable.getField("HELPER").get(null);getContaining=helper.getClass().getMethod("getContaining",net.minecraft.world.level.block.entity.BlockEntity.class);projectOut=helper.getClass().getMethod("projectOutOfSubLevel",Level.class,net.minecraft.world.phys.Vec3.class);available=true;}catch(ReflectiveOperationException|LinkageError|RuntimeException ignored){available=false;}return available;}
+        private Object containing(Level level,Vec3 local){if(!ensure())return null;try{return getContaining.invoke(helper,level,local);}catch(ReflectiveOperationException|RuntimeException ignored){return null;}}
+        private boolean ensure(){if(initialized)return available;initialized=true;try{Class<?> sable=Class.forName("dev.ryanhcode.sable.companion.SableCompanion",false,getClass().getClassLoader());helper=sable.getField("INSTANCE").get(null);getContaining=helper.getClass().getMethod("getContaining",Level.class,Vec3.class);projectOut=helper.getClass().getMethod("projectOutOfSubLevel",Level.class,Vec3.class);available=true;}catch(ReflectiveOperationException|LinkageError|RuntimeException ignored){available=false;}return available;}
         private static Object invokeNoArg(Object target,String...names){for(String name:names)try{return target.getClass().getMethod(name).invoke(target);}catch(ReflectiveOperationException|RuntimeException ignored){}return null;}
         private static double angleDelta(double current,double previous){double d=current-previous;while(d>Math.PI)d-=Math.PI*2;while(d<-Math.PI)d+=Math.PI*2;return d;}
     }
