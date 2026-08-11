@@ -12,9 +12,10 @@ import java.lang.reflect.Method;
  * the controller is inside a Sable Sub-Level. Sable remains an optional runtime
  * integration: no compile-time Sable dependency is required.
  *
- * Sable's public API exposes Sable.HELPER.getContaining(level, pos), and a
- * SubLevel's logicalPose() transforms local coordinates into global coordinates.
- * The reflective handles are resolved once and reused; the hot path performs only
+ * The Aeronautics/Simulated code uses Sable.HELPER.getContaining(level, Vec3),
+ * then SubLevel.logicalPose().transformPosition(Vec3). The resolver mirrors
+ * that exact local -> global path while keeping Sable optional at compile time.
+ * Reflection handles are resolved once and reused; the hot path performs only
  * the containing lookup and pose transform.
  */
 public final class FlightControllerWorldPositionResolver {
@@ -29,19 +30,21 @@ public final class FlightControllerWorldPositionResolver {
 
     public Vec3 resolve(Level level, BlockPos localPosition) {
         if (level == null || localPosition == null) return null;
-        if (!ensureInitialized()) return center(localPosition);
+        Vec3 local = center(localPosition);
+        if (!ensureInitialized()) return local;
 
         try {
-            Object subLevel = getContaining.invoke(sableHelper, level, localPosition);
-            if (subLevel == null) return center(localPosition);
+            // IMPORTANT: Sable's getContaining API accepts Vec3, not BlockPos.
+            Object subLevel = getContaining.invoke(sableHelper, level, local);
+            if (subLevel == null) return local;
 
             Object pose = logicalPose.invoke(subLevel);
-            if (pose == null) return center(localPosition);
+            if (pose == null) return local;
 
-            Object result = transformPosition.invoke(pose, center(localPosition));
-            return result instanceof Vec3 worldPosition ? worldPosition : center(localPosition);
+            Object result = transformPosition.invoke(pose, local);
+            return result instanceof Vec3 worldPosition ? worldPosition : local;
         } catch (ReflectiveOperationException | RuntimeException ignored) {
-            return center(localPosition);
+            return local;
         }
     }
 
@@ -60,7 +63,9 @@ public final class FlightControllerWorldPositionResolver {
                 sableHelper = helperField.get(null);
                 if (sableHelper == null) throw new IllegalStateException("Sable HELPER is null");
 
-                getContaining = sableHelper.getClass().getMethod("getContaining", Level.class, BlockPos.class);
+                // Matches SimMovementContext in Creators-of-Aeronautics/Simulated-Project:
+                // Sable.HELPER.getContaining(level, position) where position is Vec3.
+                getContaining = sableHelper.getClass().getMethod("getContaining", Level.class, Vec3.class);
                 Class<?> subLevelClass = getContaining.getReturnType();
                 logicalPose = subLevelClass.getMethod("logicalPose");
                 Class<?> poseClass = logicalPose.getReturnType();
