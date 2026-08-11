@@ -33,12 +33,14 @@ public final class FlightControlRuntimeManager {
         private long lastLinkRefresh = Long.MIN_VALUE;
         private long lastTelemetry = Long.MIN_VALUE;
         void tick(FlightControllerBlockEntity controller) {
-            stateProvider.update(controller, computer.getRegistry());
             Level level = controller.getLevel(); long time = level.getGameTime();
             if (time - lastLinkRefresh >= 5) {
                 computer.getRegistry().refresh(level, controller.getBlockPos(), controller.getVectorLinks(FlightMode.STABILIZE), controller.getVectorLinks(FlightMode.CRUISE), time);
                 lastLinkRefresh = time;
             }
+            // Refresh actuator geometry before state scaling so a large/small vehicle's actual
+            // thruster envelope can be used when its physics API does not expose inertia.
+            stateProvider.update(controller, computer.getRegistry());
             Target target = TARGETS.get(controller.getControllerId());
             if (target != null) computer.getNavigator().setTarget(target.position.x, target.position.y, target.position.z); else computer.getNavigator().clearTarget();
             if (controller.isEngaged() && !controller.isThermalLockout()) {
@@ -76,6 +78,7 @@ public final class FlightControlRuntimeManager {
             VehicleState state=snapshot==null?new VehicleState():snapshot; state.x=world.x;state.y=world.y;state.z=world.z;
             if(previousPosition!=null){state.vx=(world.x-previousPosition.x)*20.0D;state.vy=(world.y-previousPosition.y)*20.0D;state.vz=(world.z-previousPosition.z)*20.0D;}
             Object subLevel=containing(level,controller);
+            boolean physicalInertia=false;
             if(subLevel!=null)try{
                 Object pose=subLevel.getClass().getMethod("logicalPose").invoke(subLevel);
                 Object orientation=pose.getClass().getMethod("orientation").invoke(pose);
@@ -86,49 +89,33 @@ public final class FlightControlRuntimeManager {
                 double[] inertia = readInertia(tracker);
                 if(inertia == null) inertia = readInertia(subLevel);
                 if(inertia != null) {
-                    state.inertiaPitch = Math.max(1.0D, inertia[0]);
-                    state.inertiaRoll = Math.max(1.0D, inertia[1]);
-                    state.inertiaYaw = Math.max(1.0D, inertia[2]);
+                    state.inertiaPitch = Math.max(1.0D, inertia[0]); state.inertiaRoll = Math.max(1.0D, inertia[1]); state.inertiaYaw = Math.max(1.0D, inertia[2]); physicalInertia=true;
                 }
                 double radius = readDouble(subLevel,"getBoundingRadius","boundingRadius","getRadius");
                 if(radius > 0) state.boundingRadius=Math.max(1.0D,radius);
                 double halfHeight = readDouble(subLevel,"getBoundingHalfHeight","boundingHalfHeight","getHalfHeight");
                 if(halfHeight > 0) state.boundingHalfHeight=Math.max(1.0D,halfHeight);
             }catch(ReflectiveOperationException|RuntimeException ignored){}
-
-            // Universal fallback: when the vehicle API does not expose inertia, use its
-            // measured mass and physical control envelope rather than the old fixed 1 kg·m².
-            // This keeps small craft responsive and prevents large craft from over-commanding.
-            if(state.inertiaPitch <= 1.0D || state.inertiaRoll <= 1.0D || state.inertiaYaw <= 1.0D) {
-                double radius = Math.max(1.0D, state.boundingRadius);
-                double vertical = Math.max(1.0D, state.boundingHalfHeight);
-                double transverse = Math.max(1.0D, radius);
-                double boxPitch = state.mass * (transverse*transverse + vertical*vertical) / 3.0D;
-                double boxRoll = state.mass * (transverse*transverse + vertical*vertical) / 3.0D;
-                double boxYaw = state.mass * (transverse*transverse) / 2.0D;
-                if(state.inertiaPitch <= 1.0D) state.inertiaPitch=Math.max(1.0D,boxPitch);
-                if(state.inertiaRoll <= 1.0D) state.inertiaRoll=Math.max(1.0D,boxRoll);
-                if(state.inertiaYaw <= 1.0D) state.inertiaYaw=Math.max(1.0D,boxYaw);
-            }
+            if(!physicalInertia) estimateInertiaFromVehicleEnvelope(state, registry);
             if(previousPosition!=null){state.yawRate=angleDelta(state.yaw,previousYaw)*20;state.pitchRate=angleDelta(state.pitch,previousPitch)*20;state.rollRate=angleDelta(state.roll,previousRoll)*20;}
             state.timestampNanos=System.nanoTime();previousPosition=world;previousYaw=state.yaw;previousPitch=state.pitch;previousRoll=state.roll;snapshot=state.copy();
         }
 
-        private static double[] readInertia(Object target){
-            if(target==null)return null;
-            for(String name:new String[]{"getMomentOfInertia","getInertia","momentOfInertia","inertia"}){
-                Object value=invokeNoArg(target,name);
-                double[] parsed=parseVector(value);
-                if(parsed!=null)return parsed;
+        private static void estimateInertiaFromVehicleEnvelope(VehicleState state, ThrusterRegistry registry){
+            double halfX=1.0D,halfY=Math.max(1.0D,state.boundingHalfHeight),halfZ=Math.max(1.0D,state.boundingRadius);
+            for(ThrusterLink link:registry.getAllLinks()){
+                double[] r=link.source.getMountOffset(); halfX=Math.max(halfX,Math.abs(r[0])); halfY=Math.max(halfY,Math.abs(r[1])); halfZ=Math.max(halfZ,Math.abs(r[2]));
             }
-            return null;
+            // Uniform-box fallback: mass + physical actuator envelope determine inertia.
+            // This makes the same controller gains scale with both vehicle mass and size.
+            double ix=state.mass*(halfY*halfY+halfZ*halfZ)/3.0D;
+            double iy=state.mass*(halfX*halfX+halfZ*halfZ)/3.0D;
+            double iz=state.mass*(halfX*halfX+halfY*halfY)/3.0D;
+            state.inertiaPitch=Math.max(1.0D,ix); state.inertiaRoll=Math.max(1.0D,iz); state.inertiaYaw=Math.max(1.0D,iy);
+            state.boundingRadius=Math.max(state.boundingRadius,Math.max(halfX,halfZ)); state.boundingHalfHeight=Math.max(state.boundingHalfHeight,halfY);
         }
-        private static double[] parseVector(Object value){
-            if(value instanceof Vector3d v)return new double[]{v.x,v.y,v.z};
-            if(value instanceof Vec3 v)return new double[]{Math.abs(v.x),Math.abs(v.y),Math.abs(v.z)};
-            if(value instanceof double[] a&&a.length>=3)return new double[]{Math.abs(a[0]),Math.abs(a[1]),Math.abs(a[2])};
-            return null;
-        }
+        private static double[] readInertia(Object target){if(target==null)return null;for(String name:new String[]{"getMomentOfInertia","getInertia","momentOfInertia","inertia"}){double[] parsed=parseVector(invokeNoArg(target,name));if(parsed!=null)return parsed;}return null;}
+        private static double[] parseVector(Object value){if(value instanceof Vector3d v)return new double[]{Math.abs(v.x),Math.abs(v.y),Math.abs(v.z)};if(value instanceof Vec3 v)return new double[]{Math.abs(v.x),Math.abs(v.y),Math.abs(v.z)};if(value instanceof double[] a&&a.length>=3)return new double[]{Math.abs(a[0]),Math.abs(a[1]),Math.abs(a[2])};return null;}
         private static double readDouble(Object target,String...names){for(String name:names){Object v=invokeNoArg(target,name);if(v instanceof Number n&&n.doubleValue()>0)return n.doubleValue();}return -1;}
         private Vec3 project(Level level,Vec3 local){if(!ensure())return local;try{Object value=projectOut.invoke(helper,level,local);return value instanceof Vec3 vec?vec:local;}catch(ReflectiveOperationException|RuntimeException ignored){return local;}}
         private Object containing(Level level,FlightControllerBlockEntity controller){if(!ensure())return null;try{return getContaining.invoke(helper,controller);}catch(ReflectiveOperationException|RuntimeException ignored){return null;}}
