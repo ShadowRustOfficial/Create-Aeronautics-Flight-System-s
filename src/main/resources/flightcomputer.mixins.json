@@ -1,6 +1,10 @@
 {
   "required": true,
   "compatibilityLevel": "JAVA_21",
+  "package": "com.flightcomputer.mixin",
+  "mixins": [
+    "FlightControllerOperationsMixin"
+  ],
   "client": [],
   "injectors": {
     "defaultRequire": 1
