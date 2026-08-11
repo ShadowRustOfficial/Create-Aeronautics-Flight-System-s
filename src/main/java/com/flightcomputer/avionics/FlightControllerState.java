@@ -31,7 +31,7 @@ public record FlightControllerState(
                     altitudeHold, headingHold, positionHold, velocityHold, !navigationEnabled, routeActive);
             case START_ROUTE -> new FlightControllerState(true, true, FlightMode.AUTOPILOT,
                     altitudeHold, headingHold, positionHold, velocityHold, true, true);
-            case ABORT_ROUTE -> new FlightControllerState(engaged, stabiliser, FlightMode.STABILIZE,
+            case ABORT_ROUTE -> new FlightControllerState(engaged, stabiliser, FlightMode.STABILIZED,
                     altitudeHold, headingHold, positionHold, velocityHold, false, false);
             case EMERGENCY_SHUTDOWN -> new FlightControllerState(false, stabiliser, FlightMode.DISENGAGED,
                     false, false, false, false, false, false);
