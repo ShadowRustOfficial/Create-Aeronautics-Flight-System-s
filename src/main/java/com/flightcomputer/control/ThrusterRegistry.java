@@ -6,19 +6,9 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.*;
 
-/**
- * Per-controller runtime actuator snapshot.
- *
- * <p>A vector link is now a bank seed rather than a one-thruster limit. Once a user
- * links one real thruster for a vector, compatible thrusters in the same controller
- * area are discovered from their physical facing and added to that vector. Every
- * discovered source keeps its own mount offset, allowing the allocator to balance
- * force and torque instead of treating a whole front as one actuator.</p>
- */
+/** Runtime actuator registry. Stored vector links are controller-local positions. */
 public final class ThrusterRegistry {
-    /** Search radius for additional physical thrusters belonging to a linked bank. */
     private static final int DISCOVERY_RADIUS = 24;
-
     private final Map<FlightMode, Map<VectorDirection, List<ThrusterLink>>> links = new EnumMap<>(FlightMode.class);
     private long lastRefreshTick = Long.MIN_VALUE;
 
@@ -40,42 +30,39 @@ public final class ThrusterRegistry {
         refreshBank(level, controllerPos, FlightMode.CRUISE, autopilotLinks);
     }
 
-    private void refreshBank(Level level, BlockPos controllerPos, FlightMode mode, Map<VectorDirection, BlockPos> assignments) {
+    private void refreshBank(Level level, BlockPos controllerPos, FlightMode mode,
+                             Map<VectorDirection, BlockPos> assignments) {
         Map<VectorDirection, List<ThrusterLink>> bank = links.get(mode);
         for (List<ThrusterLink> value : bank.values()) value.clear();
-        if (assignments == null) return;
+        if (assignments == null || assignments.isEmpty()) return;
 
-        // Explicitly linked blocks are always accepted. This keeps the Link Tool
-        // authoritative and preserves support for propulsion implementations that
-        // do not expose a physical facing API.
-        for (Map.Entry<VectorDirection, BlockPos> entry : assignments.entrySet()) {
+        for (Map.Entry<VectorDirection, BlockPos> entry : assignments.entrySet())
             addExplicit(level, controllerPos, mode, entry.getKey(), entry.getValue(), bank);
-        }
 
-        // A single selected thruster now seeds a whole directional bank. Additional
-        // compatible blocks are accepted only when their own physical facing matches
-        // the selected vector, preventing unrelated nearby propulsion from being used.
         BlockPos min = controllerPos.offset(-DISCOVERY_RADIUS, -DISCOVERY_RADIUS, -DISCOVERY_RADIUS);
         BlockPos max = controllerPos.offset(DISCOVERY_RADIUS, DISCOVERY_RADIUS, DISCOVERY_RADIUS);
         for (BlockPos scanPos : BlockPos.betweenClosed(min, max)) {
             if (scanPos.equals(controllerPos)) continue;
             BlockEntity blockEntity = level.getBlockEntity(scanPos);
             if (blockEntity == null) continue;
-
             double[] offset = mountOffset(controllerPos, scanPos);
             for (VectorDirection direction : VectorDirection.values()) {
                 if (!assignments.containsKey(direction)) continue;
                 PropulsionSource source = ReflectivePropulsionSource.tryCreate(blockEntity, direction, offset);
                 if (!(source instanceof ReflectivePropulsionSource reflective)) continue;
+                // The direction is the thruster's local vehicle direction. ThrustAllocator applies
+                // the Sable vehicle rotation once, so we must not pre-rotate it here.
                 if (reflective.getPhysicalDirection() != direction) continue;
                 addIfUnique(bank.get(direction), new ThrusterLink(source, direction, mode));
             }
         }
     }
 
-    private void addExplicit(Level level, BlockPos controllerPos, FlightMode mode, VectorDirection direction,
-                             BlockPos target, Map<VectorDirection, List<ThrusterLink>> bank) {
-        if (target == null || direction == null) return;
+    private void addExplicit(Level level, BlockPos controllerPos, FlightMode mode,
+                             VectorDirection direction, BlockPos localTarget,
+                             Map<VectorDirection, List<ThrusterLink>> bank) {
+        if (localTarget == null || direction == null) return;
+        BlockPos target = controllerPos.offset(localTarget);
         BlockEntity blockEntity = level.getBlockEntity(target);
         if (blockEntity == null) return;
         PropulsionSource source = ReflectivePropulsionSource.tryCreate(blockEntity, direction, mountOffset(controllerPos, target));
@@ -91,30 +78,22 @@ public final class ThrusterRegistry {
     }
 
     private static void addIfUnique(List<ThrusterLink> list, ThrusterLink link) {
+        if (list == null || link == null || link.source == null) return;
         String id = link.source.getId();
         for (ThrusterLink existing : list) if (existing.source.getId().equals(id)) return;
         list.add(link);
     }
 
-    public void link(ThrusterLink link) {
-        List<ThrusterLink> list = links.get(link.mode).get(link.direction);
-        addIfUnique(list, link);
-    }
+    public void link(ThrusterLink link) { if (link != null) addIfUnique(links.get(link.mode).get(link.direction), link); }
+    public List<ThrusterLink> getLinks(FlightMode mode, VectorDirection direction) { return Collections.unmodifiableList(links.get(mode).get(direction)); }
 
-    public List<ThrusterLink> getLinks(FlightMode mode, VectorDirection direction) {
-        return Collections.unmodifiableList(links.get(mode).get(direction));
-    }
-
-    /** Returns all sources belonging only to the requested flight-control bank. */
     public List<ThrusterLink> getAllLinks(FlightMode mode) {
         LinkedHashMap<String, ThrusterLink> unique = new LinkedHashMap<>();
-        for (VectorDirection direction : VectorDirection.values()) {
+        for (VectorDirection direction : VectorDirection.values())
             for (ThrusterLink link : links.get(mode).get(direction)) unique.putIfAbsent(link.source.getId(), link);
-        }
         return List.copyOf(unique.values());
     }
 
-    /** Compatibility view for older controller code; physical allocation is vector-based. */
     public List<ThrusterLink> getLinks(FlightMode mode, ControlAxis axis) {
         List<ThrusterLink> result = new ArrayList<>();
         for (VectorDirection direction : VectorDirection.values()) {
@@ -128,35 +107,19 @@ public final class ThrusterRegistry {
 
     public List<ThrusterLink> getAllLinks() {
         LinkedHashMap<String, ThrusterLink> unique = new LinkedHashMap<>();
-        for (FlightMode mode : FlightMode.values()) {
-            for (VectorDirection direction : VectorDirection.values()) {
+        for (FlightMode mode : FlightMode.values())
+            for (VectorDirection direction : VectorDirection.values())
                 for (ThrusterLink link : links.get(mode).get(direction)) unique.putIfAbsent(link.source.getId(), link);
-            }
-        }
         return List.copyOf(unique.values());
     }
 
     public double getVectorAuthority(FlightMode mode, VectorDirection direction) {
-        double total = 0.0D;
-        for (ThrusterLink link : links.get(mode).get(direction)) total += Math.max(0.0D, link.source.getAvailableThrust());
+        double total = 0;
+        for (ThrusterLink link : links.get(mode).get(direction)) total += Math.max(0, link.source.getAvailableThrust());
         return total;
     }
-
-    public int getVectorThrusterCount(FlightMode mode, VectorDirection direction) {
-        return links.get(mode).get(direction).size();
-    }
-
-    public double getAxisAuthority(FlightMode mode, ControlAxis axis) {
-        double total = 0.0D;
-        for (ThrusterLink link : getLinks(mode, axis)) total += Math.max(0.0D, link.source.getAvailableThrust());
-        return total;
-    }
-
-    public boolean hasAnyVector(FlightMode mode, VectorDirection direction) { return getVectorAuthority(mode, direction) > 0.0D; }
-
-    public List<ControlAxis> getUnlinkedAxes(FlightMode mode) {
-        List<ControlAxis> missing = new ArrayList<>();
-        for (ControlAxis axis : ControlAxis.values()) if (getAxisAuthority(mode, axis) <= 0.0D) missing.add(axis);
-        return missing;
-    }
+    public int getVectorThrusterCount(FlightMode mode, VectorDirection direction) { return links.get(mode).get(direction).size(); }
+    public double getAxisAuthority(FlightMode mode, ControlAxis axis) { double total=0;for(ThrusterLink link:getLinks(mode,axis))total+=Math.max(0,link.source.getAvailableThrust());return total; }
+    public boolean hasAnyVector(FlightMode mode, VectorDirection direction) { return getVectorAuthority(mode,direction)>0; }
+    public List<ControlAxis> getUnlinkedAxes(FlightMode mode) { List<ControlAxis> missing=new ArrayList<>();for(ControlAxis axis:ControlAxis.values())if(getAxisAuthority(mode,axis)<=0)missing.add(axis);return missing; }
 }
