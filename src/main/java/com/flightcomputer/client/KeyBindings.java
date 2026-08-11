@@ -33,11 +33,20 @@ public final class KeyBindings {
             "key.categories.flightcomputer"
     );
 
+    /** Push while LINK_FOCUS is held to cycle NORTH/EAST/SOUTH/WEST/UP/DOWN. */
+    public static final KeyMapping LINK_VECTOR_NEXT = new KeyMapping(
+            "key.flightcomputer.link_vector_next",
+            InputConstants.Type.KEYSYM,
+            InputConstants.KEY_B,
+            "key.categories.flightcomputer"
+    );
+
     @SubscribeEvent
     public static void register(RegisterKeyMappingsEvent event) {
         event.register(OPEN_MAP);
         event.register(LINK_FOCUS);
         event.register(LINK_MODE_TOGGLE);
+        event.register(LINK_VECTOR_NEXT);
     }
 
     private KeyBindings() {}
