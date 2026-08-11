@@ -3,6 +3,7 @@ package com.flightcomputer.control;
 import org.joml.Quaterniond;
 import org.joml.Vector3d;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,19 +15,31 @@ public final class ThrustAllocator {
     public double getLastThermalLoad() { return lastThermalLoad; }
 
     /**
-     * Allocate the combined wrench in world space. Thruster links are stored in vehicle-local
-     * block coordinates, so both their force direction and moment arm must be rotated with the
-     * Sable vehicle before the allocator can balance a pitched/rolled/yawed craft correctly.
+     * Allocate the combined wrench in world space. Only banks belonging to an active control
+     * layer are considered: stabilisation uses STABILIZE links, autopilot uses CRUISE links.
+     * This prevents an autopilot-only thruster from unexpectedly fighting manual/stabiliser
+     * control and makes the Link Tool's mode selection authoritative.
      */
     public void applyCombined(ThrusterRegistry registry, VehicleState state,
                               Map<ControlAxis, Double> stabiliser, Map<ControlAxis, Double> autopilot) {
         if (state == null) { lastThermalLoad = 0.0D; return; }
         ControlWrench target = ControlWrench.fromAxes(stabiliser).add(ControlWrench.fromAxes(autopilot));
-        List<ThrusterLink> links = registry.getAllLinks();
-        if (links.isEmpty()) { lastThermalLoad = 0.0D; return; }
+        if (target.isZero()) {
+            zeroActiveSources(registry, stabiliser, autopilot);
+            lastThermalLoad = 0.0D;
+            return;
+        }
+
         Map<String, ThrusterLink> unique = new LinkedHashMap<>();
-        for (ThrusterLink link : links) unique.putIfAbsent(link.source.getId(), link);
+        if (stabiliser != null && !stabiliser.isEmpty()) {
+            for (ThrusterLink link : registry.getAllLinks(FlightMode.STABILIZE)) unique.putIfAbsent(link.source.getId(), link);
+        }
+        if (autopilot != null && !autopilot.isEmpty()) {
+            for (ThrusterLink link : registry.getAllLinks(FlightMode.CRUISE)) unique.putIfAbsent(link.source.getId(), link);
+        }
         List<ThrusterLink> sources = List.copyOf(unique.values());
+        if (sources.isEmpty()) { lastThermalLoad = 0.0D; return; }
+
         double[] commands = new double[sources.size()];
         Quaterniond vehicleRotation = vehicleRotation(state);
 
@@ -62,6 +75,13 @@ public final class ThrustAllocator {
         applyCombined(registry, new VehicleState(), mode == FlightMode.STABILIZE ? commands : Map.of(), mode == FlightMode.CRUISE ? commands : Map.of());
     }
 
+    private void zeroActiveSources(ThrusterRegistry registry, Map<ControlAxis, Double> stabiliser, Map<ControlAxis, Double> autopilot) {
+        Map<String, ThrusterLink> unique = new LinkedHashMap<>();
+        if (stabiliser != null && !stabiliser.isEmpty()) for (ThrusterLink link : registry.getAllLinks(FlightMode.STABILIZE)) unique.putIfAbsent(link.source.getId(), link);
+        if (autopilot != null && !autopilot.isEmpty()) for (ThrusterLink link : registry.getAllLinks(FlightMode.CRUISE)) unique.putIfAbsent(link.source.getId(), link);
+        for (ThrusterLink link : unique.values()) link.source.applyThrust(0.0D);
+    }
+
     private double[] achieved(List<ThrusterLink> links, double[] commands, Quaterniond rotation) {
         double[] result = new double[6];
         for (int i = 0; i < links.size(); i++) {
@@ -87,8 +107,6 @@ public final class ThrustAllocator {
     }
 
     private static Quaterniond vehicleRotation(VehicleState state) {
-        // Sable orientation is exposed to the controller as yaw/pitch/roll. Build the same
-        // body-to-world rotation for force and moment-arm allocation.
         return new Quaterniond().rotationY(state.yaw).rotateX(state.pitch).rotateZ(state.roll);
     }
 
