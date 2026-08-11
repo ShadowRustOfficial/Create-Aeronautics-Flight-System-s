@@ -5,7 +5,9 @@
   "mixins": [
     "FlightControllerOperationsMixin"
   ],
-  "client": [],
+  "client": [
+    "client.NavigationOperationsButtonMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }
