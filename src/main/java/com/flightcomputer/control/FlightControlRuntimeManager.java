@@ -3,11 +3,11 @@ package com.flightcomputer.control;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaterniondc;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.UUID;
@@ -50,9 +50,11 @@ public final class FlightControlRuntimeManager {
             VehicleState state = stateProvider.getState(); if (state == null) return;
             double distance = target == null ? -1.0D : Math.sqrt(Math.pow(target.position.x - state.x, 2) + Math.pow(target.position.y - state.y, 2) + Math.pow(target.position.z - state.z, 2));
             double[] s = authorities(computer.getRegistry(), FlightMode.STABILIZE), a = authorities(computer.getRegistry(), FlightMode.CRUISE);
-            for (ServerPlayer player : controller.getLevel().players()) {
-                if (player.distanceToSqr(controller.getBlockPos().getX()+0.5D, controller.getBlockPos().getY()+0.5D, controller.getBlockPos().getZ()+0.5D) > 4096.0D) continue;
-                FlightComputerNetwork.sendTelemetry(player, new FlightComputerNetwork.TelemetryPayload(controller.getControllerId(), state.x,state.y,state.z,
+            // Level#players() is typed as Player; narrow explicitly rather than assuming every player is server-side.
+            for (Player player : controller.getLevel().players()) {
+                if (!(player instanceof ServerPlayer serverPlayer)) continue;
+                if (serverPlayer.distanceToSqr(controller.getBlockPos().getX()+0.5D, controller.getBlockPos().getY()+0.5D, controller.getBlockPos().getZ()+0.5D) > 4096.0D) continue;
+                FlightComputerNetwork.sendTelemetry(serverPlayer, new FlightComputerNetwork.TelemetryPayload(controller.getControllerId(), state.x,state.y,state.z,
                         Math.sqrt(state.vx*state.vx+state.vy*state.vy+state.vz*state.vz), Math.toDegrees(state.yaw),Math.toDegrees(state.pitch),Math.toDegrees(state.roll),
                         target != null,target == null?0:target.position.x,target == null?0:target.position.y,target == null?0:target.position.z,target == null?"":target.name,distance,
                         controller.getTemperature(),controller.getMaxTemperature(),controller.getThermalState().ordinal(),controller.getThermalCooldownTicksRemaining(),controller.getEnergyStorage().getEnergyStored(),controller.getEnergyStorage().getMaxEnergyStored(),controller.getCoolingTier().ordinal(),
