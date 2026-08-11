@@ -2,6 +2,7 @@ package com.flightcomputer.client.map;
 
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.Level;
@@ -10,7 +11,6 @@ import net.minecraft.world.phys.Vec3;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,13 +26,11 @@ import java.util.Map;
  */
 public final class WaystoneMapProvider {
     private static final String WAYSTONES_MANAGER = "net.blay09.mods.waystones.api.WaystoneManager";
-    private static final String WAYSTONES_MOD_ID = "waystones";
 
     private final Map<String, FlightMapMarker> markers = new LinkedHashMap<>();
     private boolean initialized;
     private boolean available;
     private Method listMethod;
-    private Object listOwner;
     private long nextRefreshTick;
 
     public void tick(ClientLevel level) {
@@ -58,7 +56,8 @@ public final class WaystoneMapProvider {
         if (!ensureInitialized()) return;
         try {
             Object result = invokeList(level);
-            if (!(result instanceof Iterable<?> iterable)) return;
+            Iterable<?> iterable = asIterable(result);
+            if (iterable == null) return;
 
             Map<String, FlightMapMarker> next = new LinkedHashMap<>();
             for (Object waystone : iterable) {
@@ -73,23 +72,37 @@ public final class WaystoneMapProvider {
         }
     }
 
+    private Iterable<?> asIterable(Object result) {
+        if (result instanceof Iterable<?> iterable) return iterable;
+        if (result instanceof Map<?, ?> map) return map.values();
+        if (result != null && result.getClass().isArray()) {
+            List<Object> values = new ArrayList<>();
+            int length = java.lang.reflect.Array.getLength(result);
+            for (int i = 0; i < length; i++) values.add(java.lang.reflect.Array.get(result, i));
+            return values;
+        }
+        return null;
+    }
+
     private Object invokeList(ClientLevel level) throws ReflectiveOperationException {
         Class<?>[] params = listMethod.getParameterTypes();
-        if (params.length == 0) return listMethod.invoke(listOwner);
-        if (params.length == 1 && params[0].isInstance(level)) return listMethod.invoke(listOwner, level);
-        if (params.length == 1 && params[0].isAssignableFrom(Level.class)) return listMethod.invoke(listOwner, level);
+        if (params.length == 0) return listMethod.invoke(null);
+        if (params.length == 1 && params[0].isInstance(level)) return listMethod.invoke(null, level);
+        if (params.length == 1 && params[0].isAssignableFrom(level.getClass())) return listMethod.invoke(null, level);
+        if (params.length == 1 && params[0].isAssignableFrom(Level.class)) return listMethod.invoke(null, level);
         return null;
     }
 
     private FlightMapMarker decode(ClientLevel level, Object waystone) {
         if (waystone == null) return null;
 
-        Object dimension = invokeOptional(waystone, "getDimension", "getDimensionId", "getLevel", "getLevelKey");
-        if (!sameDimension(level, dimension)) return null;
-
         Object position = invokeOptional(waystone, "getPos", "getPosition", "getBlockPos", "getLocation", "getGlobalPos");
-        Vec3 world = asVec3(position);
+        Vec3 world = asVec3(level, position);
         if (world == null) return null;
+
+        Object dimension = invokeOptional(waystone, "getDimension", "getDimensionId", "getLevel", "getLevelKey");
+        if (dimension != null && !sameDimension(level, dimension)) return null;
+        if (position instanceof GlobalPos global && !level.dimension().equals(global.dimension())) return null;
 
         Object name = invokeOptional(waystone, "getName", "getWaystoneName", "name");
         String label = name == null ? "Waystone" : String.valueOf(name);
@@ -99,7 +112,6 @@ public final class WaystoneMapProvider {
     }
 
     private boolean sameDimension(ClientLevel level, Object dimension) {
-        if (dimension == null) return true;
         ResourceKey<Level> current = level.dimension();
         ResourceLocation currentId = current.location();
         if (dimension instanceof ResourceKey<?> key) return current.equals(key);
@@ -108,19 +120,17 @@ public final class WaystoneMapProvider {
         return value.equals(currentId.toString()) || value.equals(current.toString());
     }
 
-    private Vec3 asVec3(Object value) {
+    private Vec3 asVec3(ClientLevel level, Object value) {
         if (value instanceof Vec3 vec) return vec;
         if (value instanceof BlockPos pos) return Vec3.atCenterOf(pos);
-        if (value instanceof net.minecraft.core.GlobalPos global) {
-            return global.dimension().equals(currentDimensionKey) ? Vec3.atCenterOf(global.pos()) : null;
+        if (value instanceof GlobalPos global) {
+            return level.dimension().equals(global.dimension()) ? Vec3.atCenterOf(global.pos()) : null;
         }
         if (value == null) return null;
         Object pos = invokeOptional(value, "pos", "getPos", "position", "getPosition");
-        if (pos != value) return asVec3(pos);
+        if (pos != value) return asVec3(level, pos);
         return null;
     }
-
-    private ResourceKey<Level> currentDimensionKey;
 
     private Object invokeOptional(Object target, String... names) {
         for (String name : names) {
@@ -145,7 +155,6 @@ public final class WaystoneMapProvider {
                 if (!(name.equals("getAllWaystones") || name.equals("getWaystones") || name.equals("getAll"))) continue;
                 if (method.getParameterCount() > 1) continue;
                 listMethod = method;
-                listOwner = null;
                 available = true;
                 return true;
             }
