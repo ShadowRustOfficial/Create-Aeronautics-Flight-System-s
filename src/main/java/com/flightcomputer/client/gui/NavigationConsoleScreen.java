@@ -14,6 +14,7 @@ import com.flightcomputer.client.map.WaystoneMapProvider;
 import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -51,6 +52,7 @@ public final class NavigationConsoleScreen extends Screen {
     private double controllerWorldY;
     private double controllerWorldZ;
     private boolean draggingMap;
+    private EditBox targetInput;
 
     public NavigationConsoleScreen(BlockPos controllerPos) {
         super(Component.literal("Navigation Console"));
@@ -116,9 +118,25 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void initRouteControls(int left, int top) {
-        addRenderableWidget(Button.builder(Component.literal("WAYPOINT PREVIOUS"), b -> {}).bounds(left + 20, top + 180, 180, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("NEXT ▶"), b -> {}).bounds(left + 210, top + 180, 180, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("SET DESTINATION"), b -> {}).bounds(left + 400, top + 180, 180, 20).build());
+        targetInput = new EditBox(font, left + 20, top + 150, 360, 20, Component.literal("Target X Y Z"));
+        targetInput.setHint(Component.literal("X Y Z  (example: 120 80 -240)"));
+        addRenderableWidget(targetInput);
+        addRenderableWidget(Button.builder(Component.literal("SET DESTINATION"), b -> sendTargetFromInput()).bounds(left + 390, top + 150, 190, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("CLEAR DESTINATION"), b -> { FlightComputerNetwork.clearTarget(controllerPos); }).bounds(left + 20, top + 180, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("START ROUTE"), b -> send(FlightControllerAction.START_ROUTE)).bounds(left + 210, top + 180, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("ABORT ROUTE"), b -> send(FlightControllerAction.ABORT_ROUTE)).bounds(left + 400, top + 180, 180, 20).build());
+    }
+
+    private void sendTargetFromInput() {
+        if (targetInput == null) return;
+        String[] parts = targetInput.getValue().trim().split("\\s+");
+        if (parts.length != 3) return;
+        try {
+            double x = Double.parseDouble(parts[0]);
+            double y = Double.parseDouble(parts[1]);
+            double z = Double.parseDouble(parts[2]);
+            FlightComputerNetwork.sendTarget(controllerPos, x, y, z, "CUSTOM DESTINATION");
+        } catch (NumberFormatException ignored) { }
     }
 
     private void initFlightControls(int left, int top) {
@@ -329,18 +347,30 @@ public final class NavigationConsoleScreen extends Screen {
 
     private void renderRoute(GuiGraphics g, int left, int top) {
         g.drawString(font, "ROUTE / FLIGHT PLAN", left + 20, top + 10, TEXT);
-        g.drawString(font, "WAYPOINT INTEROPERABILITY", left + 20, top + 45, CYAN_BRIGHT);
-        g.drawString(font, "Waystone locations are now available to the native map marker layer.", left + 20, top + 82, MUTED);
-        g.drawString(font, "Route selection remains separate from marker discovery.", left + 20, top + 108, MUTED);
+        var snapshot = controller == null ? null : com.flightcomputer.client.FlightComputerTelemetryClient.get(controller.getControllerId());
+        if (snapshot == null || !snapshot.targetPresent()) {
+            g.drawString(font, "DESTINATION: NONE", left + 20, top + 48, MUTED);
+            g.drawString(font, "Enter world coordinates above to create a smooth MPC destination.", left + 20, top + 76, MUTED);
+            return;
+        }
+        g.drawString(font, "DESTINATION: " + snapshot.targetName(), left + 20, top + 48, CYAN_BRIGHT);
+        g.drawString(font, String.format("POS  X %.1f  Y %.1f  Z %.1f", snapshot.targetX(), snapshot.targetY(), snapshot.targetZ()), left + 20, top + 72, TEXT);
+        g.drawString(font, String.format("DISTANCE %.1f m   BEARING %.1f°   SPEED %.1f m/s", snapshot.distance(), snapshot.heading(), snapshot.speed()), left + 20, top + 96, TEXT);
+        double eta = snapshot.speed() > 0.1 ? snapshot.distance() / snapshot.speed() : -1;
+        g.drawString(font, eta < 0 ? "ETA: CALCULATING" : String.format("ETA %.1f s   ROUTE: SMOOTH ACCEL / DECEL", eta), left + 20, top + 120, eta < 0 ? MUTED : GREEN);
     }
 
     private void renderFlightControl(GuiGraphics g, int left, int top) {
         FlightControllerState state = controller == null ? FlightControllerState.DEFAULT : controller.getControllerState();
+        var snapshot = controller == null ? null : com.flightcomputer.client.FlightComputerTelemetryClient.get(controller.getControllerId());
         g.drawString(font, "FLIGHT CONTROL", left + 20, top + 10, TEXT);
         g.drawString(font, "SYSTEM: " + (state.engaged() ? "ENGAGED" : "DISENGAGED"), left + 20, top + 42, state.engaged() ? GREEN : MUTED);
-        g.drawString(font, "STABILISER: " + (state.stabiliser() ? "ON" : "OFF"), left + 20, top + 65, state.stabiliser() ? GREEN : MUTED);
-        g.drawString(font, "FLIGHT MODE: " + state.flightMode(), left + 20, top + 88, TEXT);
-        g.drawString(font, "NAVIGATION TARGET: NONE", left + 20, top + 120, CYAN_BRIGHT);
+        g.drawString(font, "STABILISER + AUTOPILOT: " + (state.engaged() ? "CONCURRENT" : "STANDBY"), left + 20, top + 65, CYAN_BRIGHT);
+        if (snapshot != null) {
+            g.drawString(font, String.format("ALT %.1f   SPEED %.1f   HEADING %.1f°", snapshot.y(), snapshot.speed(), snapshot.heading()), left + 20, top + 88, TEXT);
+            g.drawString(font, "THERMAL: " + (snapshot.thermalState() >= 4 ? "COOLING DOWN" : snapshot.thermalState() == 3 ? "CRITICAL" : snapshot.thermalState() == 2 ? "HOT" : snapshot.thermalState() == 1 ? "WARM" : "NORMAL"), left + 20, top + 112, snapshot.thermalState() >= 2 ? RED : GREEN);
+            g.drawString(font, "TARGET: " + (snapshot.targetPresent() ? snapshot.targetName() : "NONE"), left + 20, top + 136, snapshot.targetPresent() ? CYAN_BRIGHT : MUTED);
+        }
     }
 
     private void renderDiagnostics(GuiGraphics g, int left, int top) {
