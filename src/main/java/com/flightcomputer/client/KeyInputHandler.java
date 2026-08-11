@@ -50,6 +50,8 @@ public final class KeyInputHandler {
             linkMode = linkMode == FlightMode.STABILIZE ? FlightMode.CRUISE : FlightMode.STABILIZE;
             FlightComputerNetwork.sendToolConfig(linkMode, linkDirection);
         }
+        // Keyboard cycling remains available as a fallback. The mouse wheel below uses
+        // the exact same state path, so both controls stay synchronized.
         if (KeyBindings.LINK_VECTOR_NEXT.consumeClick()) {
             linkDirection = linkDirection.next(1);
             FlightComputerNetwork.sendToolConfig(linkMode, linkDirection);
@@ -57,10 +59,9 @@ public final class KeyInputHandler {
     }
 
     /**
-     * While the UZ focus key is held, mouse-wheel input belongs to the Link Tool UI,
-     * not Minecraft's normal hotbar selection. Cancelling the event here prevents
-     * scrolling off the Flight Link Tool into another hotbar slot. As soon as focus
-     * is released, this handler does nothing and vanilla hotbar scrolling is restored.
+     * While UZ focus is held, the wheel is consumed by the vector selector instead of
+     * the vanilla hotbar. Positive/negative wheel movement advances/reverses the six
+     * physical faces. Releasing focus immediately restores normal hotbar scrolling.
      */
     @SubscribeEvent
     public static void onLinkToolMouseScroll(InputEvent.MouseScrollingEvent event) {
@@ -69,6 +70,12 @@ public final class KeyInputHandler {
         if (!KeyBindings.LINK_FOCUS.isDown()) return;
         if (!mc.player.getMainHandItem().is(ModItems.FLIGHT_LINK_TOOL.get())) return;
 
+        double scroll = event.getScrollDeltaY();
+        if (scroll != 0.0D) {
+            int steps = scroll > 0.0D ? 1 : -1;
+            linkDirection = linkDirection.next(steps);
+            FlightComputerNetwork.sendToolConfig(linkMode, linkDirection);
+        }
         event.setCanceled(true);
     }
 
@@ -106,7 +113,6 @@ public final class KeyInputHandler {
             g.drawString(mc.font, "Right-click a Flight Controller first", left + 10, top + 94, 0xFFFFCC55);
         }
 
-        // Small six-vector schematic strip: the active vector is the highlighted selection target.
         int sx = left + 180;
         int sy = top + 38;
         VectorDirection[] dirs = VectorDirection.values();
