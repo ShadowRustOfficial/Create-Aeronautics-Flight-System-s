@@ -1,0 +1,28 @@
+name: Phase 5 validation merge
+
+on:
+  push:
+    branches: [phase-5-validation]
+
+permissions:
+  contents: write
+
+jobs:
+  merge-main:
+    if: github.event.head_commit.message != 'Temporary validation merge of main control work'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Merge main, preferring current Phase 5 files only on conflicts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit -X theirs origin/main || {
+            echo 'Automatic merge failed; aborting validation merge.'
+            git merge --abort
+            exit 1
+          }
+          git push origin HEAD:phase-5-validation
