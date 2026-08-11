@@ -224,10 +224,17 @@ public final class FlightControlRuntimeManager {
             return -1;
         }
         private Object helper; private Method getContaining, projectOut; private boolean initialized, available;
-        private Vec3 project(Level level,Vec3 local){
+        private Vec3 project(Level level, Vec3 local){
             if(!ensure())return local;
-            try{Object value=projectOut.invoke(helper,level,local);return value instanceof Vec3 vec?vec:local;}
-            catch(ReflectiveOperationException|RuntimeException ignored){return local;}
+            try{
+                Object subLevel = containing(level, local);
+                if(subLevel == null)return local;
+                Object pose = invokeNoArg(subLevel, "logicalPose");
+                if(pose == null)return local;
+                Method transform = pose.getClass().getMethod("transformPosition", Vec3.class);
+                Object value = transform.invoke(pose, local);
+                return value instanceof Vec3 vec ? vec : local;
+            }catch(ReflectiveOperationException|RuntimeException ignored){return local;}
         }
         private Object containing(Level level,Vec3 local){
             if(!ensure())return null;
