@@ -20,29 +20,59 @@ public final class ThrusterRegistry {
     }
 
     public void unlinkSource(String sourceId) {
-        for (Map<ControlAxis, List<ThrusterLink>> axisMap : links.values())
-            for (List<ThrusterLink> list : axisMap.values())
+        for (Map<ControlAxis, List<ThrusterLink>> axisMap : links.values()) {
+            for (List<ThrusterLink> list : axisMap.values()) {
                 list.removeIf(l -> l.source.getId().equals(sourceId));
+            }
+        }
     }
 
     public List<ThrusterLink> getLinks(FlightMode mode, ControlAxis axis) {
         return Collections.unmodifiableList(links.get(mode).get(axis));
     }
 
+    public List<ThrusterLink> getLinks(FlightMode mode, VectorDirection direction) {
+        List<ThrusterLink> result = new ArrayList<>();
+        for (ControlAxis axis : ControlAxis.values()) {
+            for (ThrusterLink link : links.get(mode).get(axis)) {
+                if (link.direction == direction) result.add(link);
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+
     public double getAxisAuthority(FlightMode mode, ControlAxis axis) {
         double total = 0;
-        for (ThrusterLink link : getLinks(mode, axis)) total += Math.max(0, link.source.getMaxThrust());
+        for (ThrusterLink link : getLinks(mode, axis)) {
+            total += Math.max(0, link.source.getMaxThrust());
+        }
         return total;
     }
 
+    public double getVectorAuthority(FlightMode mode, VectorDirection direction) {
+        double total = 0;
+        for (ThrusterLink link : getLinks(mode, direction)) {
+            total += Math.max(0, link.source.getMaxThrust());
+        }
+        return total;
+    }
+
+    public boolean hasAnyVector(FlightMode mode, VectorDirection direction) {
+        return getVectorAuthority(mode, direction) > 0;
+    }
+
     public boolean isFullyLinked(FlightMode mode) {
-        for (ControlAxis axis : ControlAxis.values()) if (getAxisAuthority(mode, axis) <= 0) return false;
+        for (ControlAxis axis : ControlAxis.values()) {
+            if (getAxisAuthority(mode, axis) <= 0) return false;
+        }
         return true;
     }
 
     public List<ControlAxis> getUnlinkedAxes(FlightMode mode) {
         List<ControlAxis> missing = new ArrayList<>();
-        for (ControlAxis axis : ControlAxis.values()) if (getAxisAuthority(mode, axis) <= 0) missing.add(axis);
+        for (ControlAxis axis : ControlAxis.values()) {
+            if (getAxisAuthority(mode, axis) <= 0) missing.add(axis);
+        }
         return missing;
     }
 }

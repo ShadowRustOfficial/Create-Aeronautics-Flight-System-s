@@ -10,7 +10,6 @@ import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 
 @EventBusSubscriber(modid = FlightComputer.MOD_ID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.MOD)
 public final class KeyBindings {
-
     public static final KeyMapping OPEN_MAP = new KeyMapping(
             "key.flightcomputer.open_map",
             InputConstants.Type.KEYSYM,
@@ -18,9 +17,27 @@ public final class KeyBindings {
             "key.categories.flightcomputer"
     );
 
+    /** Hold this key to display the Link Tool focus overlay. */
+    public static final KeyMapping LINK_FOCUS = new KeyMapping(
+            "key.flightcomputer.link_focus",
+            InputConstants.Type.KEYSYM,
+            InputConstants.KEY_LALT,
+            "key.categories.flightcomputer"
+    );
+
+    /** Push while LINK_FOCUS is held to switch STABILISER <-> AUTOPILOT. */
+    public static final KeyMapping LINK_MODE_TOGGLE = new KeyMapping(
+            "key.flightcomputer.link_mode_toggle",
+            InputConstants.Type.KEYSYM,
+            InputConstants.KEY_V,
+            "key.categories.flightcomputer"
+    );
+
     @SubscribeEvent
     public static void register(RegisterKeyMappingsEvent event) {
         event.register(OPEN_MAP);
+        event.register(LINK_FOCUS);
+        event.register(LINK_MODE_TOGGLE);
     }
 
     private KeyBindings() {}

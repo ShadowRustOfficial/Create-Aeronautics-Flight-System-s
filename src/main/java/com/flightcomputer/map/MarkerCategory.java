@@ -2,6 +2,7 @@ package com.flightcomputer.map;
 
 public enum MarkerCategory {
     FLIGHT_WAYPOINT("Flight Waypoints", 0x55AAFF),
+    WAYSTONE("Waystones", 0xAA66FF),
     CLAIMED_SUBLEVEL("Claimed Sub-Levels", 0xFFAA00),
     LANDING_PAD("Landing Pads", 0x55FF55);
 
@@ -13,11 +14,6 @@ public enum MarkerCategory {
         this.color = color;
     }
 
-    public String getLabel() {
-        return label;
-    }
-
-    public int getColor() {
-        return color;
-    }
+    public String getLabel() { return label; }
+    public int getColor() { return color; }
 }
