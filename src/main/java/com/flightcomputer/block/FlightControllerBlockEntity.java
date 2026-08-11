@@ -115,6 +115,15 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     public CoolingUpgradeItem.Tier getCoolingTier() { return getCoolingTierInternal(); }
     public double[] getThermalHistory() { return Arrays.copyOf(thermalHistory, thermalHistory.length); }
 
+    /** Adds propulsion/control heat after the normal per-tick thermal accounting. */
+    public void addControlThermalLoad(double normalizedLoad) {
+        if (level == null || level.isClientSide || isThermalLockout()) return;
+        double load = Math.max(0.0D, Math.min(1.0D, normalizedLoad));
+        temperature += FlightComputerConfig.BASE_HEAT_PER_TICK.get() * (1.0D + load * 8.0D);
+        temperature = Math.min(FlightComputerConfig.HEAT_CAPACITY.get() * 1.05D, temperature);
+        setChanged();
+    }
+
     public void bindVector(FlightMode mode, VectorDirection direction, BlockPos target) {
         if (mode == null || direction == null || target == null) return;
         vectorLinks.get(mode).put(direction, target.immutable());
@@ -137,6 +146,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     }
 
     public boolean isOperationPermitted(FlightControllerAction action) {
+        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) return true;
         return !isThermalLockout() && powerState != PowerState.NO_POWER && energyStorage.getEnergyStored() > 0;
     }
 
@@ -147,6 +157,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         }
         if (action == FlightControllerAction.TOGGLE_TERRAIN) terrainEnabled = !terrainEnabled;
         else controllerState = controllerState.apply(action);
+        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) energyStorage.extractEnergy(energyStorage.getEnergyStored(), false);
         lastAction = action;
         switch (action) {
             case CYCLE_MODE -> modePulseId++;
@@ -183,10 +194,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         if (operating && energyStorage.getEnergyStored() > 0)
             temperature += FlightComputerConfig.BASE_HEAT_PER_TICK.get();
         temperature = Math.max(0.0D, temperature - coolingRate(cooling));
-        if (advancedCooling) {
-            temperature = Math.min(temperature,
-                    FlightComputerConfig.HEAT_CAPACITY.get() * FlightComputerConfig.ADVANCED_COOLING_MAX_TEMPERATURE.get());
-        }
 
         if (++thermalHistoryTicker >= 20) {
             thermalHistoryTicker = 0;
