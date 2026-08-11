@@ -67,7 +67,7 @@ public final class FlightComputer {
             cruiseStabilizer.resetAll();
             ticksSinceReplan = 0;
         }
-        allocator.applyCombined(registry, stabiliseCommands, autopilotCommands);
+        allocator.applyCombined(registry, state, stabiliseCommands, autopilotCommands);
     }
 
     private double estimateCruiseDeceleration(VehicleState state) {
