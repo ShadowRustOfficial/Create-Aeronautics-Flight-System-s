@@ -29,9 +29,9 @@ public record FlightControllerState(
                     altitudeHold, headingHold, positionHold, !velocityHold, navigationEnabled, routeActive);
             case TOGGLE_NAVIGATION -> new FlightControllerState(engaged, stabiliser, flightMode,
                     altitudeHold, headingHold, positionHold, velocityHold, !navigationEnabled, routeActive);
-            case START_ROUTE -> new FlightControllerState(engaged, stabiliser, FlightMode.AUTOPILOT,
+            case START_ROUTE -> new FlightControllerState(true, true, FlightMode.AUTOPILOT,
                     altitudeHold, headingHold, positionHold, velocityHold, true, true);
-            case ABORT_ROUTE -> new FlightControllerState(engaged, stabiliser, flightMode,
+            case ABORT_ROUTE -> new FlightControllerState(engaged, stabiliser, FlightMode.STABILIZE,
                     altitudeHold, headingHold, positionHold, velocityHold, false, false);
             case EMERGENCY_SHUTDOWN -> new FlightControllerState(false, stabiliser, FlightMode.DISENGAGED,
                     false, false, false, false, false, false);
