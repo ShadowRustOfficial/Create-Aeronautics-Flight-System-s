@@ -8,7 +8,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
@@ -20,7 +19,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Create-style physical flight-control linker. Right-click a Flight Controller to arm it,
- * then right-click compatible propulsion blocks to assign the current vector/mode.
+ * then right-click one compatible propulsion block to seed the current vector bank.
+ * Additional thrusters with the same physical facing are discovered automatically.
  */
 public class FlightLinkToolItem extends Item {
     private static final Map<UUID, LinkSession> SESSIONS = new ConcurrentHashMap<>();
@@ -67,8 +67,15 @@ public class FlightLinkToolItem extends Item {
                 clicked.getY() + 0.5D - (session.controller.getY() + 0.5D),
                 clicked.getZ() + 0.5D - (session.controller.getZ() + 0.5D)
         };
-        if (ReflectivePropulsionSource.tryCreate(target, session.direction, offset) == null) {
+        var propulsion = ReflectivePropulsionSource.tryCreate(target, session.direction, offset);
+        if (!(propulsion instanceof ReflectivePropulsionSource reflective)) {
             if (!level.isClientSide) player.displayClientMessage(Component.literal("Selected block is not a compatible thruster."), true);
+            return InteractionResult.sidedSuccess(level.isClientSide);
+        }
+        VectorDirection physical = reflective.getPhysicalDirection();
+        if (physical != null && physical != session.direction) {
+            if (!level.isClientSide) player.displayClientMessage(Component.literal(
+                    "Thruster faces " + physical.shortName() + " — select " + physical.shortName() + " for this bank."), true);
             return InteractionResult.sidedSuccess(level.isClientSide);
         }
 
@@ -78,7 +85,9 @@ public class FlightLinkToolItem extends Item {
                 return InteractionResult.FAIL;
             }
             controller.bindVector(session.mode, session.direction, clicked);
-            player.displayClientMessage(Component.literal("LINKED " + clicked.toShortString() + " → " + short(session.mode) + " / " + session.direction.shortName()), true);
+            player.displayClientMessage(Component.literal(
+                    "BANK SEEDED " + clicked.toShortString() + " → " + short(session.mode) + " / " + session.direction.shortName()
+                            + " — matching thrusters will be auto-discovered."), true);
         }
         return InteractionResult.SUCCESS;
     }
