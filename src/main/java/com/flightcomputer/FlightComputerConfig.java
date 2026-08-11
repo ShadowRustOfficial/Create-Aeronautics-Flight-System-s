@@ -2,10 +2,8 @@ package com.flightcomputer;
 
 import net.neoforged.neoforge.common.ModConfigSpec;
 
-/** Tunable controller power and thermal values. */
 public final class FlightComputerConfig {
     public static final ModConfigSpec SPEC;
-
     public static final ModConfigSpec.IntValue ENERGY_CAPACITY;
     public static final ModConfigSpec.IntValue ENERGY_INPUT_PER_TICK;
     public static final ModConfigSpec.IntValue IDLE_OPERATION_COST;
@@ -30,60 +28,32 @@ public final class FlightComputerConfig {
     public static final ModConfigSpec.IntValue THERMAL_COOLDOWN_TICKS;
 
     static {
-        ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
-        builder.push("flight_controller");
-
-        ENERGY_CAPACITY = builder.comment("Maximum FE stored by one Flight Controller. Default: 5,000,000 FE.")
-                .defineInRange("energyCapacityFe", 5000000, 1, Integer.MAX_VALUE);
-        ENERGY_INPUT_PER_TICK = builder.comment("Maximum FE received per tick from the rear-face energy capability.")
-                .defineInRange("energyInputFePerTick", 12000, 1, Integer.MAX_VALUE);
-        IDLE_OPERATION_COST = builder.comment("FE/t consumed continuously while the controller is powered.")
-                .defineInRange("idleOperationCostFePerTick", 1250, 1, Integer.MAX_VALUE);
-        BASE_OPERATION_COST = builder.comment("Additional FE/t consumed while the controller is actively engaged.")
-                .defineInRange("baseOperationCostFePerTick", 750, 0, Integer.MAX_VALUE);
-        TERRAIN_OPERATION_COST = builder.comment("Additional FE/t consumed while MAP: ON terrain rendering is enabled.")
-                .defineInRange("terrainOperationCostFePerTick", 500, 0, Integer.MAX_VALUE);
-        ADVANCED_COOLING_EXTRA_COST = builder.comment("Additional FE/t consumed by Advanced Cooling while operating.")
-                .defineInRange("advancedCoolingExtraCostFePerTick", 2500, 0, Integer.MAX_VALUE);
-
-        MEDIUM_THRESHOLD = builder.comment("Percent energy remaining at which the Medium warning begins.")
-                .defineInRange("mediumThresholdPercent", 50, 1, 99);
-        LOW_THRESHOLD = builder.comment("Percent energy remaining at which Low power begins.")
-                .defineInRange("lowThresholdPercent", 25, 1, 98);
-        CRITICAL_THRESHOLD = builder.comment("Percent energy remaining at which Critical power begins.")
-                .defineInRange("criticalThresholdPercent", 10, 1, 97);
-
-        HEAT_CAPACITY = builder.comment("Maximum operating temperature before thermal shutdown.")
-                .defineInRange("heatCapacity", 100.0D, 1.0D, 1000000.0D);
-        BASE_HEAT_PER_TICK = builder.comment("Heat generated per operating tick before cooling modifiers.")
-                .defineInRange("baseHeatPerTick", 0.08D, 0.0D, 10000.0D);
-        COOLING_PER_TICK = builder.comment("Heat removed per tick by the base cooling system.")
-                .defineInRange("coolingPerTick", 0.04D, 0.0D, 10000.0D);
-        BASIC_COOLING_MODIFIER = builder.comment("Cooling multiplier for Basic Cooling.")
-                .defineInRange("basicCoolingModifier", 1.75D, 1.0D, 1000.0D);
-        IMPROVED_COOLING_MODIFIER = builder.comment("Cooling multiplier for Improved Cooling.")
-                .defineInRange("improvedCoolingModifier", 3.0D, 1.0D, 1000.0D);
-        ADVANCED_COOLING_MODIFIER = builder.comment("Cooling multiplier for Advanced Cooling.")
-                .defineInRange("advancedCoolingModifier", 8.0D, 1.0D, 1000.0D);
-
-        THERMAL_WARM_THRESHOLD = builder.comment("Temperature fraction at which the controller becomes Warm.")
-                .defineInRange("thermalWarmThreshold", 0.50D, 0.0D, 1.0D);
-        THERMAL_HOT_THRESHOLD = builder.comment("Temperature fraction at which the controller becomes Hot.")
-                .defineInRange("thermalHotThreshold", 0.65D, 0.0D, 1.0D);
-        THERMAL_CRITICAL_THRESHOLD = builder.comment("Temperature fraction at which the controller becomes Critical.")
-                .defineInRange("thermalCriticalThreshold", 0.85D, 0.0D, 1.0D);
-        THERMAL_SHUTDOWN_THRESHOLD = builder.comment("Temperature fraction at which the controller shuts down.")
-                .defineInRange("thermalShutdownThreshold", 1.0D, 0.01D, 1.0D);
-        THERMAL_RECOVERY_THRESHOLD = builder.comment("Temperature fraction below which shutdown may recover after the full cooldown.")
-                .defineInRange("thermalRecoveryThreshold", 0.25D, 0.0D, 0.99D);
-        ADVANCED_COOLING_MAX_TEMPERATURE = builder.comment("Maximum temperature fraction allowed while Advanced Cooling is active.")
-                .defineInRange("advancedCoolingMaxTemperature", 0.70D, 0.0D, 1.0D);
-        THERMAL_COOLDOWN_TICKS = builder.comment("Mandatory thermal lockout after an overheat. 12,000 ticks = 10 minutes.")
-                .defineInRange("thermalCooldownTicks", 12000, 1, Integer.MAX_VALUE);
-
-        builder.pop();
-        SPEC = builder.build();
+        ModConfigSpec.Builder b = new ModConfigSpec.Builder();
+        b.push("flight_controller");
+        ENERGY_CAPACITY = b.comment("Maximum FE stored by one Flight Controller. Default: 20,000,000 FE.").defineInRange("energyCapacityFe", 20000000, 1, Integer.MAX_VALUE);
+        ENERGY_INPUT_PER_TICK = b.defineInRange("energyInputFePerTick", 12000, 1, Integer.MAX_VALUE);
+        IDLE_OPERATION_COST = b.defineInRange("idleOperationCostFePerTick", 1250, 1, Integer.MAX_VALUE);
+        BASE_OPERATION_COST = b.defineInRange("baseOperationCostFePerTick", 750, 0, Integer.MAX_VALUE);
+        TERRAIN_OPERATION_COST = b.defineInRange("terrainOperationCostFePerTick", 500, 0, Integer.MAX_VALUE);
+        ADVANCED_COOLING_EXTRA_COST = b.defineInRange("advancedCoolingExtraCostFePerTick", 2500, 0, Integer.MAX_VALUE);
+        MEDIUM_THRESHOLD = b.defineInRange("mediumThresholdPercent", 50, 1, 99);
+        LOW_THRESHOLD = b.defineInRange("lowThresholdPercent", 25, 1, 98);
+        CRITICAL_THRESHOLD = b.defineInRange("criticalThresholdPercent", 10, 1, 97);
+        HEAT_CAPACITY = b.defineInRange("heatCapacity", 100.0D, 1.0D, 1000000.0D);
+        BASE_HEAT_PER_TICK = b.defineInRange("baseHeatPerTick", 0.08D, 0.0D, 10000.0D);
+        COOLING_PER_TICK = b.defineInRange("coolingPerTick", 0.04D, 0.0D, 10000.0D);
+        BASIC_COOLING_MODIFIER = b.defineInRange("basicCoolingModifier", 1.75D, 1.0D, 1000.0D);
+        IMPROVED_COOLING_MODIFIER = b.defineInRange("improvedCoolingModifier", 3.0D, 1.0D, 1000.0D);
+        ADVANCED_COOLING_MODIFIER = b.defineInRange("advancedCoolingModifier", 8.0D, 1.0D, 1000.0D);
+        THERMAL_WARM_THRESHOLD = b.defineInRange("thermalWarmThreshold", 0.50D, 0.0D, 1.0D);
+        THERMAL_HOT_THRESHOLD = b.defineInRange("thermalHotThreshold", 0.65D, 0.0D, 1.0D);
+        THERMAL_CRITICAL_THRESHOLD = b.defineInRange("thermalCriticalThreshold", 0.85D, 0.0D, 1.0D);
+        THERMAL_SHUTDOWN_THRESHOLD = b.defineInRange("thermalShutdownThreshold", 1.0D, 0.01D, 1.0D);
+        THERMAL_RECOVERY_THRESHOLD = b.defineInRange("thermalRecoveryThreshold", 0.25D, 0.0D, 0.99D);
+        ADVANCED_COOLING_MAX_TEMPERATURE = b.defineInRange("advancedCoolingMaxTemperature", 0.70D, 0.0D, 1.0D);
+        THERMAL_COOLDOWN_TICKS = b.defineInRange("thermalCooldownTicks", 12000, 1, Integer.MAX_VALUE);
+        b.pop();
+        SPEC = b.build();
     }
-
     private FlightComputerConfig() {}
 }
