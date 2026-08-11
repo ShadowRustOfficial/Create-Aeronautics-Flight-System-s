@@ -57,3 +57,4 @@ Neither Xaero's Minimap nor Xaero's World Map publish an official, documented AP
 - Kept thermal and cooling as standalone consoles and exposed navigation buttons to them from every navigation page.
 - Moved route waypoint/waystone selection into the Route page itself.
 - Persisted Phase 5.2 flight-operations state on the controller and connected its reconciliation into the live control loop.
+- Added automated Gradle build validation to this patch workflow.
