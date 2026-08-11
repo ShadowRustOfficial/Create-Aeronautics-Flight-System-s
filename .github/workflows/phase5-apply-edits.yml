@@ -1,4 +1,4 @@
-name: Phase 5 getter edit
+name: Phase 5 patch application
 
 on:
   push:
@@ -7,24 +7,46 @@ permissions:
   contents: write
 jobs:
   edit:
-    if: github.event.head_commit.message == 'Trigger Phase 5 getter'
+    if: github.event.head_commit.message == 'Trigger Phase 5 patch application'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
-      - name: Add controller position getter
+      - name: Apply route and console integration patch
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('src/main/java/com/flightcomputer/client/gui/NavigationConsoleScreen.java')
-          text=p.read_text()
-          getter='    public BlockPos controllerPos() { return controllerPos; }\n\n'
-          if getter not in text:
-              text=text.replace('    public NavigationConsoleScreen(BlockPos controllerPos) {',getter+'    public NavigationConsoleScreen(BlockPos controllerPos) {',1)
+
+          p = Path('src/main/java/com/flightcomputer/client/gui/NavigationConsoleScreen.java')
+          text = p.read_text()
+
+          text = text.replace(
+              'import com.flightcomputer.client.map.WaystoneMapProvider;\n',
+              'import com.flightcomputer.client.map.WaypointMapProvider;\nimport com.flightcomputer.client.map.WaystoneMapProvider;\nimport com.flightcomputer.client.gui.CoolingConsoleScreen;\nimport com.flightcomputer.client.gui.ThermalConsoleScreen;\n')
+
+          text = text.replace(
+              '    private EditBox targetInput;\n',
+              '    private EditBox targetInput;\n    private final WaypointMapProvider routeWaypointProvider = new WaypointMapProvider();\n    private final WaystoneMapProvider routeWaystoneProvider = new WaystoneMapProvider();\n    private int routeWaypointIndex;\n    private int routeWaystoneIndex;\n')
+
+          needle = '        addRenderableWidget(Button.builder(Component.literal("DIAGNOSTICS"), b -> switchTab(Tab.DIAGNOSTICS)).bounds(left + 480, top, tabW, 22).build());\n'
+          replacement = needle + '''        // Thermal and Cooling are standalone consoles, but remain reachable from every navigation page.\n        addRenderableWidget(Button.builder(Component.literal("THERMAL"), b -> minecraft.setScreen(new ThermalConsoleScreen(controllerPos)))\n                .bounds(left + 480, top + 24, 72, 20).build());\n        addRenderableWidget(Button.builder(Component.literal("COOLING"), b -> minecraft.setScreen(new CoolingConsoleScreen(controllerPos)))\n                .bounds(left + 558, top + 24, 72, 20).build());\n'''
+          if needle in text and 'standalone consoles' not in text:
+              text = text.replace(needle, replacement, 1)
+
+          needle = '        addRenderableWidget(Button.builder(Component.literal("ABORT ROUTE"), b -> send(FlightControllerAction.ABORT_ROUTE)).bounds(left + 400, top + 180, 180, 20).build());\n'
+          replacement = needle + '''        addRenderableWidget(Button.builder(Component.literal("SELECT WAYSTONE"), b -> selectRouteWaystone(b))\n                .bounds(left + 20, top + 230, 180, 20).build());\n        addRenderableWidget(Button.builder(Component.literal("SELECT WAYPOINT"), b -> selectRouteWaypoint(b))\n                .bounds(left + 210, top + 230, 180, 20).build());\n        addRenderableWidget(Button.builder(Component.literal("REFRESH LOCATIONS"), b -> refreshRouteLocations())\n                .bounds(left + 400, top + 230, 180, 20).build());\n'''
+          if needle in text and 'selectRouteWaystone' not in text:
+              text = text.replace(needle, replacement, 1)
+
+          needle = '    private void sendTargetFromInput() {\n'
+          helpers = '''    private void selectRouteWaystone(Button button) {\n        if (minecraft == null || minecraft.level == null) return;\n        routeWaystoneProvider.tick(minecraft.level);\n        var markers = routeWaystoneProvider.markers();\n        if (markers.isEmpty()) { button.setMessage(Component.literal("NO WAYSTONES")); return; }\n        routeWaystoneIndex = Math.floorMod(routeWaystoneIndex, markers.size());\n        var marker = markers.get(routeWaystoneIndex++);\n        FlightComputerNetwork.sendTarget(controllerPos, marker.worldX(), marker.worldY(), marker.worldZ(), marker.label());\n        button.setMessage(Component.literal("WAYSTONE: " + marker.label()));\n    }\n\n    private void selectRouteWaypoint(Button button) {\n        if (minecraft == null || minecraft.level == null) return;\n        routeWaypointProvider.tick(minecraft.level);\n        var markers = routeWaypointProvider.markers();\n        if (markers.isEmpty()) { button.setMessage(Component.literal("NO WAYPOINTS")); return; }\n        routeWaypointIndex = Math.floorMod(routeWaypointIndex, markers.size());\n        var marker = markers.get(routeWaypointIndex++);\n        FlightComputerNetwork.sendTarget(controllerPos, marker.worldX(), marker.worldY(), marker.worldZ(), marker.label());\n        button.setMessage(Component.literal("WAYPOINT: " + marker.label()));\n    }\n\n    private void refreshRouteLocations() {\n        if (minecraft != null && minecraft.level != null) {\n            routeWaystoneProvider.tick(minecraft.level);\n            routeWaypointProvider.tick(minecraft.level);\n        }\n        routeWaystoneIndex = 0;\n        routeWaypointIndex = 0;\n    }\n\n'''
+          if needle in text and 'private void selectRouteWaystone' not in text:
+              text = text.replace(needle, helpers + needle, 1)
+
           p.write_text(text)
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/main/java/com/flightcomputer/client/gui/NavigationConsoleScreen.java
-          git commit -m "Apply Phase 5 getter"
+          git commit -m "Apply route and console integration patch"
           git push origin HEAD:phase-5-validation
