@@ -105,6 +105,15 @@ public final class ThrusterRegistry {
         return Collections.unmodifiableList(links.get(mode).get(direction));
     }
 
+    /** Returns all sources belonging only to the requested flight-control bank. */
+    public List<ThrusterLink> getAllLinks(FlightMode mode) {
+        LinkedHashMap<String, ThrusterLink> unique = new LinkedHashMap<>();
+        for (VectorDirection direction : VectorDirection.values()) {
+            for (ThrusterLink link : links.get(mode).get(direction)) unique.putIfAbsent(link.source.getId(), link);
+        }
+        return List.copyOf(unique.values());
+    }
+
     /** Compatibility view for older controller code; physical allocation is vector-based. */
     public List<ThrusterLink> getLinks(FlightMode mode, ControlAxis axis) {
         List<ThrusterLink> result = new ArrayList<>();
