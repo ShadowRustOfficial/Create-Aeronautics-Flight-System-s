@@ -19,11 +19,22 @@ public final class SixAxisStabilizer {
         Map<ControlAxis, Double> out = new EnumMap<>(ControlAxis.class);
         double pitchError = wrapAngle(sp.desiredPitch - state.pitch);
         double rollError = wrapAngle(sp.desiredRoll - state.roll);
-        double yawError = sp.yawIsRateNotHeading ? sp.desiredYawRate - state.yawRate : wrapAngle(sp.desiredYaw - state.yaw);
+        double yawError;
+        double yawMeasurement;
+        if (sp.yawIsRateNotHeading) {
+            // Rate control must differentiate angular rate, not heading. Using state.yaw here
+            // makes the D-term react to heading motion instead of yaw acceleration and can
+            // destabilise the controller as soon as the craft starts turning.
+            yawError = sp.desiredYawRate - state.yawRate;
+            yawMeasurement = state.yawRate;
+        } else {
+            yawError = wrapAngle(sp.desiredYaw - state.yaw);
+            yawMeasurement = state.yaw;
+        }
 
         out.put(ControlAxis.PITCH, pitchPID.update(pitchError, state.pitch, dt, state.inertiaPitch));
         out.put(ControlAxis.ROLL, rollPID.update(rollError, state.roll, dt, state.inertiaRoll));
-        out.put(ControlAxis.YAW, yawPID.update(yawError, state.yaw, dt, state.inertiaYaw));
+        out.put(ControlAxis.YAW, yawPID.update(yawError, yawMeasurement, dt, state.inertiaYaw));
 
         double vertError = sp.desiredVerticalVelocity - state.vy;
         double vertForce = verticalPID.update(vertError, state.vy, dt, state.mass) + state.mass * gravity;
