@@ -10,6 +10,7 @@ import org.joml.Quaterniondc;
 import org.joml.Vector3d;
 
 import java.lang.reflect.Method;
+import java.util.EnumMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,7 +37,9 @@ public final class FlightControlRuntimeManager {
         void tick(FlightControllerBlockEntity controller) {
             Level level = controller.getLevel(); long time = level.getGameTime();
             if (time - lastLinkRefresh >= 5) {
-                computer.getRegistry().refresh(level, controller.getBlockPos(), controller.getVectorLinks(FlightMode.STABILIZE), controller.getVectorLinks(FlightMode.CRUISE), time);
+                Map<VectorDirection, BlockPos> stabiliserLinks = controller.getVectorLinks(FlightMode.STABILIZE);
+                Map<VectorDirection, BlockPos> autopilotLinks = mergeAutopilotFallback(stabiliserLinks, controller.getVectorLinks(FlightMode.CRUISE));
+                computer.getRegistry().refresh(level, controller.getBlockPos(), stabiliserLinks, autopilotLinks, time);
                 lastLinkRefresh = time;
             }
             stateProvider.update(controller, computer.getRegistry());
@@ -48,6 +51,15 @@ public final class FlightControlRuntimeManager {
                 controller.addControlThermalLoad(computer.getAllocator().getLastThermalLoad());
             }
             if (time - lastTelemetry >= 5) { lastTelemetry = time; sendTelemetry(controller, target); }
+        }
+
+        /** If the user has not explicitly seeded an autopilot bank, reuse the stabiliser bank. */
+        private static Map<VectorDirection, BlockPos> mergeAutopilotFallback(Map<VectorDirection, BlockPos> stabiliser,
+                                                                               Map<VectorDirection, BlockPos> autopilot) {
+            EnumMap<VectorDirection, BlockPos> merged = new EnumMap<>(VectorDirection.class);
+            merged.putAll(stabiliser);
+            merged.putAll(autopilot);
+            return merged;
         }
 
         private void sendTelemetry(FlightControllerBlockEntity controller, Target target) {
@@ -98,7 +110,7 @@ public final class FlightControlRuntimeManager {
             state.timestampNanos=System.nanoTime();previousPosition=world;previousYaw=state.yaw;previousPitch=state.pitch;previousRoll=state.roll;snapshot=state.copy();
         }
 
-        private static void estimateInertiaFromVehicleEnvelope(VehicleState state, ThrusterRegistry registry){double halfX=1,halfY=Math.max(1,state.boundingHalfHeight),halfZ=Math.max(1,state.boundingRadius);for(ThrusterLink link:registry.getAllLinks()){double[] r=link.source.getMountOffset();halfX=Math.max(halfX,Math.abs(r[0]));halfY=Math.max(halfY,Math.abs(r[1]));halfZ=Math.max(halfZ,Math.abs(r[2]));}double ix=state.mass*(halfY*halfY+halfZ*halfZ)/3,iy=state.mass*(halfX*halfX+halfZ*halfZ)/3,iz=state.mass*(halfX*halfX+halfY*halfY)/3;state.inertiaPitch=Math.max(1,ix);state.inertiaRoll=Math.max(1,iz);state.inertiaYaw=Math.max(1,iy);state.boundingRadius=Math.max(state.boundingRadius,Math.max(halfX,halfZ));state.boundingHalfHeight=Math.max(state.boundingHalfHeight,halfY);}
+        private static double[] estimateInertiaFromVehicleEnvelope(VehicleState state, ThrusterRegistry registry){double halfX=1,halfY=Math.max(1,state.boundingHalfHeight),halfZ=Math.max(1,state.boundingRadius);for(ThrusterLink link:registry.getAllLinks()){double[] r=link.source.getMountOffset();halfX=Math.max(halfX,Math.abs(r[0]));halfY=Math.max(halfY,Math.abs(r[1]));halfZ=Math.max(halfZ,Math.abs(r[2]));}double ix=state.mass*(halfY*halfY+halfZ*halfZ)/3,iy=state.mass*(halfX*halfX+halfZ*halfZ)/3,iz=state.mass*(halfX*halfX+halfY*halfY)/3;state.inertiaPitch=Math.max(1,ix);state.inertiaRoll=Math.max(1,iz);state.inertiaYaw=Math.max(1,iy);state.boundingRadius=Math.max(state.boundingRadius,Math.max(halfX,halfZ));state.boundingHalfHeight=Math.max(state.boundingHalfHeight,halfY);}
         private static double[] readInertia(Object target){if(target==null)return null;for(String name:new String[]{"getMomentOfInertia","getInertia","momentOfInertia","inertia"}){double[] parsed=parseVector(invokeNoArg(target,name));if(parsed!=null)return parsed;}return null;}
         private static double[] parseVector(Object value){if(value instanceof Vector3d v)return new double[]{Math.abs(v.x),Math.abs(v.y),Math.abs(v.z)};if(value instanceof Vec3 v)return new double[]{Math.abs(v.x),Math.abs(v.y),Math.abs(v.z)};if(value instanceof double[] a&&a.length>=3)return new double[]{Math.abs(a[0]),Math.abs(a[1]),Math.abs(a[2])};return null;}
         private static double readDouble(Object target,String...names){for(String name:names){Object v=invokeNoArg(target,name);if(v instanceof Number n&&n.doubleValue()>0)return n.doubleValue();}return -1;}
