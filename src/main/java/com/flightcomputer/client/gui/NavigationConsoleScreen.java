@@ -10,7 +10,10 @@ import com.flightcomputer.client.map.FlightMapMarker;
 import com.flightcomputer.client.map.FlightMapPipeline;
 import com.flightcomputer.client.map.FlightMapProviderKind;
 import com.flightcomputer.client.map.LiveWorldMapProvider;
+import com.flightcomputer.client.map.WaypointMapProvider;
 import com.flightcomputer.client.map.WaystoneMapProvider;
+import com.flightcomputer.client.gui.CoolingConsoleScreen;
+import com.flightcomputer.client.gui.ThermalConsoleScreen;
 import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -53,6 +56,10 @@ public final class NavigationConsoleScreen extends Screen {
     private double controllerWorldZ;
     private boolean draggingMap;
     private EditBox targetInput;
+    private final WaypointMapProvider routeWaypointProvider = new WaypointMapProvider();
+    private final WaystoneMapProvider routeWaystoneProvider = new WaystoneMapProvider();
+    private int routeWaypointIndex;
+    private int routeWaystoneIndex;
 
     public BlockPos controllerPos() { return controllerPos; }
 
@@ -83,6 +90,11 @@ public final class NavigationConsoleScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("ROUTE"), b -> switchTab(Tab.ROUTE)).bounds(left + 160, top, tabW, 22).build());
         addRenderableWidget(Button.builder(Component.literal("FLIGHT CONTROL"), b -> switchTab(Tab.FLIGHT_CONTROL)).bounds(left + 320, top, tabW, 22).build());
         addRenderableWidget(Button.builder(Component.literal("DIAGNOSTICS"), b -> switchTab(Tab.DIAGNOSTICS)).bounds(left + 480, top, tabW, 22).build());
+        // Thermal and Cooling are standalone consoles, but remain reachable from every navigation page.
+        addRenderableWidget(Button.builder(Component.literal("THERMAL"), b -> minecraft.setScreen(new ThermalConsoleScreen(controllerPos)))
+                .bounds(left + 480, top + 24, 72, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("COOLING"), b -> minecraft.setScreen(new CoolingConsoleScreen(controllerPos)))
+                .bounds(left + 558, top + 24, 72, 20).build());
         if (tab == Tab.MAP) initMapControls(left, top);
         if (tab == Tab.ROUTE) initRouteControls(left, top);
         if (tab == Tab.FLIGHT_CONTROL) initFlightControls(left, top);
@@ -127,6 +139,43 @@ public final class NavigationConsoleScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("CLEAR DESTINATION"), b -> { FlightComputerNetwork.clearTarget(controllerPos); }).bounds(left + 20, top + 180, 180, 20).build());
         addRenderableWidget(Button.builder(Component.literal("START ROUTE"), b -> send(FlightControllerAction.START_ROUTE)).bounds(left + 210, top + 180, 180, 20).build());
         addRenderableWidget(Button.builder(Component.literal("ABORT ROUTE"), b -> send(FlightControllerAction.ABORT_ROUTE)).bounds(left + 400, top + 180, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("SELECT WAYSTONE"), b -> selectRouteWaystone(b))
+                .bounds(left + 20, top + 230, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("SELECT WAYPOINT"), b -> selectRouteWaypoint(b))
+                .bounds(left + 210, top + 230, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("REFRESH LOCATIONS"), b -> refreshRouteLocations())
+                .bounds(left + 400, top + 230, 180, 20).build());
+    }
+
+    private void selectRouteWaystone(Button button) {
+        if (minecraft == null || minecraft.level == null) return;
+        routeWaystoneProvider.tick(minecraft.level);
+        var markers = routeWaystoneProvider.markers();
+        if (markers.isEmpty()) { button.setMessage(Component.literal("NO WAYSTONES")); return; }
+        routeWaystoneIndex = Math.floorMod(routeWaystoneIndex, markers.size());
+        var marker = markers.get(routeWaystoneIndex++);
+        FlightComputerNetwork.sendTarget(controllerPos, marker.worldX(), marker.worldY(), marker.worldZ(), marker.label());
+        button.setMessage(Component.literal("WAYSTONE: " + marker.label()));
+    }
+
+    private void selectRouteWaypoint(Button button) {
+        if (minecraft == null || minecraft.level == null) return;
+        routeWaypointProvider.tick(minecraft.level);
+        var markers = routeWaypointProvider.markers();
+        if (markers.isEmpty()) { button.setMessage(Component.literal("NO WAYPOINTS")); return; }
+        routeWaypointIndex = Math.floorMod(routeWaypointIndex, markers.size());
+        var marker = markers.get(routeWaypointIndex++);
+        FlightComputerNetwork.sendTarget(controllerPos, marker.worldX(), marker.worldY(), marker.worldZ(), marker.label());
+        button.setMessage(Component.literal("WAYPOINT: " + marker.label()));
+    }
+
+    private void refreshRouteLocations() {
+        if (minecraft != null && minecraft.level != null) {
+            routeWaystoneProvider.tick(minecraft.level);
+            routeWaypointProvider.tick(minecraft.level);
+        }
+        routeWaystoneIndex = 0;
+        routeWaypointIndex = 0;
     }
 
     private void sendTargetFromInput() {
