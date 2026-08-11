@@ -1,45 +1,30 @@
-name: Phase 5 thermal source edits
+name: Phase 5 getter edit
 
 on:
   push:
     branches: [phase-5-validation]
-
 permissions:
   contents: write
-
 jobs:
   edit:
-    if: github.event.head_commit.message == 'Trigger Phase 5 thermal patch'
+    if: github.event.head_commit.message == 'Trigger Phase 5 getter'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Apply thermal and safety source edits
-        shell: bash
+        with: {fetch-depth: 0}
+      - name: Add controller position getter
         run: |
-          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('src/main/java/com/flightcomputer/block/FlightControllerBlockEntity.java')
+          p=Path('src/main/java/com/flightcomputer/client/gui/NavigationConsoleScreen.java')
           text=p.read_text()
-          anchor='    public double[] getThermalHistory() { return Arrays.copyOf(thermalHistory, thermalHistory.length); }\n'
-          addition=anchor+'''\n    /** Adds propulsion/control heat after the normal per-tick thermal accounting. */\n    public void addControlThermalLoad(double normalizedLoad) {\n        if (level == null || level.isClientSide || isThermalLockout()) return;\n        double load = Math.max(0.0D, Math.min(1.0D, normalizedLoad));\n        temperature += FlightComputerConfig.BASE_HEAT_PER_TICK.get() * (1.0D + load * 8.0D);\n        temperature = Math.min(FlightComputerConfig.HEAT_CAPACITY.get() * 1.05D, temperature);\n        setChanged();\n    }\n'''
-          if 'addControlThermalLoad' not in text:
-              if anchor not in text: raise SystemExit('thermal anchor missing')
-              text=text.replace(anchor,addition,1)
-          old='''    public boolean isOperationPermitted(FlightControllerAction action) {\n        return !isThermalLockout() && powerState != PowerState.NO_POWER && energyStorage.getEnergyStored() > 0;\n    }'''
-          new='''    public boolean isOperationPermitted(FlightControllerAction action) {\n        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) return true;\n        return !isThermalLockout() && powerState != PowerState.NO_POWER && energyStorage.getEnergyStored() > 0;\n    }'''
-          if old in text: text=text.replace(old,new,1)
-          old='''        if (action == FlightControllerAction.TOGGLE_TERRAIN) terrainEnabled = !terrainEnabled;\n        else controllerState = controllerState.apply(action);'''
-          new='''        if (action == FlightControllerAction.TOGGLE_TERRAIN) terrainEnabled = !terrainEnabled;\n        else controllerState = controllerState.apply(action);\n        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) energyStorage.extractEnergy(energyStorage.getEnergyStored(), false);'''
-          if old in text: text=text.replace(old,new,1)
-          old='''        if (advancedCooling) {\n            temperature = Math.min(temperature,\n                    FlightComputerConfig.HEAT_CAPACITY.get() * FlightComputerConfig.ADVANCED_COOLING_MAX_TEMPERATURE.get());\n        }\n'''
-          if old in text: text=text.replace(old,'',1)
+          getter='    public BlockPos controllerPos() { return controllerPos; }\n\n'
+          if getter not in text:
+              text=text.replace('    public NavigationConsoleScreen(BlockPos controllerPos) {',getter+'    public NavigationConsoleScreen(BlockPos controllerPos) {',1)
           p.write_text(text)
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/main/java/com/flightcomputer/block/FlightControllerBlockEntity.java
-          git commit -m "Apply Phase 5 thermal patch"
+          git add src/main/java/com/flightcomputer/client/gui/NavigationConsoleScreen.java
+          git commit -m "Apply Phase 5 getter"
           git push origin HEAD:phase-5-validation
