@@ -35,8 +35,8 @@ public final class FlightOperationsNetwork {
     public record OperationsPayload(BlockPos controllerPos, int command, int value, String text, UUID contact) implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, OperationsPayload> STREAM_CODEC = StreamCodec.of((buf, p) -> {
             BlockPos.STREAM_CODEC.encode(buf, p.controllerPos());
-            buf.writeVarInt(p.command());
-            buf.writeVarInt(p.value());
+            ByteBufCodecs.VAR_INT.encode(buf, p.command());
+            ByteBufCodecs.VAR_INT.encode(buf, p.value());
             ByteBufCodecs.STRING_UTF8.encode(buf, p.text() == null ? "" : p.text());
             buf.writeBoolean(p.contact() != null);
             if (p.contact() != null) {
@@ -45,8 +45,8 @@ public final class FlightOperationsNetwork {
             }
         }, buf -> {
             BlockPos pos = BlockPos.STREAM_CODEC.decode(buf);
-            int command = buf.readVarInt();
-            int value = buf.readVarInt();
+            int command = ByteBufCodecs.VAR_INT.decode(buf);
+            int value = ByteBufCodecs.VAR_INT.decode(buf);
             String text = ByteBufCodecs.STRING_UTF8.decode(buf);
             UUID contact = buf.readBoolean() ? new UUID(buf.readLong(), buf.readLong()) : null;
             return new OperationsPayload(pos, command, value, text, contact);
@@ -58,7 +58,7 @@ public final class FlightOperationsNetwork {
     @EventBusSubscriber(modid = FlightComputer.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
     public static final class Registration {
         @SubscribeEvent public static void register(RegisterPayloadHandlersEvent event) {
-            event.registrar(VERSION).playToServer(TYPE, STREAM_CODEC, FlightOperationsNetwork::handle);
+            event.registrar(VERSION).playToServer(TYPE, OperationsPayload.STREAM_CODEC, FlightOperationsNetwork::handle);
         }
     }
 
@@ -102,7 +102,6 @@ public final class FlightOperationsNetwork {
     }
 
     private static boolean applyCombat(FlightOperationsState state, int action, String text) {
-        // 0/1 are modes; 10+ are actions so an enum ordinal can never collide with an action.
         if (action >= 0 && action < CombatMode.values().length) {
             state.setCombatMode(CombatMode.values()[action]);
             return true;
