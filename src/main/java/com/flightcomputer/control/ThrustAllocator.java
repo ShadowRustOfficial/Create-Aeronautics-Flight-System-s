@@ -3,7 +3,6 @@ package com.flightcomputer.control;
 import org.joml.Quaterniond;
 import org.joml.Vector3d;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +23,7 @@ public final class ThrustAllocator {
                               Map<ControlAxis, Double> stabiliser, Map<ControlAxis, Double> autopilot) {
         if (state == null) { lastThermalLoad = 0.0D; return; }
         ControlWrench target = ControlWrench.fromAxes(stabiliser).add(ControlWrench.fromAxes(autopilot));
-        if (target.isZero()) {
+        if (target.normSquared() <= 1.0e-12) {
             zeroActiveSources(registry, stabiliser, autopilot);
             lastThermalLoad = 0.0D;
             return;
