@@ -16,6 +16,13 @@ public interface FlightMapDataProvider {
     /** True when work for the tile is already queued or executing. */
     default boolean isTilePending(int chunkX, int chunkZ) { return false; }
 
+    /**
+     * Observes the chunks currently resident in the logical client world.
+     * Implementations must only consume already-loaded client chunks: this hook
+     * must never request/generate a missing Minecraft chunk from the server.
+     */
+    default void observeLoadedClientChunks(ClientLevel level) { }
+
     /** Clears world/profile-specific provider state. */
     void clear();
 }
