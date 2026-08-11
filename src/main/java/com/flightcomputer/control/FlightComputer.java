@@ -22,53 +22,29 @@ public final class FlightComputer {
     private int ticksSinceReplan;
     private StabilizationSetpoint latestCruiseSetpoint = StabilizationSetpoint.hover();
 
-    public FlightComputer(VehicleStateProvider stateProvider, ObstacleSensor obstacleSensor) {
-        this.stateProvider = stateProvider;
-        this.navigator = new MPCNavigator(obstacleSensor);
-    }
+    public FlightComputer(VehicleStateProvider stateProvider, ObstacleSensor obstacleSensor) { this.stateProvider = stateProvider; this.navigator = new MPCNavigator(obstacleSensor); }
     public FlightComputer(VehicleStateProvider stateProvider) { this(stateProvider, null); }
     public ThrusterRegistry getRegistry() { return registry; }
+    public ThrustAllocator getAllocator() { return allocator; }
     public MPCNavigator getNavigator() { return navigator; }
     public FlightMode getMode() { return mode; }
     public SixAxisStabilizer getStabilizeStabilizer() { return stabilizeStabilizer; }
     public SixAxisStabilizer getCruiseStabilizer() { return cruiseStabilizer; }
 
-    public void setManualInput(double pitch, double roll, double yawRate, double vertical,
-                               double longitudinal, double lateral) {
-        pitchStick = pitch; rollStick = roll; yawRateStick = yawRate;
-        verticalStick = vertical; longitudinalStick = longitudinal; lateralStick = lateral;
+    public void setManualInput(double pitch, double roll, double yawRate, double vertical, double longitudinal, double lateral) {
+        pitchStick = pitch; rollStick = roll; yawRateStick = yawRate; verticalStick = vertical; longitudinalStick = longitudinal; lateralStick = lateral;
     }
-
-    public void engageCruise(double targetX, double targetY, double targetZ) {
-        navigator.setTarget(targetX, targetY, targetZ);
-        cruiseStabilizer.resetAll();
-        ticksSinceReplan = 0;
-        mode = FlightMode.CRUISE;
-    }
-
-    public void disengageCruise() {
-        mode = FlightMode.STABILIZE;
-        navigator.clearTarget();
-        latestCruiseSetpoint = StabilizationSetpoint.hover();
-    }
-
-    public double distanceToTarget() {
-        VehicleState state = stateProvider.getState();
-        return state != null && navigator.hasTarget() ? navigator.distanceToTarget(state) : -1;
-    }
-
+    public void engageCruise(double targetX, double targetY, double targetZ) { navigator.setTarget(targetX, targetY, targetZ); cruiseStabilizer.resetAll(); ticksSinceReplan = 0; mode = FlightMode.CRUISE; }
+    public void disengageCruise() { mode = FlightMode.STABILIZE; navigator.clearTarget(); latestCruiseSetpoint = StabilizationSetpoint.hover(); }
+    public double distanceToTarget() { VehicleState state = stateProvider.getState(); return state != null && navigator.hasTarget() ? navigator.distanceToTarget(state) : -1; }
     public boolean isCruisePathBlocked() { return mode == FlightMode.CRUISE && navigator.isPathBlocked(); }
 
     public void tick(double dt) {
         VehicleState state = stateProvider.getState();
         if (state == null) return;
-
-        // Stabilisation is always solved. Autopilot adds a second objective rather than replacing it.
-        StabilizationSetpoint stabiliseSetpoint = StabilizationSetpoint.manualNudge(
-                pitchStick, rollStick, yawRateStick, verticalStick, longitudinalStick, lateralStick,
+        StabilizationSetpoint stabiliseSetpoint = StabilizationSetpoint.manualNudge(pitchStick, rollStick, yawRateStick, verticalStick, longitudinalStick, lateralStick,
                 maxManualTiltRadians, maxManualYawRate, maxManualSpeed);
         Map<ControlAxis, Double> stabiliseCommands = stabilizeStabilizer.computeCommands(state, stabiliseSetpoint, dt);
-
         Map<ControlAxis, Double> autopilotCommands = Map.of();
         if (navigator.hasTarget()) {
             ticksSinceReplan++;
@@ -80,14 +56,11 @@ public final class FlightComputer {
             mode = FlightMode.CRUISE;
             if (navigator.distanceToTarget(state) < 1.0) disengageCruise();
         }
-
-        // One allocator pass produces one final command per physical thruster.
         allocator.applyCombined(registry, stabiliseCommands, autopilotCommands);
     }
 
     private double estimateCruiseDeceleration(VehicleState state) {
-        double authority = registry.getVectorAuthority(FlightMode.CRUISE, VectorDirection.NORTH)
-                + registry.getVectorAuthority(FlightMode.CRUISE, VectorDirection.SOUTH);
+        double authority = registry.getVectorAuthority(FlightMode.CRUISE, VectorDirection.NORTH) + registry.getVectorAuthority(FlightMode.CRUISE, VectorDirection.SOUTH);
         return Math.max(0.5, authority / Math.max(state.mass, 1.0e-3));
     }
 }
