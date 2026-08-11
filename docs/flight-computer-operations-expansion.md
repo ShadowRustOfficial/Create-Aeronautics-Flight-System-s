@@ -1,29 +1,32 @@
-# Aero Flight Computer — Operations Expansion
+# Aero Flight Computer — Phase 5.2 Operations Expansion Contract
 
-This document is the implementation contract for the next Flight Computer pass. The UI must use independent screens for each major subsystem; no subsystem panel may be injected into another screen's render pass.
+This document is the authoritative implementation checklist for the Flight Computer expansion discussed since last night. Every item below is part of this patch line and must be implemented at its base data/control structure before UI polish or gameplay validation is considered complete.
 
-## UI isolation rule
+## 0. Non-negotiable UI isolation
 
-Each major subsystem owns its own `Screen` surface and widget lifecycle:
+Every major subsystem is a genuinely separate `Screen` surface with its own widget lifecycle. Selecting a subsystem must show only that subsystem's content. The shared navigation header is allowed, but no other subsystem's widgets, labels, inventory bays, thermal panels or overlays may render behind the selected screen.
 
-- MAP — map and map controls only.
-- ROUTE — route destinations, Waystones, Waypoints, coordinates and route execution only.
-- FLIGHT CONTROL — engagement, manual/stabilized/autopilot state, control profiles and live control telemetry only.
-- DIAGNOSTICS — health, power, control-loop and propulsion diagnostics only.
-- THERMAL — temperature, heat state, lockout and thermal protection only.
-- COOLING — cooling bays, installed upgrades and cooling controls only.
-- IDENTITY — ship name, callsign, owner and map-contact visibility only.
-- COMBAT — defensive/offensive combat assistance only.
-- LANDING — landing scan and safe landing assistance only.
-- DOCKING — docking scan, alignment, approach and docking control only.
+Subsystems:
 
-The shared header/navigation may be reused, but the active subsystem screen must render only its own content. Do not use `Render.Pre`/`Render.Post` overlays to inject subsystem UI into another screen.
+- MAP — native terrain/map, player/controller markers, compact Flight Computer contacts, map controls.
+- ROUTE — route plan, coordinates, Waystones, Waypoints, route segments, dynamic contact targets and route execution.
+- FLIGHT CONTROL — engagement, MANUAL/STABILIZED/AUTOPILOT, independent holds, PID/control profile and live control state.
+- DIAGNOSTICS — health, power, control-loop, propulsion authority, thruster failures and pre-flight checks.
+- THERMAL — temperature, heat load, thermal state, lockout/recovery and thermal protection only.
+- COOLING — cooling bays, installed upgrades, cooling tier and cooling mode only.
+- IDENTITY — ship name, callsign, owner, stable UUID and map-contact visibility only.
+- COMBAT — exactly DEFENSIVE or OFFENSIVE assistance, target/home configuration and combat flight state only.
+- LANDING — scan and safe landing assistance only.
+- DOCKING — docking scan, alignment, approach, docking state and red override only.
+- SYSTEM — emergency controls and system-level pre-flight/override functions only.
 
-## Ship identity
+Do not inject subsystem UI through `Render.Pre`/`Render.Post` overlays. Do not solve screen separation with stale widget clearing. The active screen owns its own widgets.
 
-Identity is persistent to the Flight Computer/sub-level and should retain the underlying stable UUID. A custom display identifier may mirror the Aeronautics Simulated nameplate behaviour without destroying the stable internal UUID.
+## 1. Ship identity and custom identifier
 
-Identity fields:
+Add persistent player-facing identity data while retaining the stable internal Flight Computer/sub-level UUID.
+
+Fields:
 
 - Ship Name
 - Callsign
@@ -31,135 +34,309 @@ Identity fields:
 - Stable Flight Computer/Sub-Level UUID
 - Map Contact Visibility
 
-Ship name and callsign are set through explicit small action buttons beside their text fields.
+Ship Name and Callsign use text boxes with small `SET NAME` / `SET CALLSIGN` actions. The display identity may reproduce the Aeronautics Simulated nameplate-style behaviour, but the stable internal UUID must not be destroyed or replaced.
 
-## Map contacts
+## 2. Map contacts
 
-Other Flight Computers are represented as map contacts but their detailed identity information is NOT permanently displayed.
+Flight Computer contacts are compact markers. Do not permanently display detailed identity data over the map.
 
-The map marker should remain compact. Right-clicking a Flight Computer marker opens a contact information panel containing, where permitted:
+Right-clicking a contact marker opens its information panel containing, where permitted:
 
 - Ship Name
 - Callsign
 - Owner
 - Distance
 - Altitude
-- Heading
 - Velocity
+- Heading
 - Flight mode/status
 - Stable contact UUID
+- Contact age/staleness
 
-The contact panel may provide actions such as `TRACK CONTACT` and `SET AS NAVIGATION TARGET`.
+The contact panel may expose:
 
-## Combat control profile
+- `TRACK CONTACT`
+- `SET AS NAVIGATION TARGET`
 
-Combat is a control profile separate from the primary flight mode. It has exactly two operational modes:
+Contacts are live telemetry records. A stale contact becomes `LOST CONTACT`; the controller must not continue flying indefinitely toward its last known coordinate.
 
-### Defensive
+## 3. Flight modes and independent holds
 
-The pilot enters a configurable Home/Escape location in a text box and commits it with a small `SET HOME` button.
+Primary modes remain:
 
-The controller can perform fast evasive manoeuvres while maintaining stabilisation and, when activated, flee toward the configured home location. It should prioritise survival, obstacle avoidance and route-to-home over normal navigation objectives.
+- MANUAL
+- STABILIZED
+- AUTOPILOT
 
-### Offensive
+Independent secondary holds are separate controls and can be combined as appropriate:
 
-The pilot enters a target callsign in a text box and commits it with a small `SET TARGET` button.
+- Altitude Hold
+- Heading Hold
+- Position Hold
+- Velocity Hold
 
-The controller resolves the callsign against active Flight Computer contacts and can track that contact as a dynamic navigation target. The target position must be refreshed from live contact telemetry rather than converted into a static coordinate once.
+Do not make Autopilot a monolithic function that owns every hold.
 
-Offensive mode must not automatically fire or control weapons. It provides flight/track assistance only; any weapon system remains separately controlled.
+Control profiles are separate from primary flight mode:
 
-Combat UI should clearly expose:
+- NORMAL
+- COMBAT
+- LANDING
+- EMERGENCY
 
-- Mode: DEFENSIVE / OFFENSIVE
-- Home or Target field depending on mode
-- Target/contact resolution state
-- Current distance
-- Relative velocity
-- Bearing/heading
-- `ENGAGE COMBAT ASSIST`
-- `ABORT`
+## 4. Combat flight profile
 
-## Landing modes
+Combat has exactly two operational modes.
 
-Landing is separate from docking.
+### DEFENSIVE
+
+- Text box for configurable Home/Escape location.
+- Small `SET HOME` action.
+- Fast evasive manoeuvre assistance.
+- Stabilisation remains available while evading.
+- `FLEE / RETURN HOME` drives toward the configured home location.
+- Survival, terrain/collision safety and return-to-home outrank normal route objectives.
+
+### OFFENSIVE
+
+- Text box for target callsign.
+- Small `SET TARGET` action.
+- Resolve against active Flight Computer contacts.
+- Track live target position/velocity/heading rather than a stale coordinate.
+- Display contact resolution, distance, relative velocity and bearing.
+- `ENGAGE COMBAT ASSIST` and `ABORT` controls.
+- Offensive assistance never fires or controls weapons; weapon systems remain independent.
+
+Combat assistance must be fast enough to support evasive manoeuvres and asymmetric multi-thruster control.
+
+## 5. Thruster banks, authority and failure handling
+
+The universal allocator remains based on actual thruster:
+
+- local direction
+- mount position
+- vehicle orientation
+- available force
+- torque authority
+- vehicle mass/inertia
+
+Multi-thruster-per-vector banks are first-class. Never assume a fixed number of thrusters, craft size or mass.
+
+Add structural support for:
+
+- primary thrust
+- manoeuvre thrust
+- vertical thrust
+- braking thrust
+- combat manoeuvre thrust
+- emergency thrust
+
+Diagnostics should expose bank authority and degraded/failed thruster counts. The allocator should redistribute authority when a bank loses usable thrust rather than blindly continuing with the failed output.
+
+## 6. Thermal and cooling separation
+
+THERMAL and COOLING remain completely independent screens.
+
+THERMAL owns:
+
+- temperature
+- normal/warm/hot/critical/shutdown state
+- heat load
+- thermal lockout
+- recovery
+- power/thermal protection
+
+COOLING owns:
+
+- three cooling bays
+- upgrade insertion/removal
+- active cooling tier
+- cooling rate
+- cooling mode
+
+Cooling modes have structural support for:
+
+- PASSIVE
+- BALANCED
+- AGGRESSIVE
+- EMERGENCY
+
+The current moderated 20M FE power/heat baseline remains part of this patch line.
+
+## 7. Emergency systems
+
+SYSTEM/EMERGENCY controls must include structural support for:
+
+- Emergency Stabilise
+- Emergency Brake
+- Thrust Cutoff
+- Controlled Descent
+- Emergency Shutdown
+- Emergency Return/Home
+
+Emergency/override release must be capable of cancelling lower-priority objectives immediately.
+
+## 8. Landing system
+
+Landing is deliberately separate from docking.
 
 ### Landing Assist / Scan
 
-Scan the nearby terrain/landing area and select a safe landing region. The controller performs a controlled descent and stops safely below/over the selected landing approach height. It does NOT attempt to connect to a docking block.
+- Scan nearby terrain/landing area.
+- Determine a safe landing region/approach.
+- Controlled descent.
+- Safely settle below/over the selected landing approach height.
+- Does not seek or connect to a docking block.
 
 ### Auto-Docking
 
-Scan for the nearest compatible docking block/connector associated with a landing pad. The controller should:
+- Scan for the nearest compatible docking block/connector associated with a landing pad.
+- Establish a dynamic approach point.
+- Align the vehicle with the connector.
+- Reduce relative velocity.
+- Approach the connector.
+- Complete docking when the connector condition is satisfied.
+- Hold after docking.
 
-1. Find a valid docking target.
-2. Establish an approach point.
-3. Align vehicle orientation with the docking connector.
-4. Reduce relative velocity.
-5. Approach the connector.
-6. Complete docking when the connector/docking condition is satisfied.
-7. Hold position after docking.
+The docking target must remain dynamic and must not be reduced permanently to an old coordinate.
 
-The docking target is a dynamic target and must not be permanently replaced by a stale coordinate.
-
-## Docking override
+## 9. Docking override
 
 Auto-Docking has a clearly visible red `OVERRIDE` control.
 
-- Normal state: Auto-Docking may control alignment/approach.
-- Override active: automatic docking control is immediately released and pilot control is restored.
-- Override must be safe to use during an approach and must not leave the controller continuing to command the old docking target.
-- Pilot can then take off/manually manoeuvre without having to disable the entire Flight Computer.
+When activated:
 
-## Control priority
+- docking automation immediately relinquishes control;
+- old docking targets/commands are cancelled;
+- pilot/manual control returns immediately;
+- the controller can take off without disabling the whole Flight Computer.
 
-The runtime should resolve objectives in this order:
+The override must be safe to activate during an approach.
 
-1. Emergency/override release.
-2. Collision/terrain safety.
-3. Thermal/power protection.
-4. Defensive flee / emergency return.
-5. Docking approach/alignment when explicitly engaged.
-6. Landing assist.
-7. Offensive contact tracking when explicitly engaged.
-8. Route navigation.
-9. Stabilisation/heading/altitude assistance.
-10. Manual pilot input.
+## 10. Navigation and route planning
 
-The exact implementation may refine priority ordering, but a higher-priority safety function must be able to cancel a lower-priority objective cleanly.
+ROUTE owns:
 
-## Dynamic contact targeting
+- Waystones
+- Waypoints
+- coordinate destinations
+- route segments
+- ordering/reordering
+- route execution
+- dynamic Flight Computer contacts
 
-A Flight Computer contact is a first-class navigation target. It is represented by stable identity plus live telemetry:
+A route segment can eventually carry:
 
-- UUID
-- Ship name
-- Callsign
-- World position
-- Velocity
-- Heading
-- Flight mode/status
-- Last update tick/time
+- target
+- altitude
+- desired speed
+- arrival behaviour
 
-A contact target must expire or become `LOST CONTACT` when telemetry is stale. The controller must not blindly fly to the last known position forever.
+Dynamic Flight Computer contacts can become navigation targets without converting them into a permanent static coordinate.
 
-## Universal vehicle behaviour
+## 11. Collision / terrain awareness
 
-All control systems must remain vehicle-size independent. Thruster allocation must continue to use actual thruster positions, local directions, vehicle orientation, available force and torque authority. No fixed number of thrusters, fixed craft dimensions or fixed mass assumptions may be used.
+The control stack has structural support for:
 
-## Testing requirements
+- forward clearance
+- terrain clearance
+- obstacle detection
+- safe braking/avoidance
 
-Before declaring this expansion complete:
+Safety can interrupt route, combat tracking, landing or docking when an immediate collision hazard is detected.
 
-1. Open each subsystem and verify only that subsystem's UI is rendered.
-2. Switch between every tab repeatedly and confirm no widgets/text from the previous screen remain.
-3. Set a ship name/callsign and reload/rejoin to confirm persistence.
-4. Verify another ship marker remains compact until right-clicked.
-5. Verify right-click contact details show current telemetry.
-6. Defensive combat: set home, engage, verify evasive flight and return-to-home behaviour.
-7. Offensive combat: set callsign, verify live target tracking and stale-contact handling.
-8. Landing Assist: scan and perform controlled landing without docking.
-9. Auto-Docking: locate nearest valid docking connector, align, approach and dock.
-10. Activate red docking override during approach and verify automatic commands stop immediately and manual control returns.
-11. Test all behaviours on both small and large vehicles with multiple thrusters per vector.
-12. Run `./gradlew clean build` after implementation and resolve all compile errors before gameplay validation.
+## 12. Pre-flight check
+
+DIAGNOSTICS/SYSTEM should provide a pre-flight checklist covering:
+
+- Flight Computer present
+- power available
+- stabiliser available
+- multi-vector thrust coverage
+- thruster authority
+- braking authority
+- cooling
+- thermal state
+- route/navigation readiness
+- terrain safety
+- docking/landing readiness where requested
+- degraded/failed banks
+
+The result should identify actionable failures instead of only reporting a generic failure.
+
+## 13. Diagnostics and telemetry
+
+Diagnostics should expose enough live information to explain why the craft is not behaving correctly:
+
+- mass
+- inertia where available
+- position
+- velocity
+- heading/pitch/roll
+- angular rates
+- control-loop rate
+- PID values
+- control authority
+- thruster bank authority
+- power draw/storage
+- thermal load/state
+- target state
+- route state
+- active safety override
+
+## 14. Control priority
+
+The runtime must resolve competing objectives centrally rather than letting separate features fight over the thrusters:
+
+1. Emergency / explicit override release
+2. Collision / terrain safety
+3. Thermal / power protection
+4. Defensive flee / emergency return
+5. Auto-docking approach/alignment
+6. Landing assist
+7. Offensive contact tracking
+8. Route navigation
+9. Stabilisation / independent holds
+10. Manual assistance
+
+A higher-priority system must be able to cancel a lower-priority objective cleanly.
+
+## 15. Universal vehicle requirement
+
+Everything must work for small and massive vehicles.
+
+No fixed dimensions, fixed mass, fixed thruster count or hand-tuned vector assumptions. Multi-thruster-per-vector allocation, actual mount offsets, local directions, orientation and physical inertia remain the source of truth.
+
+## 16. Patch implementation rule
+
+Every item in this document is marked **ADDED TO PHASE 5.2**. The implementation order is:
+
+1. data/state structures and persistence;
+2. server-authoritative network contracts;
+3. control/runtime objective arbitration;
+4. contact/identity registry and live telemetry;
+5. isolated subsystem screens;
+6. UI polish;
+7. compile validation;
+8. gameplay validation on small and large multi-thruster vehicles.
+
+Do not mark a feature complete merely because a button or screen exists. Its state, network path and runtime behaviour must exist at the base layer.
+
+## 17. Validation gate
+
+Before declaring Phase 5.2 complete:
+
+1. Open every subsystem repeatedly; only its own content may render.
+2. Verify Thermal/Cooling never leak into other screens.
+3. Set ship name/callsign and verify persistence after reload/rejoin.
+4. Verify compact map contact markers and right-click-only identity details.
+5. Verify defensive home/evasive/return behaviour.
+6. Verify offensive callsign tracking and stale-contact handling.
+7. Verify independent holds.
+8. Verify Landing Scan/safe descent without docking.
+9. Verify Auto-Docking scan/alignment/approach/dock.
+10. Activate red docking override during approach and verify immediate manual control.
+11. Verify emergency controls cancel lower-priority objectives.
+12. Verify pre-flight diagnostics catch missing/degraded control authority.
+13. Verify multi-thruster allocation on both small and massive vehicles.
+14. Run `./gradlew clean build` and resolve every compile error before gameplay validation.
