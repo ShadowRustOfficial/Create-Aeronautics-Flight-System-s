@@ -6,9 +6,11 @@ import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.client.map.FlightControllerWorldPositionResolver;
 import com.flightcomputer.client.map.FlightMapDiagnostics;
+import com.flightcomputer.client.map.FlightMapMarker;
 import com.flightcomputer.client.map.FlightMapPipeline;
 import com.flightcomputer.client.map.FlightMapProviderKind;
 import com.flightcomputer.client.map.LiveWorldMapProvider;
+import com.flightcomputer.client.map.WaystoneMapProvider;
 import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -30,16 +32,19 @@ public final class NavigationConsoleScreen extends Screen {
     private static final int RED = 0xFFFF5555;
     private static final int TEXT = 0xFFE6EEF2;
     private static final int MUTED = 0xFF9DAEB5;
+    private static final int WAYSTONE = 0xFFFFCC55;
 
     private final BlockPos controllerPos;
     private final LiveWorldMapProvider mapProvider = new LiveWorldMapProvider();
     private final FlightMapPipeline mapPipeline = new FlightMapPipeline(mapProvider);
     private final FlightControllerWorldPositionResolver worldPositionResolver = new FlightControllerWorldPositionResolver();
+    private final WaystoneMapProvider waystoneMapProvider = new WaystoneMapProvider();
 
     private Tab tab = Tab.MAP;
     private FlightControllerBlockEntity controller;
     private boolean showTerrain = true;
     private boolean showFlightMap = true;
+    private boolean showWaypoints = true;
     private double mapCenterX;
     private double mapCenterZ;
     private double controllerWorldX;
@@ -100,7 +105,10 @@ public final class NavigationConsoleScreen extends Screen {
             b.setMessage(flightMapLabel());
         }).bounds(x, y, w, 20).build());
         x += w + gap;
-        addRenderableWidget(Button.builder(Component.literal("WAYPOINTS: DEFERRED"), b -> {}).bounds(x, y, 142, 20).build());
+        addRenderableWidget(Button.builder(waypointLabel(), b -> {
+            showWaypoints = !showWaypoints;
+            b.setMessage(waypointLabel());
+        }).bounds(x, y, 142, 20).build());
         x += 146;
         addRenderableWidget(Button.builder(Component.literal("CLAIMS: ON"), b -> {}).bounds(x, y, w, 20).build());
         x += w + gap;
@@ -122,6 +130,7 @@ public final class NavigationConsoleScreen extends Screen {
 
     private Component terrainLabel() { return Component.literal("TERRAIN: " + (showTerrain ? "ON" : "OFF")); }
     private Component flightMapLabel() { return Component.literal("FLIGHT MAP: " + (showFlightMap ? "ON" : "OFF")); }
+    private Component waypointLabel() { return Component.literal("WAYPOINTS: " + (showWaypoints ? "ON" : "OFF")); }
 
     private Vec3 resolvePlayerWorldPosition() {
         if (minecraft == null || minecraft.level == null || minecraft.player == null) return null;
@@ -181,6 +190,7 @@ public final class NavigationConsoleScreen extends Screen {
         if (!controllerPowered()) { minecraft.setScreen(null); return; }
         updateControllerWorldPosition();
         mapPipeline.tick(minecraft.level, 4);
+        waystoneMapProvider.tick(minecraft.level);
     }
 
     @Override
@@ -233,11 +243,15 @@ public final class NavigationConsoleScreen extends Screen {
         g.enableScissor(mapL, mapT, mapR, mapB);
         if (showTerrain && minecraft != null && minecraft.level != null) renderTerrain(g, minecraft.level, mapL, mapT, mapR, mapB);
         if (showFlightMap) renderPositionOverlay(g, mapL, mapT, mapWidth, mapHeight);
+        if (showWaypoints) renderWaystoneMarkers(g, mapL, mapT, mapWidth, mapHeight);
         g.disableScissor();
 
         FlightMapDiagnostics d = mapPipeline.diagnostics();
         boolean online = showTerrain && d.provider() == FlightMapProviderKind.NATIVE_JOURNEYMAP_INSPIRED;
         g.drawString(font, "NATIVE TERRAIN: " + (online ? "ONLINE" : "OFFLINE"), mapL + 8, mapT + 8, online ? GREEN : RED);
+        if (showWaypoints && waystoneMapProvider.isAvailable()) {
+            g.drawString(font, "WAYSTONES: " + waystoneMapProvider.markers().size(), mapL + 8, mapT + 20, WAYSTONE);
+        }
         g.drawString(font, String.format("CENTRE X %.1f   Z %.1f", mapCenterX, mapCenterZ), mapL + 8, mapB - 30, MUTED);
         g.drawString(font, "DRAG TO PAN | 1 BLOCK/PIXEL", mapL + 8, mapB - 14, MUTED);
     }
@@ -287,6 +301,17 @@ public final class NavigationConsoleScreen extends Screen {
         drawDiamond(g, controllerX, controllerZ, 4, CYAN_BRIGHT);
     }
 
+    private void renderWaystoneMarkers(GuiGraphics g, int left, int top, int width, int height) {
+        for (FlightMapMarker marker : waystoneMapProvider.markers()) {
+            int x = worldToScreenX(marker.worldX(), left, width);
+            int z = worldToScreenZ(marker.worldZ(), top, height);
+            drawDiamond(g, x, z, 3, WAYSTONE);
+            if (Math.abs(x - (left + width / 2)) < width / 2 && Math.abs(z - (top + height / 2)) < height / 2) {
+                g.drawString(font, marker.label(), x + 5, z - 4, WAYSTONE);
+            }
+        }
+    }
+
     private int worldToScreenX(double x, int left, int width) { return (int)Math.round(left + width / 2.0D + (x - mapCenterX)); }
     private int worldToScreenZ(double z, int top, int height) { return (int)Math.round(top + height / 2.0D + (z - mapCenterZ)); }
 
@@ -305,8 +330,8 @@ public final class NavigationConsoleScreen extends Screen {
     private void renderRoute(GuiGraphics g, int left, int top) {
         g.drawString(font, "ROUTE / FLIGHT PLAN", left + 20, top + 10, TEXT);
         g.drawString(font, "WAYPOINT INTEROPERABILITY", left + 20, top + 45, CYAN_BRIGHT);
-        g.drawString(font, "Deferred until the native terrain renderer is stable.", left + 20, top + 82, MUTED);
-        g.drawString(font, "No external map-mod waypoint code is loaded by this screen.", left + 20, top + 108, MUTED);
+        g.drawString(font, "Waystone locations are now available to the native map marker layer.", left + 20, top + 82, MUTED);
+        g.drawString(font, "Route selection remains separate from marker discovery.", left + 20, top + 108, MUTED);
     }
 
     private void renderFlightControl(GuiGraphics g, int left, int top) {
@@ -340,10 +365,6 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font, "REQUESTED: " + d.requestedCount() + "  PENDING: " + d.pendingCount(), left + 20, top + 174, MUTED);
         g.drawString(font, "CACHE HITS: " + d.cacheHits() + "  MISSES: " + d.cacheMisses(), left + 20, top + 198, MUTED);
         g.drawString(font, "DECODED: " + d.decodedCount() + "  FAILED: " + d.failedCount(), left + 20, top + 222, MUTED);
-        g.drawString(font, "STATE: " + d.state().name(), left + 20, top + 246, d.state().name().equals("READY") ? GREEN : CYAN_BRIGHT);
-        g.drawString(font, "POSITION", left + 405, top + 150, TEXT);
-        g.drawString(font, String.format("CTRL LOCAL X  %.2f", (double) controllerPos.getX()), left + 405, top + 174, MUTED);
-        g.drawString(font, String.format("CTRL LOCAL Z  %.2f", (double) controllerPos.getZ()), left + 405, top + 196, MUTED);
         g.drawString(font, String.format("WORLD X  %.2f", controllerWorldX), left + 405, top + 218, CYAN_BRIGHT);
         g.drawString(font, String.format("WORLD Y  %.2f", controllerWorldY), left + 405, top + 240, CYAN_BRIGHT);
         g.drawString(font, String.format("WORLD Z  %.2f", controllerWorldZ), left + 405, top + 262, CYAN_BRIGHT);
