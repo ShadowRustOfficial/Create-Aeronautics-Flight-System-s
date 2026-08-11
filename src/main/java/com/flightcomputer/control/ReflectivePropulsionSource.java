@@ -11,10 +11,11 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Runtime adapter for propulsion mods that are intentionally not compile-time dependencies.
  *
- * <p>The Create Propulsion / Simulated API used here is verified against its public
- * ThrusterBlockEntity surface: getFacing(), getCurrentThrust(), getThrottle(),
- * getFuelAmountMb(), getFuelCapacityMb() and setRedstonePower(int). Other propulsion
- * implementations are accepted only when they expose equivalent capabilities.</p>
+ * <p>The controller itself is allowed to be the propulsion power command source. A
+ * redstone/throttle setter is therefore treated as an actuator interface, not as an
+ * external power-state requirement. This avoids the old circular condition where
+ * getAvailableThrust() required isPowered() before the controller was allowed to call
+ * setRedstonePower(), which made stabilisation unable to wake an otherwise usable thruster.</p>
  */
 public final class ReflectivePropulsionSource implements PropulsionSource {
     private static final double SIMULATED_STANDARD_MAX_THRUST = 600.0D;
@@ -52,7 +53,6 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
         return new ReflectivePropulsionSource(blockEntity, direction, mountOffset, accessor, type);
     }
 
-    /** Returns the physical facing of this propulsion block when its implementation exposes one. */
     public VectorDirection getPhysicalDirection() {
         if (accessor.facing == null) return null;
         Object value = invoke(accessor.facing);
@@ -83,7 +83,19 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
     }
 
     @Override public double getAvailableThrust() {
-        if (!isEnabled() || !isOperational() || !hasPower()) return 0.0D;
+        if (!isEnabled() || !isOperational()) return 0.0D;
+
+        // Fuel/energy is a real resource gate. A controller-driven redstone/throttle
+        // setter is not: the setter is how this controller supplies the command.
+        if (accessor.fuelAmount != null && accessor.fuelCapacity != null) {
+            Object amount = invoke(accessor.fuelAmount);
+            Object capacity = invoke(accessor.fuelCapacity);
+            if (amount instanceof Number a && capacity instanceof Number c && c.doubleValue() > 0.0D) {
+                if (a.doubleValue() <= 0.0D) return 0.0D;
+            }
+        } else if (accessor.redstonePower == null && accessor.thrustSetter == null && accessor.throttleSetter == null && !hasPower()) {
+            return 0.0D;
+        }
         return Math.max(0.0D, getMaxThrust());
     }
 
@@ -103,8 +115,7 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
     }
 
     @Override public boolean hasPower() {
-        if (type == PropulsionType.CREATE_PROPULSION_SIMULATED
-                && accessor.fuelAmount != null && accessor.fuelCapacity != null) {
+        if (accessor.fuelAmount != null && accessor.fuelCapacity != null) {
             Object amount = invoke(accessor.fuelAmount);
             Object capacity = invoke(accessor.fuelCapacity);
             if (amount instanceof Number a && capacity instanceof Number c && c.doubleValue() > 0.0D) {
@@ -118,10 +129,21 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
     @Override public double[] getMountOffset() { return mountOffset.clone(); }
 
     @Override public void applyThrust(double signedFraction) {
-        if (!isEnabled() || !isOperational() || !hasPower()) {
+        if (!isEnabled() || !isOperational()) {
             invokeInt(accessor.redstonePower, 0);
             return;
         }
+
+        // Fuel is checked only when the implementation exposes a fuel API. For a
+        // controller-driven redstone/throttle actuator, the command itself is what
+        // enables the thruster, so isPowered() must not prevent the command reaching it.
+        if (accessor.fuelAmount != null && accessor.fuelCapacity != null && !hasPower()) {
+            invokeInt(accessor.redstonePower, 0);
+            if (accessor.thrustSetter != null) invokeNumber(accessor.thrustSetter, 0.0D);
+            else if (accessor.throttleSetter != null) invokeNumber(accessor.throttleSetter, 0.0D);
+            return;
+        }
+
         double fraction = Math.max(0.0D, Math.min(1.0D, signedFraction));
         if (accessor.redstonePower != null) {
             invokeInt(accessor.redstonePower, (int) Math.round(fraction * 15.0D));
