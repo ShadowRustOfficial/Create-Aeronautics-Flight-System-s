@@ -14,23 +14,19 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Live diagnostics overlay and contact feed for Flight Computer telemetry. */
+/** Live diagnostics overlay and positional contact feed for Flight Computer telemetry. */
 @EventBusSubscriber(modid="flightcomputer", value=Dist.CLIENT)
 public final class FlightComputerTelemetryClient {
     private static final Map<UUID, FlightComputerNetwork.TelemetryPayload> SNAPSHOTS = new ConcurrentHashMap<>();
-
     private FlightComputerTelemetryClient() { }
 
     public static void accept(FlightComputerNetwork.TelemetryPayload payload) {
         if (payload == null) return;
         SNAPSHOTS.put(payload.controllerId(), payload);
-        FlightContactRegistry.upsert(new FlightContact(
-                payload.controllerId(),
-                payload.targetPresent() && !payload.targetName().isBlank() ? payload.targetName() : "",
-                payload.targetPresent() ? payload.targetName() : "",
-                "",
-                payload.x(), payload.y(), payload.z(), payload.speed(), payload.heading(),
-                payload.pitch(), payload.roll(), "ACTIVE", System.currentTimeMillis() / 50L));
+        // Telemetry is authoritative for position/motion. Ship identity is deliberately not inferred from targetName.
+        FlightContactRegistry.upsert(new FlightContact(payload.controllerId(), "", "", "",
+                payload.x(), payload.y(), payload.z(), payload.speed(), payload.heading(), payload.pitch(), payload.roll(),
+                "ACTIVE", System.currentTimeMillis() / 50L));
     }
 
     public static FlightComputerNetwork.TelemetryPayload get(UUID id) { return id == null ? null : SNAPSHOTS.get(id); }
@@ -49,9 +45,7 @@ public final class FlightComputerTelemetryClient {
         int width = 360, height = 168;
         int left = Math.max(8, mc.getWindow().getGuiScaledWidth() - width - 12);
         int top = Math.max(8, mc.getWindow().getGuiScaledHeight() - height - 12);
-        int thermalColor = switch (t.thermalState()) {
-            case 0 -> 0xFF55FF55; case 1 -> 0xFFFFFF55; case 2 -> 0xFFFFAA33; case 3 -> 0xFFFF5555; default -> 0xFFFF2222;
-        };
+        int thermalColor = switch (t.thermalState()) { case 0 -> 0xFF55FF55; case 1 -> 0xFFFFFF55; case 2 -> 0xFFFFAA33; case 3 -> 0xFFFF5555; default -> 0xFFFF2222; };
         double thermalFraction = fraction(t.temperature(), t.maxTemperature());
         g.fill(left, top, left + width, top + height, 0xED0B1116);
         g.fill(left, top, left + width, top + 2, thermalColor);
