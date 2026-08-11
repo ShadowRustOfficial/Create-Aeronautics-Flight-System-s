@@ -6,7 +6,9 @@
     "FlightControllerOperationsMixin",
     "FlightOperationsRuntimeMixin"
   ],
-  "client": [],
+  "client": [
+    "client.FlightControllerGoggleMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }
