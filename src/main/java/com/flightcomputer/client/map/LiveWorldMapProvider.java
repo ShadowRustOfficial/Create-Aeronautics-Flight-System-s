@@ -6,7 +6,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
 
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
@@ -16,17 +16,22 @@ import java.util.concurrent.Future;
 /**
  * Native terrain provider. Minecraft data is sampled only on the client thread;
  * expensive tile shading runs on bounded CPU workers and never touches Minecraft objects.
+ *
+ * Generated tiles are retained for the lifetime of the active world/dimension. The
+ * renderer may move its viewport without evicting already-generated terrain, so
+ * revisiting an area is a cache read rather than another CPU generation pass.
  */
 public final class LiveWorldMapProvider implements FlightMapDataProvider {
     private static final int MAX_JOBS = 64;
-    private static final int CACHE_LIMIT = 512;
-    private final Map<Long, int[]> cache = new LinkedHashMap<>(64, 0.75f, true) {
-        @Override protected boolean removeEldestEntry(Map.Entry<Long, int[]> eldest) {
-            return size() > CACHE_LIMIT;
-        }
-    };
+
+    /**
+     * Session-persistent terrain cache. Deliberately unbounded: generated terrain is
+     * authoritative for this client-world session and must not be evicted merely
+     * because the map viewport moved elsewhere.
+     */
+    private final Map<Long, int[]> cache = new HashMap<>();
     private final ArrayBlockingQueue<Long> queued = new ArrayBlockingQueue<>(MAX_JOBS);
-    private final Map<Long, Future<?>> running = new LinkedHashMap<>();
+    private final Map<Long, Future<?>> running = new HashMap<>();
     private final ExecutorService workers;
     private final CpuTerrainTileGenerator generator = new CpuTerrainTileGenerator();
 
@@ -47,9 +52,9 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
 
     @Override
     public synchronized void requestChunkTile(ClientLevel level, int chunkX, int chunkZ) {
-        if (level == null || cache.containsKey(key(chunkX, chunkZ))) return;
+        if (level == null) return;
         long key = key(chunkX, chunkZ);
-        if (running.containsKey(key) || queued.contains(key)) return;
+        if (cache.containsKey(key) || running.containsKey(key) || queued.contains(key)) return;
         if (queued.remainingCapacity() == 0 || !level.hasChunk(chunkX, chunkZ)) return;
 
         TerrainChunkSnapshot snapshot = capture(level, chunkX, chunkZ);
