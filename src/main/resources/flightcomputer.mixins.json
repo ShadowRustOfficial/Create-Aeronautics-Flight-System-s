@@ -3,7 +3,8 @@
   "compatibilityLevel": "JAVA_21",
   "package": "com.flightcomputer.mixin",
   "mixins": [
-    "FlightControllerOperationsMixin"
+    "FlightControllerOperationsMixin",
+    "FlightOperationsRuntimeMixin"
   ],
   "client": [
     "client.NavigationOperationsButtonMixin"
