@@ -2,11 +2,7 @@ package com.flightcomputer.avionics;
 
 import java.util.Optional;
 
-/**
- * The only commands accepted by a Flight Controller. Both the panel and the
- * console transmit these values, keeping validation and state transitions on
- * the server in one place.
- */
+/** Server-authoritative commands accepted by the Flight Controller. */
 public enum FlightControllerAction {
     TOGGLE_ENGAGED(0),
     TOGGLE_STABILISER(1),
@@ -19,22 +15,15 @@ public enum FlightControllerAction {
     TOGGLE_NAVIGATION(8),
     START_ROUTE(9),
     ABORT_ROUTE(10),
-    TOGGLE_TERRAIN(11);
+    TOGGLE_TERRAIN(11),
+    EMERGENCY_SHUTDOWN(12);
 
     private final int networkId;
-
-    FlightControllerAction(int networkId) {
-        this.networkId = networkId;
-    }
-
-    public int networkId() {
-        return networkId;
-    }
+    FlightControllerAction(int networkId) { this.networkId = networkId; }
+    public int networkId() { return networkId; }
 
     public static Optional<FlightControllerAction> fromNetworkId(int id) {
-        for (FlightControllerAction action : values()) {
-            if (action.networkId == id) return Optional.of(action);
-        }
+        for (FlightControllerAction action : values()) if (action.networkId == id) return Optional.of(action);
         return Optional.empty();
     }
 }

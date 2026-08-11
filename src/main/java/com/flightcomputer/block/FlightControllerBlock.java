@@ -1,6 +1,7 @@
 package com.flightcomputer.block;
 
 import com.flightcomputer.avionics.buttons.FlightControllerButtonLayout;
+import com.flightcomputer.control.FlightControlRuntimeManager;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -27,53 +28,27 @@ public class FlightControllerBlock extends BaseEntityBlock {
         super(properties);
         registerDefaultState(stateDefinition.any().setValue(FACING, Direction.NORTH));
     }
-
-    @Override
-    protected MapCodec<? extends BaseEntityBlock> codec() { return CODEC; }
-
+    @Override protected MapCodec<? extends BaseEntityBlock> codec() { return CODEC; }
     @Override public RenderShape getRenderShape(BlockState state) { return RenderShape.ENTITYBLOCK_ANIMATED; }
-
-    @Override
-    protected void createBlockStateDefinition(StateDefinition.Builder<net.minecraft.world.level.block.Block, BlockState> builder) {
-        builder.add(FACING);
-    }
-
-    @Override
-    public BlockState getStateForPlacement(net.minecraft.world.item.context.BlockPlaceContext context) {
+    @Override protected void createBlockStateDefinition(StateDefinition.Builder<net.minecraft.world.level.block.Block, BlockState> builder) { builder.add(FACING); }
+    @Override public BlockState getStateForPlacement(net.minecraft.world.item.context.BlockPlaceContext context) {
         return defaultBlockState().setValue(FACING, context.getHorizontalDirection().getOpposite());
     }
+    @Nullable @Override public BlockEntity newBlockEntity(BlockPos pos, BlockState state) { return new FlightControllerBlockEntity(pos, state); }
 
-    @Nullable @Override public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
-        return new FlightControllerBlockEntity(pos, state);
-    }
-
-    /**
-     * Shift-right-click with an empty offhand operates a physical panel control.
-     * Ordinary clicks are observed client-side and open the navigation console.
-     */
     @Override
     protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (!level.isClientSide && player.isShiftKeyDown() && player.getOffhandItem().isEmpty()
                 && level.getBlockEntity(pos) instanceof FlightControllerBlockEntity controller) {
             Direction facing = state.getValue(FACING);
             if (hit.getDirection() != facing) return InteractionResult.PASS;
-
             double localX = hit.getLocation().x - pos.getX();
             double localY = hit.getLocation().y - pos.getY();
             double localZ = hit.getLocation().z - pos.getZ();
-
-            double u;
-            double v = localY;
-
-            switch (facing) {
-                case NORTH -> u = 1.0 - localX;
-                case SOUTH -> u = localX;
-                case EAST -> u = 1.0 - localZ;
-                case WEST -> u = localZ;
-                default -> u = localX;
-            }
-
-            FlightControllerButtonLayout.find(u, v).ifPresent(button -> controller.applyAction(button.action()));
+            double u = switch (facing) {
+                case NORTH -> 1.0 - localX; case SOUTH -> localX; case EAST -> 1.0 - localZ; case WEST -> localZ; default -> localX;
+            };
+            FlightControllerButtonLayout.find(u, localY).ifPresent(button -> controller.applyAction(button.action()));
             return InteractionResult.SUCCESS;
         }
         return InteractionResult.sidedSuccess(level.isClientSide);
@@ -82,7 +57,10 @@ public class FlightControllerBlock extends BaseEntityBlock {
     @Nullable @Override
     public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state, BlockEntityType<T> type) {
         return level.isClientSide ? null : (currentLevel, currentPos, currentState, blockEntity) -> {
-            if (blockEntity instanceof FlightControllerBlockEntity controller) controller.serverTick();
+            if (blockEntity instanceof FlightControllerBlockEntity controller) {
+                controller.serverTick();
+                FlightControlRuntimeManager.tick(controller);
+            }
         };
     }
 }

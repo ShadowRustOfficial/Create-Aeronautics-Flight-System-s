@@ -1,0 +1,163 @@
+package com.flightcomputer.control;
+
+import com.flightcomputer.block.FlightControllerBlockEntity;
+import com.flightcomputer.network.FlightComputerNetwork;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
+import org.joml.Quaterniondc;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+/** Per-controller runtime owner. Terrain/map code is deliberately outside this package. */
+public final class FlightControlRuntimeManager {
+    private static final Map<UUID, Runtime> RUNTIMES = new ConcurrentHashMap<>();
+    private static final Map<UUID, Target> TARGETS = new ConcurrentHashMap<>();
+    private FlightControlRuntimeManager() { }
+
+    public static void tick(FlightControllerBlockEntity controller) {
+        if (controller == null || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
+        RUNTIMES.computeIfAbsent(controller.getControllerId(), id -> new Runtime()).tick(controller);
+    }
+    public static void setTarget(FlightControllerBlockEntity controller, Vec3 target, String name) {
+        if (controller != null && target != null) TARGETS.put(controller.getControllerId(), new Target(target, name == null ? "TARGET" : name));
+    }
+    public static void clearTarget(FlightControllerBlockEntity controller) { if (controller != null) TARGETS.remove(controller.getControllerId()); }
+    public static void remove(UUID controllerId) { RUNTIMES.remove(controllerId); TARGETS.remove(controllerId); }
+
+    private static final class Runtime {
+        private final SableVehicleStateProvider stateProvider = new SableVehicleStateProvider();
+        private final FlightComputer computer = new FlightComputer(stateProvider);
+        private long lastLinkRefresh = Long.MIN_VALUE;
+        private long lastTelemetry = Long.MIN_VALUE;
+
+        void tick(FlightControllerBlockEntity controller) {
+            stateProvider.update(controller);
+            Level level = controller.getLevel();
+            long time = level.getGameTime();
+            if (time - lastLinkRefresh >= 5) {
+                computer.getRegistry().refresh(level, controller.getBlockPos(), controller.getVectorLinks(FlightMode.STABILIZE),
+                        controller.getVectorLinks(FlightMode.CRUISE), time);
+                lastLinkRefresh = time;
+            }
+            Target target = TARGETS.get(controller.getControllerId());
+            if (target != null) computer.getNavigator().setTarget(target.position.x, target.position.y, target.position.z);
+            else computer.getNavigator().clearTarget();
+            if (controller.isEngaged() && !controller.isThermalLockout()) computer.tick(0.05D);
+            if (time - lastTelemetry >= 5) { lastTelemetry = time; sendTelemetry(controller, target); }
+        }
+
+        private void sendTelemetry(FlightControllerBlockEntity controller, Target target) {
+            VehicleState state = stateProvider.getState();
+            if (state == null) return;
+            double distance = target == null ? -1.0D : Math.sqrt(Math.pow(target.position.x - state.x, 2) + Math.pow(target.position.y - state.y, 2) + Math.pow(target.position.z - state.z, 2));
+            double[] s = authorities(computer.getRegistry(), FlightMode.STABILIZE);
+            double[] a = authorities(computer.getRegistry(), FlightMode.CRUISE);
+            for (ServerPlayer player : controller.getLevel().players()) {
+                if (player.distanceToSqr(controller.getBlockPos().getX() + 0.5D, controller.getBlockPos().getY() + 0.5D, controller.getBlockPos().getZ() + 0.5D) > 4096.0D) continue;
+                FlightComputerNetwork.sendTelemetry(player, new FlightComputerNetwork.TelemetryPayload(
+                        controller.getControllerId(), state.x, state.y, state.z,
+                        Math.sqrt(state.vx * state.vx + state.vy * state.vy + state.vz * state.vz),
+                        Math.toDegrees(state.yaw), Math.toDegrees(state.pitch), Math.toDegrees(state.roll),
+                        target != null, target == null ? 0 : target.position.x, target == null ? 0 : target.position.y, target == null ? 0 : target.position.z,
+                        target == null ? "" : target.name, distance, controller.getTemperature(), controller.getMaxTemperature(),
+                        controller.getThermalState().ordinal(), controller.getThermalCooldownTicksRemaining(),
+                        controller.getEnergyStorage().getEnergyStored(), controller.getEnergyStorage().getMaxEnergyStored(), controller.getCoolingTier().ordinal(),
+                        s[0], s[1], s[2], s[3], s[4], s[5], a[0], a[1], a[2], a[3], a[4], a[5]));
+            }
+        }
+        private double[] authorities(ThrusterRegistry registry, FlightMode mode) {
+            double[] values = new double[VectorDirection.values().length];
+            for (VectorDirection direction : VectorDirection.values()) values[direction.ordinal()] = registry.getVectorAuthority(mode, direction);
+            return values;
+        }
+    }
+
+    private record Target(Vec3 position, String name) { }
+
+    /** Sable is optional. When present, the exact verified companion pose APIs are used. */
+    private static final class SableVehicleStateProvider implements VehicleStateProvider {
+        private Object helper;
+        private Method getContaining;
+        private Method projectOut;
+        private boolean initialized;
+        private boolean available;
+        private Vec3 previousPosition;
+        private double previousPitch, previousRoll, previousYaw;
+        private VehicleState snapshot;
+
+        @Override public VehicleState getState() { return snapshot; }
+        void update(FlightControllerBlockEntity controller) {
+            if (controller == null || controller.getLevel() == null) return;
+            Level level = controller.getLevel();
+            Vec3 local = Vec3.atCenterOf(controller.getBlockPos());
+            Vec3 world = project(level, local);
+            VehicleState state = snapshot == null ? new VehicleState() : snapshot;
+            state.x = world.x; state.y = world.y; state.z = world.z;
+            if (previousPosition != null) {
+                state.vx = (world.x - previousPosition.x) * 20.0D;
+                state.vy = (world.y - previousPosition.y) * 20.0D;
+                state.vz = (world.z - previousPosition.z) * 20.0D;
+            }
+            Object subLevel = containing(level, controller);
+            if (subLevel != null) {
+                try {
+                    Object pose = subLevel.getClass().getMethod("logicalPose").invoke(subLevel);
+                    Object orientation = pose.getClass().getMethod("orientation").invoke(pose);
+                    if (orientation instanceof Quaterniondc q) {
+                        double w = q.w(), x = q.x(), y = q.y(), z = q.z();
+                        state.yaw = Math.atan2(2.0D * (w * y + x * z), 1.0D - 2.0D * (y * y + z * z));
+                        state.pitch = Math.asin(Math.max(-1.0D, Math.min(1.0D, 2.0D * (w * x - y * z))));
+                        state.roll = Math.atan2(2.0D * (w * z + x * y), 1.0D - 2.0D * (x * x + y * y));
+                    }
+                    Object tracker = invokeNoArg(subLevel, "getMassTracker", "massTracker");
+                    Object mass = tracker == null ? null : invokeNoArg(tracker, "getMass", "mass");
+                    if (mass instanceof Number number && number.doubleValue() > 0.0D) state.mass = number.doubleValue();
+                } catch (ReflectiveOperationException | RuntimeException ignored) { }
+            }
+            if (previousPosition != null) {
+                state.yawRate = angleDelta(state.yaw, previousYaw) * 20.0D;
+                state.pitchRate = angleDelta(state.pitch, previousPitch) * 20.0D;
+                state.rollRate = angleDelta(state.roll, previousRoll) * 20.0D;
+            }
+            state.timestampNanos = System.nanoTime();
+            previousPosition = world; previousYaw = state.yaw; previousPitch = state.pitch; previousRoll = state.roll;
+            snapshot = state.copy();
+        }
+        private Vec3 project(Level level, Vec3 local) {
+            if (!ensure()) return local;
+            try { Object value = projectOut.invoke(helper, level, local); return value instanceof Vec3 vec ? vec : local; }
+            catch (ReflectiveOperationException | RuntimeException ignored) { return local; }
+        }
+        private Object containing(Level level, FlightControllerBlockEntity controller) {
+            if (!ensure()) return null;
+            try { return getContaining.invoke(helper, controller); } catch (ReflectiveOperationException | RuntimeException ignored) { return null; }
+        }
+        private boolean ensure() {
+            if (initialized) return available;
+            initialized = true;
+            try {
+                Class<?> sable = Class.forName("dev.ryanhcode.sable.Sable", false, getClass().getClassLoader());
+                helper = sable.getField("HELPER").get(null);
+                getContaining = helper.getClass().getMethod("getContaining", net.minecraft.world.level.block.entity.BlockEntity.class);
+                projectOut = helper.getClass().getMethod("projectOutOfSubLevel", Level.class, net.minecraft.world.phys.Vec3.class);
+                available = true;
+            } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) { available = false; }
+            return available;
+        }
+        private static Object invokeNoArg(Object target, String... names) {
+            for (String name : names) try { return target.getClass().getMethod(name).invoke(target); } catch (ReflectiveOperationException | RuntimeException ignored) { }
+            return null;
+        }
+        private static double angleDelta(double current, double previous) {
+            double d = current - previous;
+            while (d > Math.PI) d -= Math.PI * 2.0D;
+            while (d < -Math.PI) d += Math.PI * 2.0D;
+            return d;
+        }
+    }
+}

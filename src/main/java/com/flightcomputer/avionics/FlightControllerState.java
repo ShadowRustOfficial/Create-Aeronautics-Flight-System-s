@@ -2,24 +2,18 @@ package com.flightcomputer.avionics;
 
 import net.minecraft.nbt.CompoundTag;
 
-/** Immutable, persisted source of truth for a single Flight Controller. */
+/** Immutable, persisted source of truth for one controller. */
 public record FlightControllerState(
-        boolean engaged,
-        boolean stabiliser,
-        FlightMode flightMode,
-        boolean altitudeHold,
-        boolean headingHold,
-        boolean positionHold,
-        boolean velocityHold,
-        boolean navigationEnabled,
-        boolean routeActive
-) {
-    public static final FlightControllerState DEFAULT = new FlightControllerState(
-            false, false, FlightMode.DISENGAGED, false, false, false, false, false, false);
+        boolean engaged, boolean stabiliser, FlightMode flightMode,
+        boolean altitudeHold, boolean headingHold, boolean positionHold, boolean velocityHold,
+        boolean navigationEnabled, boolean routeActive) {
+    public static final FlightControllerState DEFAULT = new FlightControllerState(false, false, FlightMode.DISENGAGED,
+            false, false, false, false, false, false);
 
     public FlightControllerState apply(FlightControllerAction action) {
         return switch (action) {
-            case TOGGLE_ENGAGED -> new FlightControllerState(!engaged, stabiliser, !engaged ? FlightMode.MANUAL : FlightMode.DISENGAGED,
+            case TOGGLE_ENGAGED -> new FlightControllerState(!engaged, stabiliser,
+                    !engaged ? FlightMode.MANUAL : FlightMode.DISENGAGED,
                     altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
             case TOGGLE_STABILISER -> new FlightControllerState(engaged, !stabiliser, flightMode,
                     altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
@@ -39,20 +33,16 @@ public record FlightControllerState(
                     altitudeHold, headingHold, positionHold, velocityHold, true, true);
             case ABORT_ROUTE -> new FlightControllerState(engaged, stabiliser, flightMode,
                     altitudeHold, headingHold, positionHold, velocityHold, false, false);
+            case EMERGENCY_SHUTDOWN -> new FlightControllerState(false, stabiliser, FlightMode.DISENGAGED,
+                    false, false, false, false, false, false);
             case PULSE_DISPLAY, TOGGLE_TERRAIN -> this;
         };
     }
 
     public void save(CompoundTag tag) {
-        tag.putBoolean("Engaged", engaged);
-        tag.putBoolean("Stabiliser", stabiliser);
-        tag.putString("FlightMode", flightMode.name());
-        tag.putBoolean("AltitudeHold", altitudeHold);
-        tag.putBoolean("HeadingHold", headingHold);
-        tag.putBoolean("PositionHold", positionHold);
-        tag.putBoolean("VelocityHold", velocityHold);
-        tag.putBoolean("NavigationEnabled", navigationEnabled);
-        tag.putBoolean("RouteActive", routeActive);
+        tag.putBoolean("Engaged", engaged); tag.putBoolean("Stabiliser", stabiliser); tag.putString("FlightMode", flightMode.name());
+        tag.putBoolean("AltitudeHold", altitudeHold); tag.putBoolean("HeadingHold", headingHold); tag.putBoolean("PositionHold", positionHold);
+        tag.putBoolean("VelocityHold", velocityHold); tag.putBoolean("NavigationEnabled", navigationEnabled); tag.putBoolean("RouteActive", routeActive);
     }
 
     public static FlightControllerState load(CompoundTag tag) {
