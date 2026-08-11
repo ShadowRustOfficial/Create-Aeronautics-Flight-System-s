@@ -16,7 +16,8 @@ public enum FlightControllerAction {
     START_ROUTE(9),
     ABORT_ROUTE(10),
     TOGGLE_TERRAIN(11),
-    EMERGENCY_SHUTDOWN(12);
+    EMERGENCY_SHUTDOWN(12),
+    TOGGLE_AUTOPILOT(13);
 
     private final int networkId;
     FlightControllerAction(int networkId) { this.networkId = networkId; }
