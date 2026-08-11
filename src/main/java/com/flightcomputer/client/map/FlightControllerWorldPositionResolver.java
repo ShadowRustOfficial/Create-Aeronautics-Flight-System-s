@@ -2,40 +2,63 @@ package com.flightcomputer.client.map;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 /**
- * Resolves a Flight Controller's local position into parent-world coordinates when
- * the controller is inside a Sable Sub-Level. Sable remains an optional runtime
- * integration: no compile-time Sable dependency is required.
+ * Resolves a Flight Controller's local Sub-Level position into parent-world coordinates.
+ * Sable remains an optional runtime integration: no compile-time Sable dependency is required.
  *
- * The Aeronautics/Simulated code uses Sable.HELPER.getContaining(level, Vec3),
- * then SubLevel.logicalPose().transformPosition(Vec3). The resolver mirrors
- * that exact local -> global path while keeping Sable optional at compile time.
- * Reflection handles are resolved once and reused; the hot path performs only
- * the containing lookup and pose transform.
+ * This follows the exact pattern used by Aeronautics/Simulated-Project's SimMovementContext:
+ * Sable.HELPER.getContaining(level, Vec3) -> SubLevel.logicalPose() -> transformPosition(Vec3).
+ *
+ * We also support Sable's BlockPos overload because SimLevelUtil uses it for containment checks.
+ * The BlockEntity/BlockState are intentionally treated as identity/validation data only: their
+ * BlockPos is still the Sub-Level's local/storage coordinate and is NOT itself world space.
  */
 public final class FlightControllerWorldPositionResolver {
     private static final String SABLE_CLASS = "dev.ryanhcode.sable.Sable";
+    private static final String SABLE_HELPER_CLASS = "dev.ryanhcode.sable.api.SubLevelHelper";
 
     private volatile boolean initialized;
     private volatile boolean available;
     private Object sableHelper;
-    private Method getContaining;
+    private Method getContainingVec3;
+    private Method getContainingBlockPos;
     private Method logicalPose;
     private Method transformPosition;
 
     public Vec3 resolve(Level level, BlockPos localPosition) {
+        return resolve(level, localPosition, null, null);
+    }
+
+    public Vec3 resolve(Level level, BlockEntity blockEntity) {
+        if (blockEntity == null) return null;
+        BlockPos pos = blockEntity.getBlockPos();
+        BlockState state = blockEntity.getBlockState();
+        return resolve(level, pos, blockEntity, state);
+    }
+
+    private Vec3 resolve(Level level, BlockPos localPosition, BlockEntity blockEntity, BlockState state) {
         if (level == null || localPosition == null) return null;
+
+        // The BE/state are deliberately not used as coordinates. They confirm that we are
+        // resolving the placed controller, while localPosition remains its local Sub-Level pos.
         Vec3 local = center(localPosition);
         if (!ensureInitialized()) return local;
 
         try {
-            // IMPORTANT: Sable's getContaining API accepts Vec3, not BlockPos.
-            Object subLevel = getContaining.invoke(sableHelper, level, local);
+            Object subLevel = null;
+            if (getContainingVec3 != null) {
+                subLevel = getContainingVec3.invoke(sableHelper, level, local);
+            }
+            if (subLevel == null && getContainingBlockPos != null) {
+                subLevel = getContainingBlockPos.invoke(sableHelper, level, localPosition);
+            }
             if (subLevel == null) return local;
 
             Object pose = logicalPose.invoke(subLevel);
@@ -63,10 +86,19 @@ public final class FlightControllerWorldPositionResolver {
                 sableHelper = helperField.get(null);
                 if (sableHelper == null) throw new IllegalStateException("Sable HELPER is null");
 
-                // Matches SimMovementContext in Creators-of-Aeronautics/Simulated-Project:
-                // Sable.HELPER.getContaining(level, position) where position is Vec3.
-                getContaining = sableHelper.getClass().getMethod("getContaining", Level.class, Vec3.class);
-                Class<?> subLevelClass = getContaining.getReturnType();
+                // Resolve against Sable's public helper contract rather than the concrete helper
+                // implementation. This avoids a false-negative when the implementation class
+                // changes while the API remains stable.
+                Class<?> helperType = Class.forName(SABLE_HELPER_CLASS, false, getClass().getClassLoader());
+                getContainingVec3 = findMethod(helperType, "getContaining", Level.class, Vec3.class);
+                getContainingBlockPos = findMethod(helperType, "getContaining", Level.class, BlockPos.class);
+                if (getContainingVec3 == null && getContainingBlockPos == null) {
+                    throw new NoSuchMethodException("Sable SubLevelHelper.getContaining overloads not found");
+                }
+
+                Class<?> subLevelClass = getContainingVec3 != null
+                        ? getContainingVec3.getReturnType()
+                        : getContainingBlockPos.getReturnType();
                 logicalPose = subLevelClass.getMethod("logicalPose");
                 Class<?> poseClass = logicalPose.getReturnType();
                 transformPosition = poseClass.getMethod("transformPosition", Vec3.class);
@@ -78,6 +110,14 @@ public final class FlightControllerWorldPositionResolver {
             }
         }
         return available;
+    }
+
+    private static Method findMethod(Class<?> type, String name, Class<?>... parameters) {
+        try {
+            return type.getMethod(name, parameters);
+        } catch (NoSuchMethodException ignored) {
+            return null;
+        }
     }
 
     private static Vec3 center(BlockPos pos) {
