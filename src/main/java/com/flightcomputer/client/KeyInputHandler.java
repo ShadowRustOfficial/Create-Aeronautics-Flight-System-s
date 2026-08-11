@@ -16,6 +16,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
@@ -53,6 +54,22 @@ public final class KeyInputHandler {
             linkDirection = linkDirection.next(1);
             FlightComputerNetwork.sendToolConfig(linkMode, linkDirection);
         }
+    }
+
+    /**
+     * While the UZ focus key is held, mouse-wheel input belongs to the Link Tool UI,
+     * not Minecraft's normal hotbar selection. Cancelling the event here prevents
+     * scrolling off the Flight Link Tool into another hotbar slot. As soon as focus
+     * is released, this handler does nothing and vanilla hotbar scrolling is restored.
+     */
+    @SubscribeEvent
+    public static void onLinkToolMouseScroll(InputEvent.MouseScrollingEvent event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.level == null) return;
+        if (!KeyBindings.LINK_FOCUS.isDown()) return;
+        if (!mc.player.getMainHandItem().is(ModItems.FLIGHT_LINK_TOOL.get())) return;
+
+        event.setCanceled(true);
     }
 
     @SubscribeEvent
