@@ -22,11 +22,18 @@ public final class MPCNavigator {
 
     public MPCNavigator(ObstacleSensor obstacleSensor) { this.obstacleSensor = obstacleSensor; }
     public MPCNavigator() { this(null); }
-    public void setTarget(double x, double y, double z) { targetX=x; targetY=y; targetZ=z; hasTarget=true; lastChosenHeadingOffsetDeg=0; }
+    public void setTarget(double x, double y, double z) {
+        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) return;
+        targetX=x; targetY=y; targetZ=z; hasTarget=true; lastChosenHeadingOffsetDeg=0; pathBlocked=false;
+    }
     public void clearTarget() { hasTarget=false; pathBlocked=false; }
     public boolean hasTarget() { return hasTarget; }
     public boolean isPathBlocked() { return pathBlocked; }
+    public double targetX() { return targetX; }
+    public double targetY() { return targetY; }
+    public double targetZ() { return targetZ; }
     public double distanceToTarget(VehicleState state) {
+        if (state == null || !hasTarget) return -1.0D;
         double dx=targetX-state.x, dy=targetY-state.y, dz=targetZ-state.z;
         return Math.sqrt(dx*dx+dy*dy+dz*dz);
     }
@@ -38,11 +45,16 @@ public final class MPCNavigator {
     }
 
     public StabilizationSetpoint plan(VehicleState state, double maxSpeed, double maxDeceleration) {
-        StabilizationSetpoint sp = new StabilizationSetpoint();
-        if (!hasTarget) return sp;
+        StabilizationSetpoint sp = StabilizationSetpoint.hover();
+        if (!hasTarget || state == null) return sp;
         double dx=targetX-state.x, dy=targetY-state.y, dz=targetZ-state.z;
         double flatDist=Math.sqrt(dx*dx+dz*dz);
-        if (flatDist < ARRIVAL_RADIUS && Math.abs(dy) < ARRIVAL_RADIUS) { pathBlocked=false; return sp; }
+        if (flatDist < ARRIVAL_RADIUS && Math.abs(dy) < ARRIVAL_RADIUS) {
+            pathBlocked=false;
+            sp.desiredYaw=state.yaw;
+            sp.yawIsRateNotHeading=false;
+            return sp;
+        }
 
         double bearing=Math.atan2(dx,dz);
         double radius=Math.max(0.5,state.boundingRadius), halfHeight=Math.max(0.5,state.boundingHalfHeight);
@@ -85,7 +97,7 @@ public final class MPCNavigator {
          * a destination west/east of the current course must produce an unambiguous yaw command.
          */
         double guidanceHeading = obstacleSensor == null ? bearing : bestHeading;
-        double guidanceSpeed = obstacleSensor == null ? bestSpeed : bestSpeed;
+        double guidanceSpeed = bestSpeed;
         lastChosenHeadingOffsetDeg=normalizeDegrees(Math.toDegrees(guidanceHeading-bearing));
         sp.yawIsRateNotHeading=false;
         sp.desiredYaw=guidanceHeading;
