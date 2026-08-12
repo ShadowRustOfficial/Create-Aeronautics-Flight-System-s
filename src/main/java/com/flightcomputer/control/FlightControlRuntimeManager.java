@@ -52,6 +52,18 @@ public final class FlightControlRuntimeManager {
         runtime.lastNavigatorTarget = null;
     }
 
+    /** Sets an explicit world Y level used by the altitude-hold PID. */
+    public static void setAltitudeHoldTarget(FlightControllerBlockEntity controller, double y) {
+        if (controller == null || !Double.isFinite(y)) return;
+        Runtime runtime = runtime(controller);
+        runtime.altitudeHoldTargetY = y;
+        if (runtime.computer != null) runtime.computer.setAltitudeHoldTarget(y);
+    }
+
+    public static double altitudeHoldTarget(FlightControllerBlockEntity controller) {
+        return runtime(controller).altitudeHoldTargetY;
+    }
+
     public static Vec3 target(FlightControllerBlockEntity controller) { return runtime(controller).target; }
     public static String targetName(FlightControllerBlockEntity controller) { return runtime(controller).targetName; }
     public static boolean hasTarget(FlightControllerBlockEntity controller) {
@@ -127,6 +139,7 @@ public final class FlightControlRuntimeManager {
         private Vec3 target;
         private String targetName = "";
         private boolean targetActive;
+        private double altitudeHoldTargetY = Double.NaN;
         private FlightComputer computer;
         private Vec3 lastNavigatorTarget;
         private Object helper;
@@ -139,8 +152,6 @@ public final class FlightControlRuntimeManager {
             Level level = controller.getLevel();
             Vec3 local = Vec3.atCenterOf(controller.getBlockPos());
 
-            // The controller is itself a Sable sub-level actor. Resolve its containing sub-level
-            // from the BlockEntity rather than guessing from an extreme plot coordinate.
             Object subLevel = containing(level, controller, local);
             Vec3 world = project(subLevel, level, local);
             VehicleState state = snapshot == null ? new VehicleState() : snapshot;
@@ -177,8 +188,6 @@ public final class FlightControlRuntimeManager {
                 double halfHeight=readDouble(subLevel,"getBoundingHalfHeight","boundingHalfHeight","getHalfHeight"); if(halfHeight>0)state.boundingHalfHeight=Math.max(1,halfHeight);
             } catch (ReflectiveOperationException|RuntimeException ignored) { }
 
-            // Never differentiate raw Sable plot coordinates. If Sable velocity is unavailable,
-            // only differentiate already-projected logical world coordinates.
             if(!physicalVelocity&&previousPosition!=null){
                 state.vx=(world.x-previousPosition.x)*20;
                 state.vy=(world.y-previousPosition.y)*20;
@@ -198,6 +207,7 @@ public final class FlightControlRuntimeManager {
         private void control(FlightControllerBlockEntity controller) {
             if(controller==null||controller.getLevel()==null||controller.getLevel().isClientSide()||snapshot==null)return;
             if(computer==null)computer=new FlightComputer(()->snapshot);
+            computer.setAltitudeHoldTarget(altitudeHoldTargetY);
             ThrusterRegistry registry=computer.getRegistry();
             registry.refresh(controller.getLevel(),controller.getBlockPos(),controller.getVectorLinks(FlightMode.STABILIZE),controller.getVectorLinks(FlightMode.CRUISE),controller.getLevel().getGameTime());
             if(targetActive&&target!=null){if(lastNavigatorTarget==null||!target.equals(lastNavigatorTarget)){computer.getNavigator().setTarget(target.x,target.y,target.z);lastNavigatorTarget=target;}}
