@@ -32,6 +32,12 @@ public final class KeyInputHandler {
         registered = true;
     }
 
+    private static boolean holdingLinkTool(Minecraft mc) {
+        if (mc.player == null) return false;
+        return mc.player.getMainHandItem().is(ModItems.FLIGHT_LINK_TOOL.get())
+                || mc.player.getOffhandItem().is(ModItems.FLIGHT_LINK_TOOL.get());
+    }
+
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
@@ -51,14 +57,13 @@ public final class KeyInputHandler {
             mc.setScreen(new ThermalConsoleScreen(hit.getBlockPos()));
         }
 
-        ItemStack held = mc.player == null ? ItemStack.EMPTY : mc.player.getMainHandItem();
-        if (!held.is(ModItems.FLIGHT_LINK_TOOL.get())) return;
+        if (!holdingLinkTool(mc)) return;
 
-        if (KeyBindings.LINK_MODE_TOGGLE.consumeClick()) {
+        while (KeyBindings.LINK_MODE_TOGGLE.consumeClick()) {
             linkMode = linkMode == FlightMode.STABILIZE ? FlightMode.CRUISE : FlightMode.STABILIZE;
             FlightComputerNetwork.sendToolConfig(linkMode, linkDirection);
         }
-        if (KeyBindings.LINK_VECTOR_NEXT.consumeClick()) {
+        while (KeyBindings.LINK_VECTOR_NEXT.consumeClick()) {
             linkDirection = linkDirection.next(1);
             FlightComputerNetwork.sendToolConfig(linkMode, linkDirection);
         }
@@ -69,7 +74,7 @@ public final class KeyInputHandler {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
         if (!KeyBindings.LINK_FOCUS.isDown()) return;
-        if (!mc.player.getMainHandItem().is(ModItems.FLIGHT_LINK_TOOL.get())) return;
+        if (!holdingLinkTool(mc)) return;
         double scroll = event.getScrollDeltaY();
         if (scroll != 0.0D) {
             linkDirection = linkDirection.next(scroll > 0.0D ? 1 : -1);
@@ -83,7 +88,7 @@ public final class KeyInputHandler {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
         if (!KeyBindings.LINK_FOCUS.isDown()) return;
-        if (!mc.player.getMainHandItem().is(ModItems.FLIGHT_LINK_TOOL.get())) return;
+        if (!holdingLinkTool(mc)) return;
         GuiGraphics g = event.getGuiGraphics();
         int w = mc.getWindow().getGuiScaledWidth();
         int h = mc.getWindow().getGuiScaledHeight();
