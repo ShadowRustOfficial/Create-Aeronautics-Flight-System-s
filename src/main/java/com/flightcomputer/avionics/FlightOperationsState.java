@@ -72,6 +72,27 @@ public final class FlightOperationsState {
     public void setHold(FlightHold hold, boolean enabled) { if (hold != null) { if (enabled) holds.add(hold); else holds.remove(hold); } }
     public boolean hasHold(FlightHold hold) { return hold != null && holds.contains(hold); }
 
+    /** Applies a server-side operation transition without touching the legacy flight controller state. */
+    public FlightOperationsActionResult apply(FlightOperationsAction action) {
+        if (action == null) return FlightOperationsActionResult.rejected(this, null, "INVALID_ACTION");
+        switch (action) {
+            case TOGGLE_MAP_CONTACT -> mapContactVisible = !mapContactVisible;
+            case SET_COMBAT_DEFENSIVE -> { combatMode = CombatMode.DEFENSIVE; if (combatAssist) offensiveCallsign = ""; }
+            case SET_COMBAT_OFFENSIVE -> combatMode = CombatMode.OFFENSIVE;
+            case TOGGLE_COMBAT_ASSIST -> combatAssist = !combatAssist;
+            case TOGGLE_LANDING_ASSIST -> landingAssist = !landingAssist;
+            case TOGGLE_AUTO_DOCKING -> {
+                setAutoDocking(!autoDocking);
+                if (autoDocking) dockingOverride = false;
+            }
+            case DOCKING_OVERRIDE -> setDockingOverride(true);
+            case TOGGLE_TERRAIN_SAFETY -> terrainSafety = !terrainSafety;
+            case TOGGLE_EMERGENCY_RETURN -> emergencyReturn = !emergencyReturn;
+            case CLEAR_TRACKED_CONTACT -> trackedContact = null;
+        }
+        return FlightOperationsActionResult.accepted(this, action);
+    }
+
     public void resetOperationalAssist() {
         combatAssist = false; landingAssist = false; autoDocking = false; dockingOverride = false;
         emergencyReturn = false; trackedContact = null; dockingState = DockingState.IDLE;
