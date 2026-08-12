@@ -19,11 +19,16 @@ public final class SixAxisStabilizer {
         Map<ControlAxis, Double> out = new EnumMap<>(ControlAxis.class);
         double pitchError = wrapAngle(sp.desiredPitch - state.pitch);
         double rollError = wrapAngle(sp.desiredRoll - state.roll);
-        double yawError = sp.yawIsRateNotHeading ? sp.desiredYawRate - state.yawRate : wrapAngle(sp.desiredYaw - state.yaw);
+        double yawError = sp.yawIsRateNotHeading
+                ? sp.desiredYawRate - state.yawRate
+                : wrapAngle(sp.desiredYaw - state.yaw);
 
         out.put(ControlAxis.PITCH, pitchPID.update(pitchError, state.pitch, dt, state.inertiaPitch));
         out.put(ControlAxis.ROLL, rollPID.update(rollError, state.roll, dt, state.inertiaRoll));
-        out.put(ControlAxis.YAW, yawPID.update(yawError, state.yaw, dt, state.inertiaYaw));
+        // Rate-command yaw must differentiate measured yaw rate, not absolute yaw. Using yaw
+        // here produces a false derivative term and can leave yaw thrusters active at rest.
+        out.put(ControlAxis.YAW, yawPID.update(yawError,
+                sp.yawIsRateNotHeading ? state.yawRate : state.yaw, dt, state.inertiaYaw));
 
         double vertError = sp.desiredVerticalVelocity - state.vy;
         double vertForce = verticalPID.update(vertError, state.vy, dt, state.mass) + state.mass * gravity;
