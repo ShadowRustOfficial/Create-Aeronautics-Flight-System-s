@@ -53,7 +53,7 @@ public final class FlightComputer {
     public double distanceToTarget(){VehicleState state=stateProvider.getState();return state!=null&&navigator.hasTarget()?navigator.distanceToTarget(state):-1;}
     public boolean isCruisePathBlocked(){return mode==FlightMode.CRUISE&&navigator.isPathBlocked();}
     public void tick(double dt){tick(dt,true,navigator.hasTarget());}
-    /** Runs the active control layers once. Stabilisation and autopilot retain their original axis arbitration. */
+    /** Runs the active control layers once. Stabilisation and autopilot share the actuator allocator without disabling one another. */
     public void tick(double dt,boolean stabiliserEnabled,boolean autopilotEnabled){
         VehicleState state=stateProvider.getState(); if(state==null)return;
         Map<ControlAxis,Double> stabiliseCommands=Map.of();
@@ -61,7 +61,7 @@ public final class FlightComputer {
             StabilizationSetpoint sp=StabilizationSetpoint.manualNudge(pitchStick,rollStick,yawRateStick,verticalStick,longitudinalStick,lateralStick,maxManualTiltRadians,maxManualYawRate,maxManualSpeed);
             applyHoldSetpoints(sp,state,!autopilotEnabled);
             stabiliseCommands=stabilizeStabilizer.computeCommands(state,sp,dt);
-            if(autopilotEnabled) stabiliseCommands=filterAxes(stabiliseCommands,true);
+            if(autopilotEnabled) stabiliseCommands=filterStabilizerAxes(stabiliseCommands);
         }else stabilizeStabilizer.resetAll();
         Map<ControlAxis,Double> autopilotCommands=Map.of();
         if(autopilotEnabled&&navigator.hasTarget()){
@@ -75,7 +75,7 @@ public final class FlightComputer {
             if(altitudeHold && Double.isFinite(altitudeHoldTargetY)) sp.desiredVerticalVelocity=clamp((altitudeHoldTargetY-state.y)*.9,-maxManualSpeed,maxManualSpeed);
             applyHoldSetpoints(sp,state,false);
             autopilotCommands=cruiseStabilizer.computeCommands(state,sp,dt);
-            if(stabiliserEnabled) autopilotCommands=filterAxes(autopilotCommands,false);
+            if(stabiliserEnabled) autopilotCommands=filterAutopilotAxes(autopilotCommands);
             mode=FlightMode.CRUISE;
             if(navigator.distanceToTarget(state)<1.0)disengageCruise();
         }else{cruiseStabilizer.resetAll();ticksSinceReplan=0;lastCruiseLongitudinalVelocity=0;}
@@ -92,10 +92,24 @@ public final class FlightComputer {
         return lastCruiseLongitudinalVelocity;
     }
     private static double normalizeRadians(double radians){double r=radians%(Math.PI*2.0);if(r>Math.PI)r-=Math.PI*2.0;if(r<-Math.PI)r+=Math.PI*2.0;return r;}
-    private static Map<ControlAxis,Double> filterAxes(Map<ControlAxis,Double> source,boolean rotational){
+    /** When both systems are active, the stabiliser keeps the vessel level while autopilot owns navigation yaw. */
+    private static Map<ControlAxis,Double> filterStabilizerAxes(Map<ControlAxis,Double> source){
         if(source==null||source.isEmpty())return Map.of();
         Map<ControlAxis,Double> result=new EnumMap<>(ControlAxis.class);
-        for(Map.Entry<ControlAxis,Double> entry:source.entrySet()) if(entry.getKey().isRotational()==rotational) result.put(entry.getKey(),entry.getValue());
+        for(Map.Entry<ControlAxis,Double> entry:source.entrySet()) {
+            ControlAxis axis=entry.getKey();
+            if(axis==ControlAxis.PITCH||axis==ControlAxis.ROLL) result.put(axis,entry.getValue());
+        }
+        return result;
+    }
+    /** When both systems are active, autopilot owns translation and yaw so it can actually navigate to the target. */
+    private static Map<ControlAxis,Double> filterAutopilotAxes(Map<ControlAxis,Double> source){
+        if(source==null||source.isEmpty())return Map.of();
+        Map<ControlAxis,Double> result=new EnumMap<>(ControlAxis.class);
+        for(Map.Entry<ControlAxis,Double> entry:source.entrySet()) {
+            ControlAxis axis=entry.getKey();
+            if(axis==ControlAxis.VERTICAL||axis==ControlAxis.LONGITUDINAL||axis==ControlAxis.LATERAL||axis==ControlAxis.YAW) result.put(axis,entry.getValue());
+        }
         return result;
     }
     private void applyHoldSetpoints(StabilizationSetpoint sp,VehicleState state,boolean allowPosition){
