@@ -1,12 +1,9 @@
 package com.flightcomputer.client.map;
 
+import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.core.BlockPos;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.world.entity.player.Player;
 
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -14,32 +11,50 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Optional Waystones integration using the published Waystones API by reflection.
- *
- * Server-owned Waystone data is never invented on the client. In singleplayer we snapshot the
- * complete server registry on the server thread. In multiplayer the client-visible activated list
- * is used, which is the data Waystones deliberately exposes to that player. No Waystones state is
- * modified and the integration is a no-op when Waystones is absent.
+ * Client presentation adapter for Waystones. The server owns the Waystones registry and sends a
+ * dimension-scoped immutable snapshot. A local singleplayer API fallback remains for compatibility.
  */
 public final class WaystoneMapProvider {
-    private static final String API = "net.blay09.mods.waystones.api.WaystonesAPI";
     private static final long RESCAN_TICKS = 20L;
+    private static volatile List<FlightMapMarker> SERVER_SNAPSHOT = List.of();
+    private static volatile String SERVER_DIMENSION = "";
+    private static volatile boolean SERVER_SNAPSHOT_RECEIVED;
 
     private final Map<String, FlightMapMarker> markers = new LinkedHashMap<>();
     private boolean initialized;
     private boolean available;
     private Class<?> apiClass;
-    private Method getAllWaystones;
-    private Method getActivatedWaystones;
+    private java.lang.reflect.Method getAllWaystones;
+    private java.lang.reflect.Method getActivatedWaystones;
     private long nextRefreshTick;
-    private boolean serverRequestPending;
+    private boolean serverRequestSent;
+
+    public static void acceptServerSnapshot(String dimension, List<FlightMapMarker> snapshot) {
+        SERVER_DIMENSION = dimension == null ? "" : dimension;
+        SERVER_SNAPSHOT = snapshot == null ? List.of() : List.copyOf(snapshot);
+        SERVER_SNAPSHOT_RECEIVED = true;
+    }
 
     public void tick(ClientLevel level) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || level == null) return;
         if (level.getGameTime() < nextRefreshTick) return;
         nextRefreshTick = level.getGameTime() + RESCAN_TICKS;
-        refresh(minecraft, level);
+
+        String dimension = level.dimension().location().toString();
+        if (SERVER_SNAPSHOT_RECEIVED && SERVER_DIMENSION.equals(dimension)) {
+            replace(SERVER_SNAPSHOT);
+            available = true;
+            return;
+        }
+
+        if (!serverRequestSent) {
+            serverRequestSent = true;
+            FlightComputerNetwork.requestWaystoneSnapshot();
+        }
+
+        // Singleplayer fallback. Multiplayer uses the authoritative packet above.
+        if (minecraft.getSingleplayerServer() != null) refreshSingleplayer(minecraft, level);
     }
 
     public List<FlightMapMarker> markers() {
@@ -56,75 +71,42 @@ public final class WaystoneMapProvider {
         getAllWaystones = null;
         getActivatedWaystones = null;
         nextRefreshTick = 0L;
-        serverRequestPending = false;
+        serverRequestSent = false;
     }
 
-    private void refresh(Minecraft minecraft, ClientLevel level) {
-        if (!ensureInitialized()) {
-            markers.clear();
-            return;
-        }
-
-        if (minecraft.getSingleplayerServer() != null) {
-            snapshotSingleplayer(minecraft.getSingleplayerServer(), level);
-            return;
-        }
-
-        // Multiplayer client-side list: this is intentionally the player's activated/publicly
-        // visible Waystones rather than a guessed client reconstruction of the server registry.
-        if (minecraft.player == null || getActivatedWaystones == null) return;
-        try {
-            Object result = getActivatedWaystones.invoke(null, minecraft.player);
-            replaceWith(result, level);
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // Keep the last good snapshot.
-        }
-    }
-
-    private void snapshotSingleplayer(MinecraftServer server, ClientLevel level) {
-        if (getAllWaystones == null || serverRequestPending) return;
-        serverRequestPending = true;
-        server.execute(() -> {
-            try {
-                Object result = getAllWaystones.invoke(null, server);
-                replaceWith(result, level);
-            } catch (ReflectiveOperationException | RuntimeException ignored) {
-                markers.clear();
-            } finally {
-                serverRequestPending = false;
-            }
-        });
-    }
-
-    private void replaceWith(Object result, ClientLevel level) {
-        Iterable<?> values = asIterable(result);
-        if (values == null) return;
-        Map<String, FlightMapMarker> next = new LinkedHashMap<>();
-        for (Object value : values) {
-            FlightMapMarker marker = decode(level, value);
-            if (marker != null) next.put(markerKey(value, marker), marker);
-        }
+    private void replace(List<FlightMapMarker> next) {
+        Map<String, FlightMapMarker> deduplicated = new LinkedHashMap<>();
+        for (FlightMapMarker marker : next) deduplicated.put(marker.label() + "@" + marker.worldX() + ":" + marker.worldZ(), marker);
         markers.clear();
-        markers.putAll(next);
+        markers.putAll(deduplicated);
+    }
+
+    private void refreshSingleplayer(Minecraft minecraft, ClientLevel level) {
+        if (!ensureInitialized() || getAllWaystones == null || minecraft.getSingleplayerServer() == null) return;
+        try {
+            Object result = getAllWaystones.invoke(null, minecraft.getSingleplayerServer());
+            List<FlightMapMarker> next = new ArrayList<>();
+            for (Object waystone : asIterable(result)) {
+                FlightMapMarker marker = decode(level, waystone);
+                if (marker != null) next.add(marker);
+            }
+            replace(next);
+            available = true;
+        } catch (ReflectiveOperationException | RuntimeException ignored) { }
     }
 
     private FlightMapMarker decode(ClientLevel level, Object waystone) {
         if (waystone == null) return null;
         Object valid = invokeNoArg(waystone, "isValid");
         if (valid instanceof Boolean b && !b) return null;
-
         Object dimension = invokeNoArg(waystone, "getDimension", "getDimensionId");
         if (dimension != null && !sameDimension(level, dimension)) return null;
-
         Object position = invokeNoArg(waystone, "getPos", "getPosition", "getBlockPos");
-        if (!(position instanceof BlockPos pos)) return null;
-
-        Object name = invokeNoArg(waystone, "getName", "getWaystoneName");
-        String label = name == null ? "Waystone" : name instanceof net.minecraft.network.chat.Component c
-                ? c.getString() : String.valueOf(name);
+        if (!(position instanceof net.minecraft.core.BlockPos pos)) return null;
+        Object name = invokeNoArg(waystone, "getEffectiveName", "getName", "getWaystoneName");
+        String label = name == null ? "Waystone" : name instanceof net.minecraft.network.chat.Component c ? c.getString() : String.valueOf(name);
         if (label.isBlank()) label = "Waystone";
-        return new FlightMapMarker(FlightMapMarker.Type.WAYSTONE, label,
-                pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
+        return new FlightMapMarker(FlightMapMarker.Type.WAYSTONE, label, pos.getX()+.5D, pos.getY()+.5D, pos.getZ()+.5D);
     }
 
     private boolean sameDimension(ClientLevel level, Object dimension) {
@@ -133,29 +115,17 @@ public final class WaystoneMapProvider {
         return value.equals(current) || value.equals(level.dimension().toString()) || value.endsWith(current);
     }
 
-    private String markerKey(Object waystone, FlightMapMarker marker) {
-        Object id = invokeNoArg(waystone, "getWaystoneUid", "getUid", "getUUID", "getId");
-        return id == null ? marker.label() + "@" + marker.worldX() + ":" + marker.worldZ() : String.valueOf(id);
-    }
-
     private Iterable<?> asIterable(Object result) {
-        if (result instanceof java.util.Optional<?> optional) return optional.map(this::asIterable).orElse(null);
         if (result instanceof Iterable<?> iterable) return iterable;
         if (result instanceof Map<?, ?> map) return map.values();
-        if (result != null && result.getClass().isArray()) {
-            List<Object> values = new ArrayList<>();
-            for (int i = 0; i < java.lang.reflect.Array.getLength(result); i++)
-                values.add(java.lang.reflect.Array.get(result, i));
-            return values;
-        }
-        return null;
+        if (result instanceof java.util.Optional<?> optional) return optional.map(this::asIterable).orElse(List.of());
+        return List.of();
     }
 
     private Object invokeNoArg(Object target, String... names) {
-        if (target == null) return null;
         for (String name : names) {
             try {
-                Method method = target.getClass().getMethod(name);
+                java.lang.reflect.Method method = target.getClass().getMethod(name);
                 if (method.getParameterCount() == 0) return method.invoke(target);
             } catch (ReflectiveOperationException | RuntimeException ignored) { }
         }
@@ -166,23 +136,19 @@ public final class WaystoneMapProvider {
         if (initialized) return available;
         initialized = true;
         try {
-            apiClass = Class.forName(API, false, getClass().getClassLoader());
-            getAllWaystones = findStatic("getAllWaystones", MinecraftServer.class);
-            getActivatedWaystones = findStatic("getActivatedWaystones", Player.class);
+            apiClass = Class.forName("net.blay09.mods.waystones.api.WaystonesAPI", false, getClass().getClassLoader());
+            getAllWaystones = findStatic("getAllWaystones", net.minecraft.server.MinecraftServer.class);
+            getActivatedWaystones = findStatic("getActivatedWaystones", net.minecraft.world.entity.player.Player.class);
             available = getAllWaystones != null || getActivatedWaystones != null;
-        } catch (ClassNotFoundException | LinkageError ignored) {
-            available = false;
-        }
+        } catch (ClassNotFoundException | LinkageError ignored) { available = false; }
         return available;
     }
 
-    private Method findStatic(String name, Class<?> parameter) {
+    private java.lang.reflect.Method findStatic(String name, Class<?> parameter) {
         if (apiClass == null) return null;
         try {
-            Method method = apiClass.getMethod(name, parameter);
+            java.lang.reflect.Method method = apiClass.getMethod(name, parameter);
             return java.lang.reflect.Modifier.isStatic(method.getModifiers()) ? method : null;
-        } catch (ReflectiveOperationException ignored) {
-            return null;
-        }
+        } catch (ReflectiveOperationException ignored) { return null; }
     }
 }
