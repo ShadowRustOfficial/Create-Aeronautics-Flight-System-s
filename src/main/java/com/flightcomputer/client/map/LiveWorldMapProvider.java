@@ -28,15 +28,22 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
     private static final int LOADED_SCAN_INTERVAL_TICKS = 10;
     private static final int MAX_SCAN_RADIUS_CHUNKS = 64;
     private static final int MAX_NEW_CAPTURES_PER_SCAN = 8;
+    private static final int MAX_RETRIES = 3;
+    private static final int RETRY_BASE_TICKS = 20;
+    private static final int STUCK_JOB_TIMEOUT_TICKS = 200;
 
     /** Shared active-session cache: map screens must never evict it on close. */
     private static final Map<Long, int[]> CACHE = new HashMap<>();
     private static final ArrayBlockingQueue<Long> QUEUED = new ArrayBlockingQueue<>(MAX_JOBS);
     private static final Map<Long, Future<?>> RUNNING = new HashMap<>();
+    private static final Map<Long, Integer> RETRIES = new HashMap<>();
+    private static final Map<Long, Integer> RETRY_AT = new HashMap<>();
+    private static final Map<Long, Integer> STARTED_AT = new HashMap<>();
     private static final ExecutorService WORKERS = createWorkers();
 
     private final CpuTerrainTileGenerator generator = new CpuTerrainTileGenerator();
     private int loadedScanTicks;
+    private int lifecycleTicks;
     private int lastPlayerChunkX = Integer.MIN_VALUE;
     private int lastPlayerChunkZ = Integer.MIN_VALUE;
 
@@ -63,16 +70,37 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
         long key = key(chunkX, chunkZ);
         synchronized (CACHE) {
             if (CACHE.containsKey(key) || RUNNING.containsKey(key) || QUEUED.contains(key)) return;
+            int retryAt = RETRY_AT.getOrDefault(key, 0);
+            if (lifecycleTicks < retryAt) return;
             if (QUEUED.remainingCapacity() == 0 || !level.hasChunk(chunkX, chunkZ)) return;
 
-            TerrainChunkSnapshot snapshot = capture(level, chunkX, chunkZ);
+            TerrainChunkSnapshot snapshot;
+            try {
+                snapshot = capture(level, chunkX, chunkZ);
+            } catch (RuntimeException ignored) {
+                scheduleRetryLocked(key);
+                return;
+            }
             if (snapshot == null || !QUEUED.offer(key)) return;
+            STARTED_AT.put(key, lifecycleTicks);
             Future<?> future = WORKERS.submit(() -> {
-                int[] result = generator.generate(snapshot);
-                synchronized (CACHE) {
-                    CACHE.put(key, result);
-                    RUNNING.remove(key);
-                    QUEUED.remove(key);
+                try {
+                    int[] result = generator.generate(snapshot);
+                    synchronized (CACHE) {
+                        CACHE.put(key, result);
+                        RUNNING.remove(key);
+                        STARTED_AT.remove(key);
+                        QUEUED.remove(key);
+                        RETRIES.remove(key);
+                        RETRY_AT.remove(key);
+                    }
+                } catch (Throwable ignored) {
+                    synchronized (CACHE) {
+                        RUNNING.remove(key);
+                        STARTED_AT.remove(key);
+                        QUEUED.remove(key);
+                        scheduleRetryLocked(key);
+                    }
                 }
             });
             RUNNING.put(key, future);
@@ -119,6 +147,7 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
                 long key = key(chunkX, chunkZ);
                 synchronized (CACHE) {
                     if (CACHE.containsKey(key) || RUNNING.containsKey(key) || QUEUED.contains(key)) continue;
+                    if (lifecycleTicks < RETRY_AT.getOrDefault(key, 0)) continue;
                 }
                 if (level.hasChunk(chunkX, chunkZ)) {
                     requestChunkTile(level, chunkX, chunkZ);
@@ -151,21 +180,57 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
         return new TerrainChunkSnapshot(chunkX, chunkZ, colors, heights);
     }
 
-    @Override public synchronized void tick(ClientLevel level) { }
+    @Override
+    public synchronized void tick(ClientLevel level) {
+        lifecycleTicks++;
+        synchronized (CACHE) {
+            if (RUNNING.isEmpty()) return;
+            for (Long key : RUNNING.keySet().toArray(new Long[0])) {
+                Integer startedAt = STARTED_AT.get(key);
+                Future<?> future = RUNNING.get(key);
+                if (startedAt != null && future != null && future.isDone()) {
+                    RUNNING.remove(key);
+                    STARTED_AT.remove(key);
+                    QUEUED.remove(key);
+                    if (!CACHE.containsKey(key)) scheduleRetryLocked(key);
+                } else if (startedAt != null && lifecycleTicks - startedAt > STUCK_JOB_TIMEOUT_TICKS) {
+                    if (future != null) future.cancel(false);
+                    RUNNING.remove(key);
+                    STARTED_AT.remove(key);
+                    QUEUED.remove(key);
+                    if (!CACHE.containsKey(key)) scheduleRetryLocked(key);
+                }
+            }
+        }
+    }
+
+    private void scheduleRetryLocked(long key) {
+        int attempts = RETRIES.getOrDefault(key, 0) + 1;
+        if (attempts > MAX_RETRIES) {
+            RETRIES.remove(key);
+            RETRY_AT.remove(key);
+            return;
+        }
+        RETRIES.put(key, attempts);
+        RETRY_AT.put(key, lifecycleTicks + RETRY_BASE_TICKS * attempts);
+    }
 
     /**
      * Provider lifecycle reset. Deliberately does not clear the shared terrain cache:
      * GUI close/reopen must preserve generated terrain. Use clearSessionCache() when
      * Minecraft changes the active ClientLevel/dimension.
      */
-    @Override
     public void clear() {
         synchronized (CACHE) {
             for (Future<?> future : RUNNING.values()) future.cancel(false);
             RUNNING.clear();
             QUEUED.clear();
+            STARTED_AT.clear();
+            RETRIES.clear();
+            RETRY_AT.clear();
         }
         loadedScanTicks = 0;
+        lifecycleTicks = 0;
         lastPlayerChunkX = Integer.MIN_VALUE;
         lastPlayerChunkZ = Integer.MIN_VALUE;
     }
@@ -176,6 +241,9 @@ public final class LiveWorldMapProvider implements FlightMapDataProvider {
             for (Future<?> future : RUNNING.values()) future.cancel(false);
             RUNNING.clear();
             QUEUED.clear();
+            STARTED_AT.clear();
+            RETRIES.clear();
+            RETRY_AT.clear();
             CACHE.clear();
         }
     }
