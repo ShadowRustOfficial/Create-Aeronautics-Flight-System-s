@@ -45,17 +45,23 @@ public final class MPCNavigator {
         boolean accepted=false;
 
         for (double speedFrac:SPEED_FRACTIONS) {
-            double candidateSpeed=speedFrac*maxSpeed;
+            double candidateSpeed=speedFrac*Math.max(0.0, maxSpeed);
             double stoppingDistance=(candidateSpeed*candidateSpeed)/(2*safeDeceleration);
             double requiredClearance=stoppingDistance+radius+CLEARANCE_MARGIN;
             for (double headingOffsetDeg:HEADING_OFFSETS_DEG) {
                 double heading=bearing+Math.toRadians(headingOffsetDeg);
                 double dirX=Math.sin(heading), dirZ=Math.cos(heading);
                 for (double vFrac:VERTICAL_OFFSET_FRACTIONS) {
-                    double verticalSpeed=vFrac*maxSpeed*0.5;
-                    boolean clear=candidateSpeed<=1.0e-6 || isClear(state,dirX,verticalSpeed,dirZ,radius,halfHeight,requiredClearance);
+                    double verticalSpeed=vFrac*Math.max(0.0, maxSpeed)*0.5;
+                    // candidateSpeed is the requested 3D speed. Build a real velocity vector
+                    // before obstacle testing instead of mixing unit horizontal components with
+                    // a world-unit vertical speed. This keeps diagonal raycasts physically correct.
+                    double horizontalSpeed=Math.sqrt(Math.max(0.0, candidateSpeed*candidateSpeed-verticalSpeed*verticalSpeed));
+                    double velocityX=dirX*horizontalSpeed;
+                    double velocityZ=dirZ*horizontalSpeed;
+                    boolean clear=candidateSpeed<=1.0e-6 || isClear(state,velocityX,verticalSpeed,velocityZ,radius,halfHeight,requiredClearance);
                     if (!clear) continue;
-                    double closingSpeed=candidateSpeed*Math.cos(Math.toRadians(headingOffsetDeg));
+                    double closingSpeed=horizontalSpeed*Math.cos(Math.toRadians(headingOffsetDeg));
                     double predictedRemaining=simulateRemaining(flatDist,closingSpeed);
                     double effortPenalty=EFFORT_WEIGHT*candidateSpeed*candidateSpeed;
                     double headingPenalty=HEADING_PENALTY_WEIGHT*Math.abs(headingOffsetDeg);
