@@ -3,6 +3,7 @@ package com.flightcomputer.client.map;
 import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.server.level.ServerLevel;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -21,6 +22,7 @@ public final class WaystoneMapProvider {
     private boolean initialized;
     private boolean available;
     private Class<?> apiClass;
+    private java.lang.reflect.Method getWaystones;
     private java.lang.reflect.Method getAllWaystones;
     private long nextRefreshTick;
     private boolean serverRequestSent;
@@ -64,7 +66,7 @@ public final class WaystoneMapProvider {
     public boolean isAvailable() { return available; }
 
     public void clear() {
-        markers.clear(); initialized = false; available = false; apiClass = null; getAllWaystones = null;
+        markers.clear(); initialized = false; available = false; apiClass = null; getWaystones = null; getAllWaystones = null;
         nextRefreshTick = 0L; serverRequestSent = false; lastDimension = "";
     }
 
@@ -75,9 +77,13 @@ public final class WaystoneMapProvider {
     }
 
     private void refreshSingleplayer(Minecraft minecraft, ClientLevel level) {
-        if (!ensureInitialized() || getAllWaystones == null || minecraft.getSingleplayerServer() == null) return;
+        if (!ensureInitialized() || minecraft.getSingleplayerServer() == null) return;
         try {
-            Object result = getAllWaystones.invoke(null, minecraft.getSingleplayerServer());
+            ServerLevel serverLevel = minecraft.getSingleplayerServer().getLevel(level.dimension());
+            if (serverLevel == null) return;
+            Object result = getWaystones != null
+                    ? getWaystones.invoke(null, serverLevel)
+                    : getAllWaystones == null ? List.of() : getAllWaystones.invoke(null, minecraft.getSingleplayerServer());
             List<FlightMapMarker> next = new ArrayList<>();
             for (Object waystone : asIterable(result)) { FlightMapMarker marker = decode(level, waystone); if (marker != null) next.add(marker); }
             replace(next); available = true;
@@ -118,8 +124,10 @@ public final class WaystoneMapProvider {
         initialized = true;
         try {
             apiClass=Class.forName("net.blay09.mods.waystones.api.WaystonesAPI",false,getClass().getClassLoader());
+            getWaystones=findStatic("getWaystones",ServerLevel.class);
+            if (getWaystones == null) getWaystones=findStatic("getWaystones",net.minecraft.world.level.Level.class);
             getAllWaystones=findStatic("getAllWaystones",net.minecraft.server.MinecraftServer.class);
-            available=getAllWaystones!=null;
+            available=getWaystones!=null || getAllWaystones!=null;
         } catch (ClassNotFoundException|LinkageError ignored) { available=false; }
         return available;
     }
