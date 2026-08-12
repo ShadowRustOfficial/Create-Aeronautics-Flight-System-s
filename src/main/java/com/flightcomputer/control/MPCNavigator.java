@@ -6,14 +6,13 @@ public final class MPCNavigator {
     private static final double HORIZON_DT = 0.3;
     private static final double[] SPEED_FRACTIONS = {0.0, 0.25, 0.5, 0.75, 1.0};
     private static final double[] HEADING_OFFSETS_DEG = {-90, -60, -40, -25, -12, 0, 12, 25, 40, 60, 90};
+    private static final double[] VERTICAL_OFFSET_FRACTIONS = {-1.0, -0.5, 0.0, 0.5, 1.0};
     private static final double ARRIVAL_RADIUS = 1.5;
     private static final double CLEARANCE_MARGIN = 1.0;
     private static final double HYSTERESIS_BONUS = 6.0;
     private static final double HEADING_PENALTY_WEIGHT = 1.0;
+    private static final double ALTITUDE_PENALTY_WEIGHT = 5.0;
     private static final double EFFORT_WEIGHT = 0.03;
-    private static final double MIN_HORIZONTAL_GUIDANCE_DISTANCE = 3.0;
-    private static final double MIN_HORIZONTAL_GUIDANCE_SPEED_FRACTION = 0.25;
-    private static final double MIN_HORIZONTAL_GUIDANCE_SPEED = 1.0;
 
     private final ObstacleSensor obstacleSensor;
     private double targetX, targetY, targetZ;
@@ -58,10 +57,9 @@ public final class MPCNavigator {
         }
 
         double bearing=Math.atan2(dx,dz);
-        double safeDeceleration=Math.max(0.5,maxDeceleration);
-        double targetVerticalSpeed = clamp(dy * 0.75, -Math.max(2.0, maxSpeed * 0.5), Math.max(2.0, maxSpeed * 0.5));
         double radius=Math.max(0.5,state.boundingRadius), halfHeight=Math.max(0.5,state.boundingHalfHeight);
-        double bestScore=Double.POSITIVE_INFINITY, bestHeading=bearing, bestSpeed=0;
+        double safeDeceleration=Math.max(0.5,maxDeceleration);
+        double bestScore=Double.POSITIVE_INFINITY, bestHeading=bearing, bestSpeed=0, bestVerticalSpeed=0;
         boolean accepted=false;
 
         for (double speedFrac:SPEED_FRACTIONS) {
@@ -71,40 +69,24 @@ public final class MPCNavigator {
             for (double headingOffsetDeg:HEADING_OFFSETS_DEG) {
                 double heading=bearing+Math.toRadians(headingOffsetDeg);
                 double dirX=Math.sin(heading), dirZ=Math.cos(heading);
-                double horizontalSpeed=candidateSpeed;
-                double velocityX=dirX*horizontalSpeed;
-                double velocityZ=dirZ*horizontalSpeed;
-                boolean clear=candidateSpeed<=1.0e-6 || isClear(state,velocityX,targetVerticalSpeed,velocityZ,radius,halfHeight,requiredClearance);
-                if (!clear) continue;
-                double closingSpeed=horizontalSpeed*Math.cos(Math.toRadians(headingOffsetDeg));
-                double predictedRemaining=simulateRemaining(flatDist,closingSpeed);
-                double effortPenalty=EFFORT_WEIGHT*candidateSpeed*candidateSpeed;
-                double headingPenalty=HEADING_PENALTY_WEIGHT*Math.abs(headingOffsetDeg);
-                double hysteresis=Math.abs(headingOffsetDeg-lastChosenHeadingOffsetDeg)<1.0e-6?-HYSTERESIS_BONUS:0;
-                double score=predictedRemaining*predictedRemaining+effortPenalty+headingPenalty+hysteresis;
-                if(score<bestScore){bestScore=score;bestHeading=heading;bestSpeed=horizontalSpeed;accepted=true;}
+                for (double vFrac:VERTICAL_OFFSET_FRACTIONS) {
+                    double verticalSpeed=vFrac*Math.max(0.0, maxSpeed)*0.5;
+                    double horizontalSpeed=Math.sqrt(Math.max(0.0, candidateSpeed*candidateSpeed-verticalSpeed*verticalSpeed));
+                    double velocityX=dirX*horizontalSpeed;
+                    double velocityZ=dirZ*horizontalSpeed;
+                    boolean clear=candidateSpeed<=1.0e-6 || isClear(state,velocityX,verticalSpeed,velocityZ,radius,halfHeight,requiredClearance);
+                    if (!clear) continue;
+                    double closingSpeed=horizontalSpeed*Math.cos(Math.toRadians(headingOffsetDeg));
+                    double predictedRemaining=simulateRemaining(flatDist,closingSpeed);
+                    double effortPenalty=EFFORT_WEIGHT*candidateSpeed*candidateSpeed;
+                    double headingPenalty=HEADING_PENALTY_WEIGHT*Math.abs(headingOffsetDeg);
+                    double altitudePenalty=ALTITUDE_PENALTY_WEIGHT*Math.abs(vFrac);
+                    double hysteresis=Math.abs(headingOffsetDeg-lastChosenHeadingOffsetDeg)<1.0e-6?-HYSTERESIS_BONUS:0;
+                    double score=predictedRemaining*predictedRemaining+effortPenalty+headingPenalty+altitudePenalty+hysteresis;
+                    if(score<bestScore){bestScore=score;bestHeading=heading;bestSpeed=horizontalSpeed;bestVerticalSpeed=verticalSpeed;accepted=true;}
+                }
             }
         }
-
-        // A valid route must not silently collapse into a hover command while meaningful
-        // horizontal separation remains. This is especially important when the sampled
-        // horizon is temporarily conservative or a planner state has just been refreshed.
-        if (accepted && flatDist >= MIN_HORIZONTAL_GUIDANCE_DISTANCE && bestSpeed <= 1.0e-6) {
-            double fallbackSpeed=Math.min(Math.max(0.0, maxSpeed),
-                    Math.max(MIN_HORIZONTAL_GUIDANCE_SPEED, maxSpeed * MIN_HORIZONTAL_GUIDANCE_SPEED_FRACTION));
-            double fallbackX=Math.sin(bearing)*fallbackSpeed;
-            double fallbackZ=Math.cos(bearing)*fallbackSpeed;
-            double stoppingDistance=(fallbackSpeed*fallbackSpeed)/(2*safeDeceleration);
-            double requiredClearance=stoppingDistance+radius+CLEARANCE_MARGIN;
-            boolean clear=isClear(state,fallbackX,targetVerticalSpeed,fallbackZ,radius,halfHeight,requiredClearance);
-            if (clear) {
-                bestHeading=bearing;
-                bestSpeed=fallbackSpeed;
-            } else {
-                accepted=false;
-            }
-        }
-
         pathBlocked=!accepted;
         if(!accepted){sp.desiredYaw=state.yaw;return sp;}
 
@@ -128,7 +110,7 @@ public final class MPCNavigator {
         double cosYaw=Math.cos(-state.yaw), sinYaw=Math.sin(-state.yaw);
         sp.desiredLongitudinalVelocity=worldVz*cosYaw-worldVx*sinYaw;
         sp.desiredLateralVelocity=worldVz*sinYaw+worldVx*cosYaw;
-        sp.desiredVerticalVelocity=targetVerticalSpeed;
+        sp.desiredVerticalVelocity=bestVerticalSpeed;
         return sp;
     }
 
@@ -144,5 +126,4 @@ public final class MPCNavigator {
     }
     private double simulateRemaining(double start,double closing){double r=start;for(int i=0;i<HORIZON_STEPS;i++)r=Math.max(0,r-closing*HORIZON_DT);return r;}
     private static double normalizeDegrees(double deg){double d=deg%360;if(d>180)d-=360;if(d<-180)d+=360;return d;}
-    private static double clamp(double value,double min,double max){return Math.max(min,Math.min(max,value));}
 }
