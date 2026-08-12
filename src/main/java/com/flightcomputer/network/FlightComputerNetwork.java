@@ -41,6 +41,7 @@ public final class FlightComputerNetwork {
     public static final CustomPacketPayload.Type<TelemetryPayload> TELEMETRY_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "telemetry"));
     public static final CustomPacketPayload.Type<SetTargetPayload> SET_TARGET_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "set_target"));
     public static final CustomPacketPayload.Type<ClearTargetPayload> CLEAR_TARGET_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "clear_target"));
+    public static final CustomPacketPayload.Type<SetAltitudeHoldTargetPayload> SET_ALTITUDE_HOLD_TARGET_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "set_altitude_hold_target"));
     public static final CustomPacketPayload.Type<RequestWaystoneSnapshotPayload> REQUEST_WAYSTONES_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "request_waystones"));
     public static final CustomPacketPayload.Type<WaystoneSyncPayload> WAYSTONE_SYNC_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "waystone_sync"));
 
@@ -71,6 +72,10 @@ public final class FlightComputerNetwork {
     public record ClearTargetPayload(BlockPos controllerPos) implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, ClearTargetPayload> STREAM_CODEC = BlockPos.STREAM_CODEC.map(ClearTargetPayload::new, ClearTargetPayload::controllerPos);
         @Override public Type<? extends CustomPacketPayload> type() { return CLEAR_TARGET_TYPE; }
+    }
+    public record SetAltitudeHoldTargetPayload(BlockPos controllerPos, double y) implements CustomPacketPayload {
+        public static final StreamCodec<ByteBuf, SetAltitudeHoldTargetPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, SetAltitudeHoldTargetPayload::controllerPos, ByteBufCodecs.DOUBLE, SetAltitudeHoldTargetPayload::y, SetAltitudeHoldTargetPayload::new);
+        @Override public Type<? extends CustomPacketPayload> type() { return SET_ALTITUDE_HOLD_TARGET_TYPE; }
     }
     public record RequestWaystoneSnapshotPayload() implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, RequestWaystoneSnapshotPayload> STREAM_CODEC = StreamCodec.unit(new RequestWaystoneSnapshotPayload());
@@ -135,6 +140,7 @@ public final class FlightComputerNetwork {
                 .playToServer(COOLING_SLOT_TYPE,CoolingSlotPayload.STREAM_CODEC,FlightComputerNetwork::handleCoolingSlot)
                 .playToServer(SET_TARGET_TYPE,SetTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetTarget)
                 .playToServer(CLEAR_TARGET_TYPE,ClearTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleClearTarget)
+                .playToServer(SET_ALTITUDE_HOLD_TARGET_TYPE,SetAltitudeHoldTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetAltitudeHoldTarget)
                 .playToServer(REQUEST_WAYSTONES_TYPE,RequestWaystoneSnapshotPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneRequest)
                 .playToClient(TELEMETRY_TYPE,TelemetryPayload.STREAM_CODEC,FlightComputerNetwork::handleTelemetry)
                 .playToClient(WAYSTONE_SYNC_TYPE,WaystoneSyncPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneSync);}
@@ -148,6 +154,7 @@ public final class FlightComputerNetwork {
     private static void handleCoolingSlot(CoolingSlotPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||p.slot()<0||p.slot()>=3)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||fc.isThermalLockout())return;var handler=fc.getUpgradeHandler();if(p.action()==0){var hand=player.getMainHandItem();if(hand.isEmpty()||!(hand.getItem() instanceof CoolingUpgradeItem))return;var remainder=handler.insertItem(p.slot(),hand.copyWithCount(1),false);if(remainder.isEmpty())hand.shrink(1);}else if(p.action()==1){var extracted=handler.extractItem(p.slot(),1,false);if(!extracted.isEmpty()&&!player.addItem(extracted))player.drop(extracted,false);}fc.setChanged();});}
     private static void handleSetTarget(SetTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||Double.isNaN(p.x())||Double.isNaN(p.y())||Double.isNaN(p.z()))return;FlightControlRuntimeManager.setTarget(fc,new Vec3(p.x(),p.y(),p.z()),p.name());});}
     private static void handleClearTarget(ClearTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(be instanceof FlightControllerBlockEntity fc)FlightControlRuntimeManager.clearTarget(fc);});}
+    private static void handleSetAltitudeHoldTarget(SetAltitudeHoldTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||!Double.isFinite(p.y()))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(be instanceof FlightControllerBlockEntity fc)FlightControlRuntimeManager.setAltitudeHoldTarget(fc,p.y());});}
     private static void handleWaystoneRequest(RequestWaystoneSnapshotPayload p,IPayloadContext c){c.enqueueWork(()->{if(c.player() instanceof ServerPlayer player){List<WaystoneServerIntegration.Entry> entries=WaystoneServerIntegration.snapshot(player);List<WaystoneSyncEntry> payload=new ArrayList<>(entries.size());for(var entry:entries)payload.add(new WaystoneSyncEntry(entry.name(),entry.x(),entry.y(),entry.z()));PacketDistributor.sendToPlayer(player,new WaystoneSyncPayload(player.level().dimension().location().toString(),payload));}});}
     private static void handleTelemetry(TelemetryPayload p,IPayloadContext c){if(FMLEnvironment.dist==Dist.CLIENT)c.enqueueWork(()->com.flightcomputer.client.FlightComputerTelemetryClient.accept(p));}
     private static void handleWaystoneSync(WaystoneSyncPayload p,IPayloadContext c){if(FMLEnvironment.dist==Dist.CLIENT)c.enqueueWork(()->{List<com.flightcomputer.client.map.FlightMapMarker> markers=new ArrayList<>();for(WaystoneSyncEntry e:p.entries())markers.add(new com.flightcomputer.client.map.FlightMapMarker(com.flightcomputer.client.map.FlightMapMarker.Type.WAYSTONE,e.name(),e.x(),e.y(),e.z()));com.flightcomputer.client.map.WaystoneMapProvider.acceptServerSnapshot(p.dimension(),markers);});}
@@ -158,6 +165,7 @@ public final class FlightComputerNetwork {
     public static void sendCoolingSlot(BlockPos cp,int slot,int action){PacketDistributor.sendToServer(new CoolingSlotPayload(cp,slot,action));}
     public static void sendTarget(BlockPos cp,double x,double y,double z,String name){PacketDistributor.sendToServer(new SetTargetPayload(cp,x,y,z,name));}
     public static void clearTarget(BlockPos cp){PacketDistributor.sendToServer(new ClearTargetPayload(cp));}
+    public static void sendAltitudeHoldTarget(BlockPos cp,double y){PacketDistributor.sendToServer(new SetAltitudeHoldTargetPayload(cp,y));}
     public static void requestWaystoneSnapshot(){PacketDistributor.sendToServer(new RequestWaystoneSnapshotPayload());}
     public static void sendTelemetry(ServerPlayer player,TelemetryPayload payload){PacketDistributor.sendToPlayer(player,payload);}
     private FlightComputerNetwork(){}
