@@ -2,9 +2,11 @@ package com.flightcomputer.mixin.client;
 
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.client.FlightComputerTelemetryClient;
+import com.flightcomputer.client.gui.NavigationConsoleScreen;
 import com.flightcomputer.network.FlightComputerNetwork;
 import com.simibubi.create.api.equipment.goggles.IHaveGoggleInformation;
 import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import org.spongepowered.asm.mixin.Mixin;
 
@@ -20,6 +22,10 @@ import java.util.List;
 public abstract class FlightControllerGoggleMixin implements IHaveGoggleInformation {
     @Override
     public boolean addToGoggleTooltip(List<Component> tooltip, boolean isPlayerSneaking) {
+        // The Create goggles renderer can remain active while a Screen is open. Do not let the
+        // object tooltip bleed over the Navigation Console; the console has its own diagnostics.
+        if (Minecraft.getInstance().screen instanceof NavigationConsoleScreen) return false;
+
         FlightControllerBlockEntity controller = (FlightControllerBlockEntity) (Object) this;
         FlightComputerNetwork.TelemetryPayload telemetry = FlightComputerTelemetryClient.get(controller.getControllerId());
 
