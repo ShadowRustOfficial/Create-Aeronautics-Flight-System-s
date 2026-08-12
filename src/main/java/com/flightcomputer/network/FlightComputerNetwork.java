@@ -50,11 +50,8 @@ public final class FlightComputerNetwork {
         public static final StreamCodec<ByteBuf, ToolConfigPayload> STREAM_CODEC = StreamCodec.composite(ByteBufCodecs.VAR_INT, ToolConfigPayload::modeId, ByteBufCodecs.VAR_INT, ToolConfigPayload::directionId, ToolConfigPayload::new);
         @Override public Type<? extends CustomPacketPayload> type() { return TOOL_CONFIG_TYPE; }
     }
-    /** slot: 0-2; action: 0 insert one cooling item from main hand, 1 extract slot. */
     public record CoolingSlotPayload(BlockPos controllerPos, int slot, int action) implements CustomPacketPayload {
-        public static final StreamCodec<ByteBuf, CoolingSlotPayload> STREAM_CODEC = StreamCodec.composite(
-                BlockPos.STREAM_CODEC, CoolingSlotPayload::controllerPos, ByteBufCodecs.VAR_INT, CoolingSlotPayload::slot,
-                ByteBufCodecs.VAR_INT, CoolingSlotPayload::action, CoolingSlotPayload::new);
+        public static final StreamCodec<ByteBuf, CoolingSlotPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, CoolingSlotPayload::controllerPos, ByteBufCodecs.VAR_INT, CoolingSlotPayload::slot, ByteBufCodecs.VAR_INT, CoolingSlotPayload::action, CoolingSlotPayload::new);
         @Override public Type<? extends CustomPacketPayload> type() { return COOLING_SLOT_TYPE; }
     }
     public record SetTargetPayload(BlockPos controllerPos, double x, double y, double z, String name) implements CustomPacketPayload {
@@ -100,7 +97,11 @@ public final class FlightComputerNetwork {
                 .playToServer(CLEAR_TARGET_TYPE,ClearTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleClearTarget)
                 .playToClient(TELEMETRY_TYPE,TelemetryPayload.STREAM_CODEC,FlightComputerNetwork::handleTelemetry);}
     }
-    private static boolean near(ServerPlayer p,BlockPos pos,double d){return p.distanceToSqr(pos.getX()+.5,pos.getY()+.5,pos.getZ()+.5)<=d;}
+
+    /** Distance arguments are real block radii, not squared distances. Sable patches Entity distance checks. */
+    private static boolean near(ServerPlayer p,BlockPos pos,double radius){
+        return p != null && pos != null && p.distanceToSqr(pos.getX()+.5,pos.getY()+.5,pos.getZ()+.5)<=radius*radius;
+    }
     private static void handleAction(ControllerActionPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.pos(),64))return;BlockEntity be=player.level().getBlockEntity(p.pos());if(be instanceof FlightControllerBlockEntity fc)FlightControllerAction.fromNetworkId(p.actionId()).ifPresent(fc::applyAction);});}
     private static void handleVectorLink(LinkVectorPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||!near(player,p.targetPos(),1024))return;FlightMode[] modes=FlightMode.values();VectorDirection[] dirs=VectorDirection.values();if(p.modeId()<0||p.modeId()>=modes.length||p.directionId()<0||p.directionId()>=dirs.length)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||player.level().getBlockState(p.targetPos()).isAir())return;fc.bindVector(modes[p.modeId()],dirs[p.directionId()],p.targetPos());});}
     private static void handleToolConfig(ToolConfigPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player))return;if(p.modeId()<0||p.modeId()>=FlightMode.values().length||p.directionId()<0||p.directionId()>=VectorDirection.values().length)return;FlightLinkToolItem.setSelection(player.getUUID(),p.modeId(),p.directionId());});}
