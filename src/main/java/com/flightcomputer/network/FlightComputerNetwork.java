@@ -16,7 +16,6 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
@@ -77,7 +76,7 @@ public final class FlightComputerNetwork {
         private void encode(ByteBuf buf) {
             ByteBufCodecs.STRING_UTF8.encode(buf, dimension == null ? "" : dimension);
             int count = Math.min(entries == null ? 0 : entries.size(), 4096);
-            buf.writeVarInt(count);
+            ByteBufCodecs.VAR_INT.encode(buf, count);
             for (int i = 0; i < count; i++) {
                 WaystoneSyncEntry entry = entries.get(i);
                 ByteBufCodecs.STRING_UTF8.encode(buf, entry.name() == null ? "Waystone" : entry.name());
@@ -86,7 +85,7 @@ public final class FlightComputerNetwork {
         }
         private static WaystoneSyncPayload decode(ByteBuf buf) {
             String dimension = ByteBufCodecs.STRING_UTF8.decode(buf);
-            int count = Math.min(Math.max(buf.readVarInt(), 0), 4096);
+            int count = Math.min(Math.max(ByteBufCodecs.VAR_INT.decode(buf), 0), 4096);
             List<WaystoneSyncEntry> entries = new ArrayList<>(count);
             for (int i = 0; i < count; i++) {
                 String name = ByteBufCodecs.STRING_UTF8.decode(buf);
@@ -134,7 +133,6 @@ public final class FlightComputerNetwork {
                 .playToClient(WAYSTONE_SYNC_TYPE,WaystoneSyncPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneSync);}
     }
 
-    /** Distance arguments are real block radii, not squared distances. */
     private static boolean near(ServerPlayer p,BlockPos pos,double radius){return p!=null&&pos!=null&&p.distanceToSqr(pos.getX()+.5,pos.getY()+.5,pos.getZ()+.5)<=radius*radius;}
     private static void handleAction(ControllerActionPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.pos(),64))return;BlockEntity be=player.level().getBlockEntity(p.pos());if(be instanceof FlightControllerBlockEntity fc)FlightControllerAction.fromNetworkId(p.actionId()).ifPresent(fc::applyAction);});}
     private static void handleVectorLink(LinkVectorPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||!near(player,p.targetPos(),1024))return;FlightMode[] modes=FlightMode.values();VectorDirection[] dirs=VectorDirection.values();if(p.modeId()<0||p.modeId()>=modes.length||p.directionId()<0||p.directionId()>=dirs.length)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||player.level().getBlockState(p.targetPos()).isAir())return;fc.bindVector(modes[p.modeId()],dirs[p.directionId()],p.targetPos());});}
@@ -145,7 +143,6 @@ public final class FlightComputerNetwork {
     private static void handleWaystoneRequest(RequestWaystoneSnapshotPayload p,IPayloadContext c){c.enqueueWork(()->{if(c.player() instanceof ServerPlayer player){List<WaystoneServerIntegration.Entry> entries=WaystoneServerIntegration.snapshot(player);List<WaystoneSyncEntry> payload=new ArrayList<>(entries.size());for(var entry:entries)payload.add(new WaystoneSyncEntry(entry.name(),entry.x(),entry.y(),entry.z()));PacketDistributor.sendToPlayer(player,new WaystoneSyncPayload(player.level().dimension().location().toString(),payload));}});}
     private static void handleTelemetry(TelemetryPayload p,IPayloadContext c){if(FMLEnvironment.dist==Dist.CLIENT)c.enqueueWork(()->com.flightcomputer.client.FlightComputerTelemetryClient.accept(p));}
     private static void handleWaystoneSync(WaystoneSyncPayload p,IPayloadContext c){if(FMLEnvironment.dist==Dist.CLIENT)c.enqueueWork(()->{List<com.flightcomputer.client.map.FlightMapMarker> markers=new ArrayList<>();for(WaystoneSyncEntry e:p.entries())markers.add(new com.flightcomputer.client.map.FlightMapMarker(com.flightcomputer.client.map.FlightMapMarker.Type.WAYSTONE,e.name(),e.x(),e.y(),e.z()));com.flightcomputer.client.map.WaystoneMapProvider.acceptServerSnapshot(p.dimension(),markers);});}
-
     public static void sendControllerAction(BlockPos pos,FlightControllerAction action){PacketDistributor.sendToServer(new ControllerActionPayload(pos,action.networkId()));}
     public static void sendVectorLink(BlockPos cp,BlockPos tp,FlightMode m,VectorDirection d){PacketDistributor.sendToServer(new LinkVectorPayload(cp,tp,m.ordinal(),d.ordinal()));}
     public static void sendToolConfig(FlightMode mode,VectorDirection direction){PacketDistributor.sendToServer(new ToolConfigPayload(mode.ordinal(),direction.ordinal()));}
