@@ -47,7 +47,7 @@ public final class FlightComputer {
                 || Math.abs(navigator.targetX() - targetX) > 1.0e-6
                 || Math.abs(navigator.targetY() - targetY) > 1.0e-6
                 || Math.abs(navigator.targetZ() - targetZ) > 1.0e-6;
-        navigator.setTarget(targetX, targetY, targetZ);
+        navigator.setTarget(targetX,targetY,targetZ);
         if (changed) resetCruiseGuidance();
         lastAppliedTargetX=targetX; lastAppliedTargetY=targetY; lastAppliedTargetZ=targetZ; lastAppliedTargetValid=true;
     }
@@ -59,9 +59,13 @@ public final class FlightComputer {
     }
     private void resetCruiseGuidance() {
         cruiseStabilizer.resetAll();
-        ticksSinceReplan = 0;
-        lastCruiseLongitudinalVelocity = 0.0D;
-        latestCruiseSetpoint = StabilizationSetpoint.hover();
+        ticksSinceReplan=0;
+        lastCruiseLongitudinalVelocity=0.0D;
+        latestCruiseSetpoint=StabilizationSetpoint.hover();
+    }
+    private void resetControlLoops() {
+        stabilizeStabilizer.resetAll();
+        resetCruiseGuidance();
     }
     private void synchronizeExternalTarget() {
         if (!navigator.hasTarget()) {
@@ -82,7 +86,17 @@ public final class FlightComputer {
     }
     public void syncHolds(FlightControllerState controllerState, VehicleState state) {
         if(controllerState==null||state==null)return;
-        altitudeHold=controllerState.altitudeHold(); headingHold=controllerState.headingHold(); positionHold=controllerState.positionHold(); velocityHold=controllerState.velocityHold();
+
+        boolean newAltitudeHold=controllerState.altitudeHold();
+        boolean newHeadingHold=controllerState.headingHold();
+        boolean newPositionHold=controllerState.positionHold();
+        boolean newVelocityHold=controllerState.velocityHold();
+        if (newAltitudeHold!=previousAltitudeHold || newHeadingHold!=previousHeadingHold
+                || newPositionHold!=previousPositionHold || newVelocityHold!=previousVelocityHold) {
+            resetControlLoops();
+        }
+
+        altitudeHold=newAltitudeHold; headingHold=newHeadingHold; positionHold=newPositionHold; velocityHold=newVelocityHold;
         if(altitudeHold && Double.isFinite(altitudeHoldTargetY)) holdY=altitudeHoldTargetY;
         else if(altitudeHold&&!previousAltitudeHold)holdY=state.y;
         if(headingHold&&!previousHeadingHold)holdYaw=state.yaw;
@@ -116,8 +130,14 @@ public final class FlightComputer {
             StabilizationSetpoint sp=latestCruiseSetpoint.copy();
             sp.desiredLongitudinalVelocity=smoothCruiseVelocity(state,sp.desiredYaw,sp.desiredLongitudinalVelocity,dt);
             sp.desiredLateralVelocity=smoothCruiseLateralVelocity(state,sp.desiredYaw,sp.desiredLateralVelocity,dt);
-            if(altitudeHold && Double.isFinite(altitudeHoldTargetY)) sp.desiredVerticalVelocity=clamp((altitudeHoldTargetY-state.y)*.9,-maxManualSpeed,maxManualSpeed);
-            applyHoldSetpoints(sp,state,false);
+            if(altitudeHold && Double.isFinite(altitudeHoldTargetY)) {
+                sp.desiredVerticalVelocity=clamp((altitudeHoldTargetY-state.y)*.9,-maxManualSpeed,maxManualSpeed);
+            }
+            // Autopilot owns navigation yaw and horizontal translation. Do not allow an old
+            // heading/position/velocity hold to overwrite the MPC's current target vector.
+            if (altitudeHold && !Double.isFinite(altitudeHoldTargetY)) {
+                sp.desiredVerticalVelocity=clamp((holdY-state.y)*.9,-maxManualSpeed,maxManualSpeed);
+            }
             autopilotCommands=cruiseStabilizer.computeCommands(state,sp,dt);
             if(stabiliserEnabled) autopilotCommands=filterAutopilotAxes(autopilotCommands);
             mode=FlightMode.CRUISE;
