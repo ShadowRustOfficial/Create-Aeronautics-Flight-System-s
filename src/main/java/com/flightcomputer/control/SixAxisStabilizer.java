@@ -1,5 +1,8 @@
 package com.flightcomputer.control;
 
+import java.util.EnumMap;
+import java.util.Map;
+
 /** One independent 6-vector stabilizer. A separate instance is used for STABILIZE and CRUISE. */
 public final class SixAxisStabilizer {
     // Roll/pitch are deliberately damped more conservatively than the prior tuning. Physical
