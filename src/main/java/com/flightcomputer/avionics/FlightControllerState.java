@@ -18,9 +18,6 @@ public record FlightControllerState(
                             altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
             case TOGGLE_STABILISER -> {
                 boolean enabled = !stabiliser;
-                // Stabilisation is an independently selectable flight function. Enabling it also
-                // arms the controller so the user does not have to discover a hidden prerequisite
-                // before the linked thrusters can receive the stabilisation output.
                 yield enabled
                         ? new FlightControllerState(true, true, FlightMode.STABILIZED,
                         altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive)
@@ -30,8 +27,6 @@ public record FlightControllerState(
             }
             case TOGGLE_AUTOPILOT -> {
                 boolean enabled = flightMode != FlightMode.AUTOPILOT;
-                // Autopilot is independently selectable as well. Target validation happens in the
-                // runtime layer; without a target it simply remains armed but produces no thrust.
                 yield enabled
                         ? new FlightControllerState(true, false, FlightMode.AUTOPILOT,
                         altitudeHold, headingHold, positionHold, velocityHold, true, routeActive)
@@ -46,14 +41,10 @@ public record FlightControllerState(
                         altitudeHold, headingHold, positionHold, velocityHold,
                         next == FlightMode.AUTOPILOT || navigationEnabled, routeActive);
             }
-            case TOGGLE_ALTITUDE_HOLD -> new FlightControllerState(engaged, stabiliser, flightMode,
-                    !altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
-            case TOGGLE_HEADING_HOLD -> new FlightControllerState(engaged, stabiliser, flightMode,
-                    altitudeHold, !headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
-            case TOGGLE_POSITION_HOLD -> new FlightControllerState(engaged, stabiliser, flightMode,
-                    altitudeHold, headingHold, !positionHold, velocityHold, navigationEnabled, routeActive);
-            case TOGGLE_VELOCITY_HOLD -> new FlightControllerState(engaged, stabiliser, flightMode,
-                    altitudeHold, headingHold, positionHold, !velocityHold, navigationEnabled, routeActive);
+            case TOGGLE_ALTITUDE_HOLD -> toggleHold(0);
+            case TOGGLE_HEADING_HOLD -> toggleHold(1);
+            case TOGGLE_POSITION_HOLD -> toggleHold(2);
+            case TOGGLE_VELOCITY_HOLD -> toggleHold(3);
             case TOGGLE_NAVIGATION -> new FlightControllerState(engaged, stabiliser, flightMode,
                     altitudeHold, headingHold, positionHold, velocityHold, !navigationEnabled, routeActive);
             case START_ROUTE -> new FlightControllerState(true, false, FlightMode.AUTOPILOT,
@@ -64,6 +55,25 @@ public record FlightControllerState(
                     false, false, false, false, false, false);
             case PULSE_DISPLAY, TOGGLE_TERRAIN -> this;
         };
+    }
+
+    private FlightControllerState toggleHold(int hold) {
+        boolean nextAltitude = hold == 0 ? !altitudeHold : altitudeHold;
+        boolean nextHeading = hold == 1 ? !headingHold : headingHold;
+        boolean nextPosition = hold == 2 ? !positionHold : positionHold;
+        boolean nextVelocity = hold == 3 ? !velocityHold : velocityHold;
+        boolean enabling = (hold == 0 && nextAltitude) || (hold == 1 && nextHeading)
+                || (hold == 2 && nextPosition) || (hold == 3 && nextVelocity);
+
+        // A hold is a PID control request. If the user enables one while the controller is idle,
+        // arm the stabilised flight path automatically. Autopilot remains the owner of guidance
+        // when it is already active.
+        boolean nextEngaged = enabling ? true : engaged;
+        boolean nextStabiliser = flightMode == FlightMode.AUTOPILOT ? false : (enabling || stabiliser);
+        FlightMode nextMode = flightMode == FlightMode.AUTOPILOT ? FlightMode.AUTOPILOT
+                : (enabling ? FlightMode.STABILIZED : (flightMode == FlightMode.STABILIZED && !nextStabiliser ? FlightMode.MANUAL : flightMode));
+        return new FlightControllerState(nextEngaged, nextStabiliser, nextMode,
+                nextAltitude, nextHeading, nextPosition, nextVelocity, navigationEnabled, routeActive);
     }
 
     public void save(CompoundTag tag) {
