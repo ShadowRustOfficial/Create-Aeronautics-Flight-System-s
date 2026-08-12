@@ -8,7 +8,6 @@ import com.flightcomputer.control.ThrusterRegistry;
 import com.flightcomputer.control.VehicleState;
 import com.flightcomputer.control.VectorDirection;
 import io.netty.buffer.ByteBuf;
-import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
@@ -77,7 +76,8 @@ public final class FlightSetupTelemetryNetwork {
         if (controller == null || state == null || registry == null || !(controller.getLevel() instanceof ServerLevel level)) return;
 
         double mass = Math.max(0.001D, state.mass);
-        double weight = mass * 9.81D;
+        // Create Aeronautics/Sable uses g = 11 m/s² in its kpg/pN physics scale.
+        double weight = mass * 11.0D;
         double diameter = Math.max(2.0D, state.boundingRadius * 2.0D);
         double height = Math.max(2.0D, state.boundingHalfHeight * 2.0D);
         Quaterniond rotation = new Quaterniond().rotationY(state.yaw).rotateX(state.pitch).rotateZ(state.roll);
