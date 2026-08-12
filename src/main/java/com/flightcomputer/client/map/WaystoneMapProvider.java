@@ -34,18 +34,28 @@ public final class WaystoneMapProvider {
         SERVER_SNAPSHOT_RECEIVED = true;
     }
 
+    public static void clearServerSnapshot() {
+        SERVER_DIMENSION = "";
+        SERVER_SNAPSHOT = List.of();
+        SERVER_SNAPSHOT_RECEIVED = false;
+    }
+
     public void tick(ClientLevel level) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || level == null) return;
-        if (level.getGameTime() < nextRefreshTick) return;
-        nextRefreshTick = level.getGameTime() + RESCAN_TICKS;
-
         String dimension = level.dimension().location().toString();
-        if (!dimension.equals(lastDimension)) {
+        boolean dimensionChanged = !dimension.equals(lastDimension);
+        if (dimensionChanged) {
             lastDimension = dimension;
             serverRequestSent = false;
             markers.clear();
+            available = false;
+            clearServerSnapshot();
         }
+
+        long now = level.getGameTime();
+        if (!dimensionChanged && now < nextRefreshTick) return;
+        nextRefreshTick = now + RESCAN_TICKS;
 
         if (SERVER_SNAPSHOT_RECEIVED && SERVER_DIMENSION.equals(dimension)) {
             replace(SERVER_SNAPSHOT);
@@ -62,6 +72,12 @@ public final class WaystoneMapProvider {
         if (minecraft.getSingleplayerServer() != null) refreshSingleplayer(minecraft, level);
     }
 
+    public void requestRefresh(ClientLevel level) {
+        serverRequestSent = false;
+        nextRefreshTick = 0L;
+        if (level != null) tick(level);
+    }
+
     public List<FlightMapMarker> markers() { return Collections.unmodifiableList(new ArrayList<>(markers.values())); }
     public boolean isAvailable() { return available; }
 
@@ -72,8 +88,9 @@ public final class WaystoneMapProvider {
 
     private void replace(List<FlightMapMarker> next) {
         Map<String, FlightMapMarker> deduplicated = new LinkedHashMap<>();
-        for (FlightMapMarker marker : next) deduplicated.put(marker.label()+"@"+marker.worldX()+":"+marker.worldZ(), marker);
-        markers.clear(); markers.putAll(deduplicated);
+        for (FlightMapMarker marker : next) deduplicated.put(marker.label()+"@"+marker.worldX()+":"+marker.worldY()+":"+marker.worldZ(), marker);
+        markers.clear();
+        markers.putAll(deduplicated);
     }
 
     private void refreshSingleplayer(Minecraft minecraft, ClientLevel level) {
@@ -103,7 +120,7 @@ public final class WaystoneMapProvider {
 
     private boolean sameDimension(ClientLevel level, Object dimension) {
         String value = String.valueOf(dimension), current = level.dimension().location().toString();
-        return value.equals(current) || value.equals(level.dimension().toString()) || value.endsWith(current);
+        return value.equals(current) || value.equals(level.dimension().toString()) || value.endsWith(current) || value.contains(current);
     }
 
     private Iterable<?> asIterable(Object result) {
