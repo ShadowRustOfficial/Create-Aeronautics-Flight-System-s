@@ -10,6 +10,19 @@ public final class StabilizationSetpoint {
     public double desiredLongitudinalVelocity = 0;
     public double desiredLateralVelocity = 0;
 
+    public StabilizationSetpoint copy() {
+        StabilizationSetpoint sp = new StabilizationSetpoint();
+        sp.desiredPitch = desiredPitch;
+        sp.desiredRoll = desiredRoll;
+        sp.desiredYaw = desiredYaw;
+        sp.yawIsRateNotHeading = yawIsRateNotHeading;
+        sp.desiredYawRate = desiredYawRate;
+        sp.desiredVerticalVelocity = desiredVerticalVelocity;
+        sp.desiredLongitudinalVelocity = desiredLongitudinalVelocity;
+        sp.desiredLateralVelocity = desiredLateralVelocity;
+        return sp;
+    }
+
     public static StabilizationSetpoint hover() { return new StabilizationSetpoint(); }
 
     public static StabilizationSetpoint manualNudge(double pitchStick, double rollStick,
