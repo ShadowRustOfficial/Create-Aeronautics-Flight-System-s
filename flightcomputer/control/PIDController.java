@@ -25,27 +25,8 @@ public final class PIDController {
         double rawDerivative = -(measurement - lastMeasurement) / safeDt;
         filteredDerivative += derivativeFilterAlpha * (rawDerivative - filteredDerivative);
         lastMeasurement = measurement;
-        return finish(error);
-    }
-
-    /**
-     * Updates the controller when a trustworthy physical rate is already available.
-     * This avoids differentiating Euler angles, which can amplify simulation jitter and
-     * angle-wrap discontinuities. The supplied rate is the derivative of the measured value.
-     */
-    public double updateWithMeasurementRate(double error, double measurementRate, double dt) {
-        double safeDt = clamp(dt, 1.0 / 200.0, 0.5);
-        integral = clamp(integral + error * safeDt, integralMin, integralMax);
-        double rawDerivative = -measurementRate;
-        filteredDerivative += derivativeFilterAlpha * (rawDerivative - filteredDerivative);
-        return finish(error);
-    }
-
-    private double finish(double error) {
         double output = kp * error + ki * integral + kd * filteredDerivative;
         double clamped = clamp(output, outputMin, outputMax);
-        // Back-calculate the integral whenever the actuator clamp is reached so sustained
-        // disturbances cannot build a large stored correction that later causes overshoot.
         if (ki != 0 && clamped != output) integral = clamp(integral + (clamped - output) / ki, integralMin, integralMax);
         return clamped;
     }

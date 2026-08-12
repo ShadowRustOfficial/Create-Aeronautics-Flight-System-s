@@ -5,12 +5,11 @@ import java.util.Map;
 
 /** One independent 6-vector stabilizer. A separate instance is used for STABILIZE and CRUISE. */
 public final class SixAxisStabilizer {
-    // Roll/pitch use measured angular-rate damping rather than differentiating Euler angles.
-    // The lower proportional/integral gains reduce the side-to-side hunting seen when forward
-    // thrust is applied, while the explicit rate feedback gives the controller a predictable
-    // brake as the vehicle approaches level.
-    private final AxisPID pitchPID = new AxisPID(5.0, 0.08, 2.5, 18.0);
-    private final AxisPID rollPID = new AxisPID(5.0, 0.08, 2.5, 18.0);
+    // Tuned for stronger recovery from large pitch/roll disturbances while retaining a
+    // relatively soft response around level flight.  The derivative term supplies angular-rate
+    // damping; the output clamp prevents a large impact from requesting unlimited torque.
+    private final AxisPID pitchPID = new AxisPID(8.0, 0.35, 4.0, 30.0);
+    private final AxisPID rollPID = new AxisPID(8.0, 0.35, 4.0, 30.0);
     private final AxisPID yawPID = new AxisPID(4.5, 0.2, 2.0, 18.0);
     private final AxisPID verticalPID = new AxisPID(3.0, 0.6, 1.2, 40.0);
     private final AxisPID longitudinalPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
@@ -27,11 +26,8 @@ public final class SixAxisStabilizer {
                 ? sp.desiredYawRate - state.yawRate
                 : wrapAngle(sp.desiredYaw - state.yaw);
 
-        // Sable provides physical angular velocity. Use it directly for the pitch/roll
-        // derivative term so controller damping is based on the real rotational state rather
-        // than a finite difference of Euler angles (which is noisy and can wrap at +/- PI).
-        out.put(ControlAxis.PITCH, pitchPID.updateWithMeasurementRate(pitchError, state.pitchRate, dt, state.inertiaPitch));
-        out.put(ControlAxis.ROLL, rollPID.updateWithMeasurementRate(rollError, state.rollRate, dt, state.inertiaRoll));
+        out.put(ControlAxis.PITCH, pitchPID.update(pitchError, state.pitch, dt, state.inertiaPitch));
+        out.put(ControlAxis.ROLL, rollPID.update(rollError, state.roll, dt, state.inertiaRoll));
         // Rate-command yaw must differentiate measured yaw rate, not absolute yaw. Using yaw
         // here produces a false derivative term and can leave yaw thrusters active at rest.
         out.put(ControlAxis.YAW, yawPID.update(yawError,
