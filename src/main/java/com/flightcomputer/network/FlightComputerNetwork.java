@@ -6,6 +6,7 @@ import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.control.FlightControlRuntimeManager;
 import com.flightcomputer.control.FlightMode;
 import com.flightcomputer.control.VectorDirection;
+import com.flightcomputer.integration.WaystoneServerIntegration;
 import com.flightcomputer.item.CoolingUpgradeItem;
 import com.flightcomputer.item.FlightLinkToolItem;
 import io.netty.buffer.ByteBuf;
@@ -26,6 +27,8 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 public final class FlightComputerNetwork {
@@ -37,6 +40,8 @@ public final class FlightComputerNetwork {
     public static final CustomPacketPayload.Type<TelemetryPayload> TELEMETRY_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "telemetry"));
     public static final CustomPacketPayload.Type<SetTargetPayload> SET_TARGET_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "set_target"));
     public static final CustomPacketPayload.Type<ClearTargetPayload> CLEAR_TARGET_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "clear_target"));
+    public static final CustomPacketPayload.Type<RequestWaystoneSnapshotPayload> REQUEST_WAYSTONES_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "request_waystones"));
+    public static final CustomPacketPayload.Type<WaystoneSyncPayload> WAYSTONE_SYNC_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "waystone_sync"));
 
     public record ControllerActionPayload(BlockPos pos, int actionId) implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, ControllerActionPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, ControllerActionPayload::pos, ByteBufCodecs.VAR_INT, ControllerActionPayload::actionId, ControllerActionPayload::new);
@@ -61,6 +66,35 @@ public final class FlightComputerNetwork {
     public record ClearTargetPayload(BlockPos controllerPos) implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, ClearTargetPayload> STREAM_CODEC = BlockPos.STREAM_CODEC.map(ClearTargetPayload::new, ClearTargetPayload::controllerPos);
         @Override public Type<? extends CustomPacketPayload> type() { return CLEAR_TARGET_TYPE; }
+    }
+    public record RequestWaystoneSnapshotPayload() implements CustomPacketPayload {
+        public static final StreamCodec<ByteBuf, RequestWaystoneSnapshotPayload> STREAM_CODEC = StreamCodec.unit(new RequestWaystoneSnapshotPayload());
+        @Override public Type<? extends CustomPacketPayload> type() { return REQUEST_WAYSTONES_TYPE; }
+    }
+    public record WaystoneSyncEntry(String name, double x, double y, double z) { }
+    public record WaystoneSyncPayload(String dimension, List<WaystoneSyncEntry> entries) implements CustomPacketPayload {
+        public static final StreamCodec<ByteBuf, WaystoneSyncPayload> STREAM_CODEC = StreamCodec.of((buf, payload) -> payload.encode(buf), WaystoneSyncPayload::decode);
+        private void encode(ByteBuf buf) {
+            ByteBufCodecs.STRING_UTF8.encode(buf, dimension == null ? "" : dimension);
+            int count = Math.min(entries == null ? 0 : entries.size(), 4096);
+            buf.writeVarInt(count);
+            for (int i = 0; i < count; i++) {
+                WaystoneSyncEntry entry = entries.get(i);
+                ByteBufCodecs.STRING_UTF8.encode(buf, entry.name() == null ? "Waystone" : entry.name());
+                buf.writeDouble(entry.x()); buf.writeDouble(entry.y()); buf.writeDouble(entry.z());
+            }
+        }
+        private static WaystoneSyncPayload decode(ByteBuf buf) {
+            String dimension = ByteBufCodecs.STRING_UTF8.decode(buf);
+            int count = Math.min(Math.max(buf.readVarInt(), 0), 4096);
+            List<WaystoneSyncEntry> entries = new ArrayList<>(count);
+            for (int i = 0; i < count; i++) {
+                String name = ByteBufCodecs.STRING_UTF8.decode(buf);
+                entries.add(new WaystoneSyncEntry(name, buf.readDouble(), buf.readDouble(), buf.readDouble()));
+            }
+            return new WaystoneSyncPayload(dimension, entries);
+        }
+        @Override public Type<? extends CustomPacketPayload> type() { return WAYSTONE_SYNC_TYPE; }
     }
 
     public record TelemetryPayload(UUID controllerId, double x, double y, double z, double speed, double heading, double pitch, double roll,
@@ -95,26 +129,30 @@ public final class FlightComputerNetwork {
                 .playToServer(COOLING_SLOT_TYPE,CoolingSlotPayload.STREAM_CODEC,FlightComputerNetwork::handleCoolingSlot)
                 .playToServer(SET_TARGET_TYPE,SetTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetTarget)
                 .playToServer(CLEAR_TARGET_TYPE,ClearTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleClearTarget)
-                .playToClient(TELEMETRY_TYPE,TelemetryPayload.STREAM_CODEC,FlightComputerNetwork::handleTelemetry);}
+                .playToServer(REQUEST_WAYSTONES_TYPE,RequestWaystoneSnapshotPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneRequest)
+                .playToClient(TELEMETRY_TYPE,TelemetryPayload.STREAM_CODEC,FlightComputerNetwork::handleTelemetry)
+                .playToClient(WAYSTONE_SYNC_TYPE,WaystoneSyncPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneSync);}
     }
 
-    /** Distance arguments are real block radii, not squared distances. Sable patches Entity distance checks. */
-    private static boolean near(ServerPlayer p,BlockPos pos,double radius){
-        return p != null && pos != null && p.distanceToSqr(pos.getX()+.5,pos.getY()+.5,pos.getZ()+.5)<=radius*radius;
-    }
+    /** Distance arguments are real block radii, not squared distances. */
+    private static boolean near(ServerPlayer p,BlockPos pos,double radius){return p!=null&&pos!=null&&p.distanceToSqr(pos.getX()+.5,pos.getY()+.5,pos.getZ()+.5)<=radius*radius;}
     private static void handleAction(ControllerActionPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.pos(),64))return;BlockEntity be=player.level().getBlockEntity(p.pos());if(be instanceof FlightControllerBlockEntity fc)FlightControllerAction.fromNetworkId(p.actionId()).ifPresent(fc::applyAction);});}
     private static void handleVectorLink(LinkVectorPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||!near(player,p.targetPos(),1024))return;FlightMode[] modes=FlightMode.values();VectorDirection[] dirs=VectorDirection.values();if(p.modeId()<0||p.modeId()>=modes.length||p.directionId()<0||p.directionId()>=dirs.length)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||player.level().getBlockState(p.targetPos()).isAir())return;fc.bindVector(modes[p.modeId()],dirs[p.directionId()],p.targetPos());});}
     private static void handleToolConfig(ToolConfigPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player))return;if(p.modeId()<0||p.modeId()>=FlightMode.values().length||p.directionId()<0||p.directionId()>=VectorDirection.values().length)return;FlightLinkToolItem.setSelection(player.getUUID(),p.modeId(),p.directionId());});}
     private static void handleCoolingSlot(CoolingSlotPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||p.slot()<0||p.slot()>=3)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||fc.isThermalLockout())return;var handler=fc.getUpgradeHandler();if(p.action()==0){var hand=player.getMainHandItem();if(hand.isEmpty()||!(hand.getItem() instanceof CoolingUpgradeItem))return;var remainder=handler.insertItem(p.slot(),hand.copyWithCount(1),false);if(remainder.isEmpty())hand.shrink(1);}else if(p.action()==1){var extracted=handler.extractItem(p.slot(),1,false);if(!extracted.isEmpty()&&!player.addItem(extracted))player.drop(extracted,false);}fc.setChanged();});}
     private static void handleSetTarget(SetTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||Double.isNaN(p.x())||Double.isNaN(p.y())||Double.isNaN(p.z()))return;FlightControlRuntimeManager.setTarget(fc,new Vec3(p.x(),p.y(),p.z()),p.name());});}
     private static void handleClearTarget(ClearTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(be instanceof FlightControllerBlockEntity fc)FlightControlRuntimeManager.clearTarget(fc);});}
+    private static void handleWaystoneRequest(RequestWaystoneSnapshotPayload p,IPayloadContext c){c.enqueueWork(()->{if(c.player() instanceof ServerPlayer player){List<WaystoneServerIntegration.Entry> entries=WaystoneServerIntegration.snapshot(player);List<WaystoneSyncEntry> payload=new ArrayList<>(entries.size());for(var entry:entries)payload.add(new WaystoneSyncEntry(entry.name(),entry.x(),entry.y(),entry.z()));PacketDistributor.sendToPlayer(player,new WaystoneSyncPayload(player.level().dimension().location().toString(),payload));}});}
     private static void handleTelemetry(TelemetryPayload p,IPayloadContext c){if(FMLEnvironment.dist==Dist.CLIENT)c.enqueueWork(()->com.flightcomputer.client.FlightComputerTelemetryClient.accept(p));}
+    private static void handleWaystoneSync(WaystoneSyncPayload p,IPayloadContext c){if(FMLEnvironment.dist==Dist.CLIENT)c.enqueueWork(()->{List<com.flightcomputer.client.map.FlightMapMarker> markers=new ArrayList<>();for(WaystoneSyncEntry e:p.entries())markers.add(new com.flightcomputer.client.map.FlightMapMarker(com.flightcomputer.client.map.FlightMapMarker.Type.WAYSTONE,e.name(),e.x(),e.y(),e.z()));com.flightcomputer.client.map.WaystoneMapProvider.acceptServerSnapshot(p.dimension(),markers);});}
+
     public static void sendControllerAction(BlockPos pos,FlightControllerAction action){PacketDistributor.sendToServer(new ControllerActionPayload(pos,action.networkId()));}
     public static void sendVectorLink(BlockPos cp,BlockPos tp,FlightMode m,VectorDirection d){PacketDistributor.sendToServer(new LinkVectorPayload(cp,tp,m.ordinal(),d.ordinal()));}
     public static void sendToolConfig(FlightMode mode,VectorDirection direction){PacketDistributor.sendToServer(new ToolConfigPayload(mode.ordinal(),direction.ordinal()));}
     public static void sendCoolingSlot(BlockPos cp,int slot,int action){PacketDistributor.sendToServer(new CoolingSlotPayload(cp,slot,action));}
     public static void sendTarget(BlockPos cp,double x,double y,double z,String name){PacketDistributor.sendToServer(new SetTargetPayload(cp,x,y,z,name));}
     public static void clearTarget(BlockPos cp){PacketDistributor.sendToServer(new ClearTargetPayload(cp));}
+    public static void requestWaystoneSnapshot(){PacketDistributor.sendToServer(new RequestWaystoneSnapshotPayload());}
     public static void sendTelemetry(ServerPlayer player,TelemetryPayload payload){PacketDistributor.sendToPlayer(player,payload);}
     private FlightComputerNetwork(){}
 }
