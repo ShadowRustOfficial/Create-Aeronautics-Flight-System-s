@@ -1,5 +1,7 @@
 package com.flightcomputer.client.map;
 
+import com.flightcomputer.block.FlightControllerBlockEntity;
+import com.flightcomputer.client.FlightComputerTelemetryClient;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -9,12 +11,12 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 /**
- * Resolves Sable sub-level plot/storage coordinates into logical world coordinates.
+ * Resolves Flight Computer positions into logical world coordinates.
  *
- * <p>Sable stores positions inside its plot grid at deliberately extreme coordinates.
- * We must never use those raw coordinates for the navigation map. The public
- * Sable Companion API provides the supported projection path, so this class uses
- * that API reflectively and keeps the mod optional when Sable is absent.</p>
+ * <p>The controller BlockEntity can remain at Sable's internal plot/storage coordinate while the
+ * vessel is assembled or moving. For the Flight Computer itself, authoritative server telemetry
+ * is therefore the primary position source. Sable Companion projection remains the fallback for
+ * ordinary block/entity coordinates and keeps this class optional when Sable is absent.</p>
  */
 public final class FlightControllerWorldPositionResolver {
     private static final String COMPANION_CLASS = "dev.ryanhcode.sable.companion.SableCompanion";
@@ -28,6 +30,19 @@ public final class FlightControllerWorldPositionResolver {
 
     public Vec3 resolve(Level level, BlockPos localPosition) {
         if (level == null || localPosition == null) return null;
+
+        // The Flight Computer's authoritative telemetry is already expressed in logical world
+        // coordinates. Prefer it over the BlockEntity's raw storage/plot coordinate.
+        if (level.isClientSide) {
+            BlockEntity blockEntity = level.getBlockEntity(localPosition);
+            if (blockEntity instanceof FlightControllerBlockEntity controller) {
+                var telemetry = FlightComputerTelemetryClient.get(controller.getControllerId());
+                if (telemetry != null) {
+                    return new Vec3(telemetry.x(), telemetry.y(), telemetry.z());
+                }
+            }
+        }
+
         return resolve(level, center(localPosition));
     }
 
@@ -36,14 +51,11 @@ public final class FlightControllerWorldPositionResolver {
         if (level == null || position == null) return null;
         if (!ensureInitialized()) return position;
         try {
-            // This is the supported Sable Companion projection. It handles both
-            // ordinary world coordinates and positions inside a sub-level plot.
             if (projectOutOfSubLevel != null) {
                 Object projected = projectOutOfSubLevel.invoke(companion, level, position);
                 if (projected instanceof Vec3 world) return world;
             }
 
-            // Fallback to the documented containing-sub-level + logical-pose path.
             if (getContaining != null) {
                 Object subLevel = getContaining.invoke(companion, level, position);
                 if (subLevel != null) {
@@ -62,13 +74,11 @@ public final class FlightControllerWorldPositionResolver {
         return position;
     }
 
-    /** Returns true when the Sable Companion runtime is available. */
     public boolean isSableAvailable() {
         ensureInitialized();
         return available;
     }
 
-    /** Returns whether a raw position lies in Sable's plot grid. */
     public boolean isPlotCoordinate(Level level, Vec3 position) {
         if (level == null || position == null || !ensureInitialized() || isInPlotGrid == null) return false;
         try {
