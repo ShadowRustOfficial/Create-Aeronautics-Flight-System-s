@@ -41,10 +41,15 @@ public final class FlightOperationsRuntimeBridge {
             if (!controller.getControllerState().stabiliser()) controller.applyAction(FlightControllerAction.TOGGLE_STABILISER);
         }
 
-        reconcileHold(controller, FlightHold.ALTITUDE, operations.hasHold(FlightHold.ALTITUDE), FlightControllerAction.TOGGLE_ALTITUDE_HOLD);
-        reconcileHold(controller, FlightHold.HEADING, operations.hasHold(FlightHold.HEADING), FlightControllerAction.TOGGLE_HEADING_HOLD);
-        reconcileHold(controller, FlightHold.POSITION, operations.hasHold(FlightHold.POSITION), FlightControllerAction.TOGGLE_POSITION_HOLD);
-        reconcileHold(controller, FlightHold.VELOCITY, operations.hasHold(FlightHold.VELOCITY), FlightControllerAction.TOGGLE_VELOCITY_HOLD);
+        // Do not treat an absent Operations hold as an explicit request to disable the
+        // Navigation Console's live hold. The previous implementation reconciled false
+        // every server tick, so pressing a hold button made it appear to turn ON and then
+        // immediately back OFF. Operations can still assert a persistent hold when it is
+        // explicitly enabled; the console remains authoritative for disabling it.
+        reconcileHoldEnableOnly(controller, operations.hasHold(FlightHold.ALTITUDE), FlightControllerAction.TOGGLE_ALTITUDE_HOLD);
+        reconcileHoldEnableOnly(controller, operations.hasHold(FlightHold.HEADING), FlightControllerAction.TOGGLE_HEADING_HOLD);
+        reconcileHoldEnableOnly(controller, operations.hasHold(FlightHold.POSITION), FlightControllerAction.TOGGLE_POSITION_HOLD);
+        reconcileHoldEnableOnly(controller, operations.hasHold(FlightHold.VELOCITY), FlightControllerAction.TOGGLE_VELOCITY_HOLD);
 
         if (operations.combatAssist() || operations.landingAssist() || operations.autoDocking()) {
             if (!controller.getControllerState().engaged()) controller.applyAction(FlightControllerAction.TOGGLE_ENGAGED);
@@ -59,14 +64,16 @@ public final class FlightOperationsRuntimeBridge {
         operations.setPreflightPassed(PreflightChecks.evaluate(operations, powered, stabiliserLinked, brakingLinked, coolingAvailable, terrainSafety).passed());
     }
 
-    private static void reconcileHold(FlightControllerBlockEntity controller, FlightHold hold, boolean wanted, FlightControllerAction action) {
-        boolean current = switch (hold) {
-            case ALTITUDE -> controller.getControllerState().altitudeHold();
-            case HEADING -> controller.getControllerState().headingHold();
-            case POSITION -> controller.getControllerState().positionHold();
-            case VELOCITY -> controller.getControllerState().velocityHold();
+    private static void reconcileHoldEnableOnly(FlightControllerBlockEntity controller, boolean wanted, FlightControllerAction action) {
+        if (!wanted || controller == null || !controller.isOperationPermitted(action)) return;
+        boolean current = switch (action) {
+            case TOGGLE_ALTITUDE_HOLD -> controller.getControllerState().altitudeHold();
+            case TOGGLE_HEADING_HOLD -> controller.getControllerState().headingHold();
+            case TOGGLE_POSITION_HOLD -> controller.getControllerState().positionHold();
+            case TOGGLE_VELOCITY_HOLD -> controller.getControllerState().velocityHold();
+            default -> false;
         };
-        if (current != wanted && controller.isOperationPermitted(action)) controller.applyAction(action);
+        if (!current) controller.applyAction(action);
     }
 
     private static Vec3 parseCoordinates(String value) {
