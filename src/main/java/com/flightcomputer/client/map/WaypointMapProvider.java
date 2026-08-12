@@ -8,19 +8,19 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
 /**
  * Optional Xaero waypoint integration.
  *
- * We intentionally read Xaero's own persistent waypoint file rather than depending on unstable
- * internal manager classes. This is the same strategy used by the earlier working integration and
- * keeps Xaero optional at runtime. The file is read only on the client and never modified.
+ * Xaero's persistent format is waypoint:name:initials:x:y:z:... . The previous adapter
+ * required too many fields and read the initials field as X, so valid waypoints were discarded
+ * or decoded to the wrong coordinates. This parser accepts the stable coordinate tuple and
+ * tolerates extra fields added by newer Xaero releases.
  */
 public final class WaypointMapProvider {
-    private static final long RESCAN_TICKS = 20L;
+    private static final long RESCAN_TICKS = 10L;
     private final List<FlightMapMarker> markers = new ArrayList<>();
     private long nextRefreshTick;
     private Path lastFile;
@@ -47,13 +47,10 @@ public final class WaypointMapProvider {
         if (file.equals(lastFile) && modified == lastModified) return;
         lastFile = file;
         lastModified = modified;
-        load(file, level);
+        load(file);
     }
 
-    public List<FlightMapMarker> markers() {
-        return Collections.unmodifiableList(new ArrayList<>(markers));
-    }
-
+    public List<FlightMapMarker> markers() { return List.copyOf(markers); }
     public boolean isAvailable() { return lastFile != null; }
 
     public void clear() {
@@ -63,60 +60,76 @@ public final class WaypointMapProvider {
         lastModified = Long.MIN_VALUE;
     }
 
-    private void load(Path file, ClientLevel level) {
-        markers.clear();
+    private void load(Path file) {
+        List<FlightMapMarker> next = new ArrayList<>();
         try {
-            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            int index = 0;
-            for (String line : lines) {
-                if (line.isBlank() || line.startsWith("#")) continue;
+            for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                if (line.isBlank() || line.startsWith("#") || !line.regionMatches(true, 0, "waypoint:", 0, 9)) continue;
                 String[] fields = line.split(":", -1);
-                if (fields.length < 14 || !fields[0].equalsIgnoreCase("waypoint")) continue;
+                if (fields.length < 6) continue;
 
-                String name = fields[1].replace("\\:", ":");
-                Integer x = parseInt(fields[2]);
-                Integer y = parseInt(fields[3]);
-                Integer z = parseInt(fields[4]);
+                Integer x = null, y = null, z = null;
+                for (int i = 2; i + 2 < fields.length; i++) {
+                    Integer px = parseInt(fields[i]);
+                    Integer py = parseInt(fields[i + 1]);
+                    Integer pz = parseInt(fields[i + 2]);
+                    if (px != null && py != null && pz != null) {
+                        x = px; y = py; z = pz;
+                        break;
+                    }
+                }
                 if (x == null || y == null || z == null) continue;
 
-                markers.add(new FlightMapMarker(FlightMapMarker.Type.WAYPOINT,
-                        name.isBlank() ? "Waypoint" : name, x + 0.5D, y + 0.5D, z + 0.5D));
-                index++;
+                String name = fields[1].replace("\\:", ":").replace("\\\\", "\\");
+                next.add(new FlightMapMarker(FlightMapMarker.Type.WAYPOINT,
+                        name.isBlank() ? "Waypoint" : name,
+                        x + 0.5D, y + 0.5D, z + 0.5D));
             }
         } catch (IOException ignored) {
-            // Optional integrations must never take down the client. Keep an empty snapshot.
-            markers.clear();
+            // Keep the last valid snapshot on transient filesystem failures.
+            return;
         }
+        markers.clear();
+        markers.addAll(next);
     }
 
     private Path locateWaypointFile(Minecraft minecraft, ClientLevel level) {
-        Path root = minecraft.gameDirectory.toPath().resolve("xaero").resolve("minimap");
-        if (!Files.isDirectory(root)) return null;
-
         String world = minecraft.getCurrentServer() != null
                 ? "Multiplayer_" + sanitizeServerAddress(minecraft.getCurrentServer().ip)
                 : singleplayerWorldName(minecraft);
-        String dimension = switch (level.dimension().location().toString()) {
+        String dimension = dimensionFolder(level);
+        if (dimension == null) return null;
+
+        List<Path> roots = List.of(
+                minecraft.gameDirectory.toPath().resolve("xaero").resolve("minimap"),
+                minecraft.gameDirectory.toPath().resolve("XaeroWaypoints")
+        );
+
+        for (Path root : roots) {
+            if (!Files.isDirectory(root)) continue;
+            Path direct = root.resolve(world).resolve(dimension).resolve("waypoints.txt");
+            if (Files.isRegularFile(direct)) return direct;
+
+            String normalized = normalize(world);
+            try (var children = Files.list(root)) {
+                Path match = children.filter(Files::isDirectory)
+                        .filter(path -> normalize(path.getFileName().toString()).equals(normalized))
+                        .map(path -> path.resolve(dimension).resolve("waypoints.txt"))
+                        .filter(Files::isRegularFile)
+                        .findFirst().orElse(null);
+                if (match != null) return match;
+            } catch (IOException ignored) { }
+        }
+        return null;
+    }
+
+    private String dimensionFolder(ClientLevel level) {
+        return switch (level.dimension().location().toString()) {
             case "minecraft:overworld" -> "dim%0";
             case "minecraft:the_nether" -> "dim%-1";
             case "minecraft:the_end" -> "dim%1";
-            default -> null;
+            default -> level.dimension().location().toString().replace(':', '_').replace('/', '_');
         };
-        if (dimension == null) return null;
-
-        Path direct = root.resolve(world).resolve(dimension).resolve("waypoints.txt");
-        if (Files.isRegularFile(direct)) return direct;
-
-        String normalized = normalize(world);
-        try (var children = Files.list(root)) {
-            return children.filter(Files::isDirectory)
-                    .filter(path -> normalize(path.getFileName().toString()).equals(normalized))
-                    .map(path -> path.resolve(dimension).resolve("waypoints.txt"))
-                    .filter(Files::isRegularFile)
-                    .findFirst().orElse(null);
-        } catch (IOException ignored) {
-            return null;
-        }
     }
 
     private String singleplayerWorldName(Minecraft minecraft) {
@@ -135,11 +148,6 @@ public final class WaypointMapProvider {
         catch (NumberFormatException ignored) { return null; }
     }
 
-    private String normalize(String value) {
-        return value.toLowerCase(Locale.ROOT).replace(" ", "_").replace("-", "_");
-    }
-
-    private String sanitizeServerAddress(String address) {
-        return address.replace(':', '_').replace('/', '_').replace('\\', '_');
-    }
+    private String normalize(String value) { return value.toLowerCase(Locale.ROOT).replace(' ', '_').replace('-', '_'); }
+    private String sanitizeServerAddress(String address) { return address.replace(':', '_').replace('/', '_').replace('\\', '_'); }
 }
