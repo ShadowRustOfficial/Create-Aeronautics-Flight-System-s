@@ -54,6 +54,17 @@ public final class FlightSetupTelemetryNetwork {
                         buf.readInt(), buf.readInt(), buf.readDouble(), buf.readDouble(), buf.readDouble()));
 
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+
+        // Compatibility accessors retained for older Navigation Console diagnostics UI.
+        public int powerLevel() { return clampPercent(recommendedRedstonePower * 100.0D / 15.0D); }
+        public int controlLevel() { return clampPercent((1.0D - Math.min(1.0D, Math.max(0.0D, hoverFraction))) * 100.0D); }
+        public int propulsionLevel() { return clampPercent(currentVerticalFraction * 100.0D); }
+        public int navigationLevel() { return clampPercent(liftMargin <= 0.0D ? 0.0D : Math.min(1.0D, liftMargin) * 100.0D); }
+
+        private static int clampPercent(double value) {
+            if (!Double.isFinite(value)) return 0;
+            return (int) Math.round(Math.max(0.0D, Math.min(100.0D, value)));
+        }
     }
 
     @EventBusSubscriber(modid = FlightComputer.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
@@ -72,7 +83,6 @@ public final class FlightSetupTelemetryNetwork {
         if (controller == null || state == null || registry == null || !(controller.getLevel() instanceof ServerLevel level)) return;
 
         double mass = Math.max(0.001D, state.mass);
-        // Create Aeronautics/Sable uses g = 11 m/s² in its kpg/pN physics scale.
         double weight = mass * 11.0D;
         double diameter = Math.max(2.0D, state.boundingRadius * 2.0D);
         double height = Math.max(2.0D, state.boundingHalfHeight * 2.0D);
@@ -103,8 +113,6 @@ public final class FlightSetupTelemetryNetwork {
         int redstone = (int) Math.round(clamp(finiteFraction, 0.0D, 1.0D) * 15.0D);
         double margin = weight <= 1.0e-6 ? 0.0D : verticalMax / weight - 1.0D;
         double currentFraction = verticalMax <= 1.0e-6 ? 0.0D : clamp(currentVertical / verticalMax, 0.0D, 1.0D);
-        // Equal allocation is the safe baseline when all lift thrusters have the same capacity.
-        // The allocator subsequently scales each actuator against its actual max thrust.
         double requiredPerThruster = upward <= 0 ? Double.POSITIVE_INFINITY : weight / upward;
 
         SetupPayload payload = new SetupPayload(controller.getControllerId(), mass, diameter, height, weight,
