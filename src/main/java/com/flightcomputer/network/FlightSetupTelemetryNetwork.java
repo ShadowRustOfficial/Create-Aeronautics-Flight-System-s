@@ -13,7 +13,6 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -37,7 +36,7 @@ public final class FlightSetupTelemetryNetwork {
     public record SetupPayload(UUID controllerId, double mass, double envelopeDiameter, double envelopeHeight,
                                double weightForce, double verticalMaxThrust, double hoverFraction,
                                int recommendedRedstonePower, int upwardThrusterCount, double liftMargin,
-                               double currentVerticalFraction) implements CustomPacketPayload {
+                               double currentVerticalFraction, double recommendedOutputPerThruster) implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, SetupPayload> STREAM_CODEC = StreamCodec.of(
                 (buf, p) -> {
                     buf.writeLong(p.controllerId.getMostSignificantBits());
@@ -46,12 +45,13 @@ public final class FlightSetupTelemetryNetwork {
                     buf.writeDouble(p.weightForce); buf.writeDouble(p.verticalMaxThrust); buf.writeDouble(p.hoverFraction);
                     buf.writeInt(p.recommendedRedstonePower); buf.writeInt(p.upwardThrusterCount);
                     buf.writeDouble(p.liftMargin); buf.writeDouble(p.currentVerticalFraction);
+                    buf.writeDouble(p.recommendedOutputPerThruster);
                 },
                 buf -> new SetupPayload(
                         new UUID(buf.readLong(), buf.readLong()),
                         buf.readDouble(), buf.readDouble(), buf.readDouble(),
                         buf.readDouble(), buf.readDouble(), buf.readDouble(),
-                        buf.readInt(), buf.readInt(), buf.readDouble(), buf.readDouble()));
+                        buf.readInt(), buf.readInt(), buf.readDouble(), buf.readDouble(), buf.readDouble()));
 
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
@@ -93,7 +93,8 @@ public final class FlightSetupTelemetryNetwork {
             if (force.y > 1.0e-6) {
                 upward++;
                 verticalMax += force.y;
-                currentVertical += Math.max(0.0D, link.source.getCurrentThrust()) * Math.max(0.0D, force.y / Math.max(link.source.getMaxThrust(), 1.0e-6));
+                currentVertical += Math.max(0.0D, link.source.getCurrentThrust())
+                        * Math.max(0.0D, force.y / Math.max(link.source.getMaxThrust(), 1.0e-6));
             }
         }
 
@@ -102,9 +103,12 @@ public final class FlightSetupTelemetryNetwork {
         int redstone = (int) Math.round(clamp(finiteFraction, 0.0D, 1.0D) * 15.0D);
         double margin = weight <= 1.0e-6 ? 0.0D : verticalMax / weight - 1.0D;
         double currentFraction = verticalMax <= 1.0e-6 ? 0.0D : clamp(currentVertical / verticalMax, 0.0D, 1.0D);
+        // Equal allocation is the safe baseline when all lift thrusters have the same capacity.
+        // The allocator subsequently scales each actuator against its actual max thrust.
+        double requiredPerThruster = upward <= 0 ? Double.POSITIVE_INFINITY : weight / upward;
 
         SetupPayload payload = new SetupPayload(controller.getControllerId(), mass, diameter, height, weight,
-                verticalMax, hoverFraction, redstone, upward, margin, currentFraction);
+                verticalMax, hoverFraction, redstone, upward, margin, currentFraction, requiredPerThruster);
         for (ServerPlayer player : level.players()) {
             if (player.distanceToSqr(controller.getBlockPos().getX() + 0.5D,
                     controller.getBlockPos().getY() + 0.5D,
