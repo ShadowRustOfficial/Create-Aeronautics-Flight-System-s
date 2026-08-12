@@ -15,7 +15,6 @@ import com.flightcomputer.client.map.FlightMapProviderKind;
 import com.flightcomputer.client.map.LiveWorldMapProvider;
 import com.flightcomputer.client.map.WaypointMapProvider;
 import com.flightcomputer.client.map.WaystoneMapProvider;
-import com.flightcomputer.control.FlightControlRuntimeManager;
 import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -86,12 +85,13 @@ public final class NavigationConsoleScreen extends Screen {
     private void initFlightControl(int l,int w){
         int col=(w-24)/4;
         int altitudeRow=top()+206;
-        altitudeTargetInput=new EditBox(font,l,altitudeRow,Math.max(180,col*2-8),20,Component.literal("Altitude Y"));
+        int inputWidth=Math.max(180,col*2-8);
+        altitudeTargetInput=new EditBox(font,l,altitudeRow,inputWidth,20,Component.literal("Altitude Y"));
         altitudeTargetInput.setValue(String.format(Locale.ROOT,"%.1f",controllerY));
         altitudeTargetInput.setHint(Component.literal("World Y level"));
         altitudeTargetInput.setMaxLength(16);
         addRenderableWidget(altitudeTargetInput);
-        setAltitudeButton=Button.builder(Component.literal("SET ALTITUDE TARGET"),b->sendAltitudeTarget()).bounds(l+Math.max(188,col*2-8)+8,altitudeRow,Math.max(170,col*2-8),20).build();
+        setAltitudeButton=Button.builder(Component.literal("SET ALTITUDE TARGET"),b->sendAltitudeTarget()).bounds(l+inputWidth+8,altitudeRow,Math.max(170,col*2-8),20).build();
         addRenderableWidget(setAltitudeButton);
 
         int y=top()+250;
@@ -136,7 +136,7 @@ public final class NavigationConsoleScreen extends Screen {
     private void renderFlight(GuiGraphics g,int l,int top){FlightControllerState s=controller==null?FlightControllerState.DEFAULT:controller.getControllerState();var telemetry=controller==null?null:FlightComputerTelemetryClient.get(controller.getControllerId());g.drawString(font,"FLIGHT CONTROL",l,top+10,TEXT);g.drawString(font,"SYSTEM: "+(s.engaged()?"ENGAGED":"DISENGAGED"),l,top+44,s.engaged()?GREEN:MUTED);g.drawString(font,"STABILISER: "+on(s.stabiliser()),l,top+68,s.stabiliser()?GREEN:MUTED);g.drawString(font,"AUTOPILOT: "+(s.flightMode()==FlightMode.AUTOPILOT?"ON":"OFF"),l+190,top+68,s.flightMode()==FlightMode.AUTOPILOT?GREEN:MUTED);g.drawString(font,"MODE: "+s.flightMode(),l,top+92,BRIGHT);g.drawString(font,"NAVIGATION: "+on(s.navigationEnabled())+"   ROUTE: "+on(s.routeActive()),l+190,top+92,TEXT);g.drawString(font,"HOLDS  ALT "+on(s.altitudeHold())+"  HDG "+on(s.headingHold())+"  POS "+on(s.positionHold())+"  VEL "+on(s.velocityHold()),l,top+116,MUTED);String altitudeText=altitudeTargetInput==null?String.format(Locale.ROOT,"%.1f",controllerY):altitudeTargetInput.getValue();g.drawString(font,"ALTITUDE TARGET Y: "+altitudeText+"  |  WORLD Y",l,top+180,BRIGHT);if(telemetry!=null)g.drawString(font,String.format(Locale.ROOT,"ALT %.1f  SPEED %.2f  HEADING %.1f°  TARGET %s",telemetry.y(),telemetry.speed(),normalizeDegrees(telemetry.heading()),telemetry.targetPresent()?telemetry.targetName():"NONE"),l,top+140,TEXT);}
 
     private void renderDiagnostics(GuiGraphics g,int l,int top){long energy=controller==null?0:controller.getEnergyStorage().getEnergyStored(),cap=controller==null?0:controller.getEnergyStorage().getMaxEnergyStored();g.drawString(font,"DIAGNOSTICS / TELEMETRY",l,top+10,TEXT);g.drawString(font,"CONTROLLER: "+(powered()?"OPERATIONAL":"OFFLINE"),l,top+40,powered()?GREEN:RED);g.drawString(font,"LINK: "+linkStatus(),l,top+62,powered()?GREEN:RED);g.drawString(font,"ENERGY: "+format(energy)+" / "+format(cap)+" FE",l,top+84,energy>0?GREEN:RED);FlightMapDiagnostics d=mapPipeline.diagnostics();g.drawString(font,"MAP ENGINE: NATIVE CPU TERRAIN",l,top+114,BRIGHT);g.drawString(font,"REQUESTED "+d.requestedCount()+"  PENDING "+d.pendingCount()+"  DECODED "+d.decodedCount()+"  FAILED "+d.failedCount(),l,top+136,MUTED);g.drawString(font,String.format(Locale.ROOT,"WORLD X %.2f  Y %.2f  Z %.2f",controllerX,controllerY,controllerZ),l,top+158,TEXT);var setup=controller==null?null:FlightSetupTelemetryClient.get(controller.getControllerId());if(setup==null){g.drawString(font,"THRUSTER SETUP: WAITING FOR SERVER TELEMETRY...",l,top+190,MUTED);return;}boolean enough=setup.upwardThrusterCount()>0&&setup.hoverFraction()<=1.0D;int c=enough?GREEN:RED;g.drawString(font,String.format(Locale.ROOT,"VESSEL MASS %.2f kg   WEIGHT %.1f N",setup.mass(),setup.weightForce()),l,top+188,TEXT);g.drawString(font,String.format(Locale.ROOT,"ENVELOPE Ø %.2f m   HEIGHT %.2f m",setup.envelopeDiameter(),setup.envelopeHeight()),l,top+210,TEXT);g.drawString(font,String.format(Locale.ROOT,"UPWARD THRUST %.1f N   LIFT THRUSTERS %d",setup.verticalMaxThrust(),setup.upwardThrusterCount()),l,top+232,c);if(Double.isFinite(setup.hoverFraction())){g.drawString(font,String.format(Locale.ROOT,"STATIC HOVER BASELINE: %.1f%% OF MAX LIFT",setup.hoverFraction()*100D),l,top+254,c);g.drawString(font,String.format(Locale.ROOT,"PER LIFT THRUSTER: ~%.1f N REQUIRED   (REDSTONE EQUIV. %d/15)",setup.recommendedOutputPerThruster(),setup.recommendedRedstonePower()),l,top+276,c);g.drawString(font,"USE THE THRUSTER'S REAL OUTPUT RANGE (NOT 1-15): SCALE EACH TO THIS FORCE / ITS MAX THRUST",l,top+298,TEXT);g.drawString(font,String.format(Locale.ROOT,"LIFT RESERVE: %+.1f%%   CURRENT LIFT: %.1f%%",setup.liftMargin()*100D,setup.currentVerticalFraction()*100D),l,top+320,MUTED);}else{g.drawString(font,"HOVER BASELINE: NO UPWARD THRUSTERS DETECTED",l,top+254,RED);g.drawString(font,"LINK UPWARD/LIFT THRUSTERS BEFORE ENABLING STABILISATION",l,top+276,RED);}}
-    private static String format(long v){return String.format(Locale.ROOT,"%,d",Math.max(0,v));} private static double normalizeDegrees(double d){double v=d%360D;return v<0?v+360D:v+360D;}
+    private static String format(long v){return String.format(Locale.ROOT,"%,d",Math.max(0,v));} private static double normalizeDegrees(double d){double v=d%360D;return v<0?v+360D:v;}
 
     @Override public boolean mouseClicked(double x,double y,int button){if(tab==Tab.MAP&&button==0&&x>=mapLeft()&&x<mapRight()&&y>=mapTop()&&y<mapBottom()){dragging=true;return true;}return super.mouseClicked(x,y,button);}
     @Override public boolean mouseReleased(double x,double y,int button){if(button==0)dragging=false;return super.mouseReleased(x,y,button);}
