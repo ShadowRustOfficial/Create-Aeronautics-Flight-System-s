@@ -35,12 +35,8 @@ public final class FlightComputer {
     public FlightMode getMode() { return mode; }
     public SixAxisStabilizer getStabilizeStabilizer() { return stabilizeStabilizer; }
     public SixAxisStabilizer getCruiseStabilizer() { return cruiseStabilizer; }
-
     public void setManualInput(double pitch,double roll,double yawRate,double vertical,double longitudinal,double lateral){pitchStick=pitch;rollStick=roll;yawRateStick=yawRate;verticalStick=vertical;longitudinalStick=longitudinal;lateralStick=lateral;}
-
-    /** Set an explicit world Y altitude for the altitude-hold controller. */
     public void setAltitudeHoldTarget(double y) { altitudeHoldTargetY = Double.isFinite(y) ? y : Double.NaN; }
-
     public void syncHolds(FlightControllerState controllerState, VehicleState state) {
         if(controllerState==null||state==null)return;
         altitudeHold=controllerState.altitudeHold(); headingHold=controllerState.headingHold(); positionHold=controllerState.positionHold(); velocityHold=controllerState.velocityHold();
@@ -51,17 +47,14 @@ public final class FlightComputer {
         if(velocityHold&&!previousVelocityHold){holdVx=state.vx;holdVy=state.vy;holdVz=state.vz;}
         previousAltitudeHold=altitudeHold;previousHeadingHold=headingHold;previousPositionHold=positionHold;previousVelocityHold=velocityHold;
     }
-
-    public void engageCruise(double targetX,double targetY,double targetZ){navigator.setTarget(targetX,targetY,targetZ);cruiseStabilizer.resetAll();ticksSinceReplan=0;mode=FlightMode.CRUISE;}
+    public void engageCruise(double targetX,double targetY,double targetZ){navigator.setTarget(targetX,targetY,targetZ);cruiseStabilizer.resetAll();ticksSinceReplan=0;latestCruiseSetpoint=StabilizationSetpoint.hover();mode=FlightMode.CRUISE;}
     public void disengageCruise(){mode=FlightMode.STABILIZE;navigator.clearTarget();latestCruiseSetpoint=StabilizationSetpoint.hover();}
     public double distanceToTarget(){VehicleState state=stateProvider.getState();return state!=null&&navigator.hasTarget()?navigator.distanceToTarget(state):-1;}
     public boolean isCruisePathBlocked(){return mode==FlightMode.CRUISE&&navigator.isPathBlocked();}
     public void tick(double dt){tick(dt,true,navigator.hasTarget());}
-
-    /** Runs the active control layers once. When both are enabled, stabilisation owns rotational axes and autopilot owns translation so the same actuator is never commanded twice. */
+    /** Runs the active control layers once. Stabilisation and autopilot retain their original axis arbitration. */
     public void tick(double dt,boolean stabiliserEnabled,boolean autopilotEnabled){
         VehicleState state=stateProvider.getState(); if(state==null)return;
-
         Map<ControlAxis,Double> stabiliseCommands=Map.of();
         if(stabiliserEnabled){
             StabilizationSetpoint sp=StabilizationSetpoint.manualNudge(pitchStick,rollStick,yawRateStick,verticalStick,longitudinalStick,lateralStick,maxManualTiltRadians,maxManualYawRate,maxManualSpeed);
@@ -69,14 +62,15 @@ public final class FlightComputer {
             stabiliseCommands=stabilizeStabilizer.computeCommands(state,sp,dt);
             if(autopilotEnabled) stabiliseCommands=filterAxes(stabiliseCommands,true);
         }else stabilizeStabilizer.resetAll();
-
         Map<ControlAxis,Double> autopilotCommands=Map.of();
         if(autopilotEnabled&&navigator.hasTarget()){
             ticksSinceReplan++;
-            if(ticksSinceReplan>=Math.max(1,replanIntervalTicks)||navigator.distanceToTarget(state)<3.0){latestCruiseSetpoint=navigator.plan(state,cruiseMaxSpeed,estimateCruiseDeceleration(state));ticksSinceReplan=0;}
+            if(ticksSinceReplan>=Math.max(1,replanIntervalTicks)||navigator.distanceToTarget(state)<3.0){
+                StabilizationSetpoint planned=navigator.plan(state,cruiseMaxSpeed,estimateCruiseDeceleration(state));
+                latestCruiseSetpoint=blendSetpoints(latestCruiseSetpoint,planned,0.18);
+                ticksSinceReplan=0;
+            }
             StabilizationSetpoint sp=latestCruiseSetpoint.copy();
-            // An explicit altitude hold target is allowed to override the route's Y setpoint while
-            // MPC continues to own horizontal guidance.
             if(altitudeHold && Double.isFinite(altitudeHoldTargetY)) sp.desiredVerticalVelocity=clamp((altitudeHoldTargetY-state.y)*.9,-maxManualSpeed,maxManualSpeed);
             applyHoldSetpoints(sp,state,false);
             autopilotCommands=cruiseStabilizer.computeCommands(state,sp,dt);
@@ -86,14 +80,26 @@ public final class FlightComputer {
         }else{cruiseStabilizer.resetAll();ticksSinceReplan=0;}
         allocator.applyCombined(registry,state,stabiliseCommands,autopilotCommands);
     }
-
+    private static StabilizationSetpoint blendSetpoints(StabilizationSetpoint oldSp,StabilizationSetpoint newSp,double alpha){
+        if(oldSp==null)return newSp.copy();
+        double a=clamp(alpha,0.0,1.0), b=1.0-a;
+        StabilizationSetpoint out=newSp.copy();
+        out.desiredLongitudinalVelocity=b*oldSp.desiredLongitudinalVelocity+a*newSp.desiredLongitudinalVelocity;
+        out.desiredLateralVelocity=b*oldSp.desiredLateralVelocity+a*newSp.desiredLateralVelocity;
+        out.desiredVerticalVelocity=b*oldSp.desiredVerticalVelocity+a*newSp.desiredVerticalVelocity;
+        if(oldSp.yawIsRateNotHeading==newSp.yawIsRateNotHeading){
+            if(newSp.yawIsRateNotHeading) out.desiredYawRate=b*oldSp.desiredYawRate+a*newSp.desiredYawRate;
+            else out.desiredYaw=blendAngle(oldSp.desiredYaw,newSp.desiredYaw,a);
+        }
+        return out;
+    }
+    private static double blendAngle(double from,double to,double alpha){double delta=Math.atan2(Math.sin(to-from),Math.cos(to-from));return from+delta*clamp(alpha,0.0,1.0);}
     private static Map<ControlAxis,Double> filterAxes(Map<ControlAxis,Double> source,boolean rotational){
         if(source==null||source.isEmpty())return Map.of();
         Map<ControlAxis,Double> result=new EnumMap<>(ControlAxis.class);
         for(Map.Entry<ControlAxis,Double> entry:source.entrySet()) if(entry.getKey().isRotational()==rotational) result.put(entry.getKey(),entry.getValue());
         return result;
     }
-
     private void applyHoldSetpoints(StabilizationSetpoint sp,VehicleState state,boolean allowPosition){
         if(headingHold){sp.desiredYaw=holdYaw;sp.yawIsRateNotHeading=false;}
         if(positionHold&&allowPosition){double dx=holdX-state.x,dz=holdZ-state.z;double[] body=worldToBodyVelocity(dx,dz,state.yaw);sp.desiredLongitudinalVelocity=clamp(body[0]*.85,-maxManualSpeed,maxManualSpeed);sp.desiredLateralVelocity=clamp(body[1]*.85,-maxManualSpeed,maxManualSpeed);}
