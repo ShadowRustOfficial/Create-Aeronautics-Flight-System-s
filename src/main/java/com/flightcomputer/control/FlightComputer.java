@@ -49,12 +49,7 @@ public final class FlightComputer {
         lateralStick = lateral;
     }
 
-    /**
-     * Synchronise the physical hold latches with the authoritative controller state. A newly
-     * enabled hold captures the current physical state, so it does not command a jump to an old
-     * setpoint. Position/altitude holds are outer-loop position controllers feeding the existing
-     * velocity PID inner loop.
-     */
+    /** Synchronise hold latches with authoritative controller state and capture new setpoints. */
     public void syncHolds(FlightControllerState controllerState, VehicleState state) {
         if (controllerState == null || state == null) return;
         altitudeHold = controllerState.altitudeHold();
@@ -64,12 +59,8 @@ public final class FlightComputer {
 
         if (altitudeHold && !previousAltitudeHold) holdY = state.y;
         if (headingHold && !previousHeadingHold) holdYaw = state.yaw;
-        if (positionHold && !previousPositionHold) {
-            holdX = state.x; holdY = state.y; holdZ = state.z;
-        }
-        if (velocityHold && !previousVelocityHold) {
-            holdVx = state.vx; holdVy = state.vy; holdVz = state.vz;
-        }
+        if (positionHold && !previousPositionHold) { holdX = state.x; holdY = state.y; holdZ = state.z; }
+        if (velocityHold && !previousVelocityHold) { holdVx = state.vx; holdVy = state.vy; holdVz = state.vz; }
         previousAltitudeHold = altitudeHold;
         previousHeadingHold = headingHold;
         previousPositionHold = positionHold;
@@ -98,10 +89,7 @@ public final class FlightComputer {
 
     public void tick(double dt) { tick(dt, true, navigator.hasTarget()); }
 
-    /**
-     * Runs the two control layers independently. Autopilot does not require the manual stabiliser
-     * flag, and stabilisation does not require a navigation target.
-     */
+    /** Runs independent stabilisation and autopilot layers, then combines them at the allocator. */
     public void tick(double dt, boolean stabiliserEnabled, boolean autopilotEnabled) {
         VehicleState state = stateProvider.getState();
         if (state == null) return;
@@ -124,10 +112,11 @@ public final class FlightComputer {
                 latestCruiseSetpoint = navigator.plan(state, cruiseMaxSpeed, estimateCruiseDeceleration(state));
                 ticksSinceReplan = 0;
             }
+            StabilizationSetpoint cruiseSetpoint = latestCruiseSetpoint.copy();
             // Navigation owns horizontal trajectory. Altitude/heading hold may constrain it,
             // while position/velocity hold is intentionally ignored while an active route is flown.
-            applyHoldSetpoints(latestCruiseSetpoint, state, false);
-            autopilotCommands = cruiseStabilizer.computeCommands(state, latestCruiseSetpoint, dt);
+            applyHoldSetpoints(cruiseSetpoint, state, false);
+            autopilotCommands = cruiseStabilizer.computeCommands(state, cruiseSetpoint, dt);
             mode = FlightMode.CRUISE;
             if (navigator.distanceToTarget(state) < 1.0) disengageCruise();
         } else {
@@ -139,26 +128,25 @@ public final class FlightComputer {
     }
 
     private void applyHoldSetpoints(StabilizationSetpoint sp, VehicleState state, boolean allowPosition) {
-        if (headingHold) sp.desiredYaw = holdYaw;
-        if (headingHold) sp.yawIsRateNotHeading = false;
+        if (headingHold) {
+            sp.desiredYaw = holdYaw;
+            sp.yawIsRateNotHeading = false;
+        }
 
-        boolean holdPositionAxis = positionHold && allowPosition;
-        if (holdPositionAxis) {
+        if (positionHold && allowPosition) {
             double dx = holdX - state.x;
             double dz = holdZ - state.z;
             double[] body = worldToBodyVelocity(dx, dz, state.yaw);
             sp.desiredLongitudinalVelocity = clamp(body[0] * 0.85, -maxManualSpeed, maxManualSpeed);
             sp.desiredLateralVelocity = clamp(body[1] * 0.85, -maxManualSpeed, maxManualSpeed);
         } else if (velocityHold && allowPosition) {
-            double[] body = state.bodyFrameVelocity();
             double[] targetBody = worldToBodyVelocity(holdVx, holdVz, state.yaw);
-            sp.desiredLongitudinalVelocity = targetBody[0];
-            sp.desiredLateralVelocity = targetBody[1];
+            sp.desiredLongitudinalVelocity = clamp(targetBody[0], -maxManualSpeed, maxManualSpeed);
+            sp.desiredLateralVelocity = clamp(targetBody[1], -maxManualSpeed, maxManualSpeed);
         }
 
         if (positionHold || altitudeHold) {
-            double targetY = positionHold ? holdY : holdY;
-            sp.desiredVerticalVelocity = clamp((targetY - state.y) * 0.9, -maxManualSpeed, maxManualSpeed);
+            sp.desiredVerticalVelocity = clamp((holdY - state.y) * 0.9, -maxManualSpeed, maxManualSpeed);
         } else if (velocityHold) {
             sp.desiredVerticalVelocity = clamp(holdVy, -maxManualSpeed, maxManualSpeed);
         }
