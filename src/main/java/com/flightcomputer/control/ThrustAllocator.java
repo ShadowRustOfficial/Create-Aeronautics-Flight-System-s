@@ -22,7 +22,12 @@ public final class ThrustAllocator {
     public void applyCombined(ThrusterRegistry registry, VehicleState state,
                               Map<ControlAxis, Double> stabiliser, Map<ControlAxis, Double> autopilot) {
         if (state == null) { lastThermalLoad = 0.0D; return; }
-        ControlWrench target = ControlWrench.fromAxes(stabiliser).add(ControlWrench.fromAxes(autopilot));
+        Quaterniond vehicleRotation = vehicleRotation(state);
+        // PID/MPC setpoints are expressed in vehicle/body axes; actuator contributions are
+        // evaluated in world axes. Convert once here so the allocator solves the same frame.
+        ControlWrench target = ControlWrench.fromAxes(stabiliser)
+                .add(ControlWrench.fromAxes(autopilot))
+                .toWorld(vehicleRotation);
         if (target.normSquared() <= 1.0e-12) {
             zeroActiveSources(registry, stabiliser, autopilot);
             lastThermalLoad = 0.0D;
@@ -40,8 +45,6 @@ public final class ThrustAllocator {
         if (sources.isEmpty()) { lastThermalLoad = 0.0D; return; }
 
         double[] commands = new double[sources.size()];
-        Quaterniond vehicleRotation = vehicleRotation(state);
-
         for (int iteration = 0; iteration < ITERATIONS; iteration++) {
             double[] achieved = achieved(sources, commands, vehicleRotation);
             for (int i = 0; i < sources.size(); i++) {
