@@ -6,6 +6,7 @@ import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaterniondc;
 import org.joml.Vector3d;
@@ -62,10 +63,18 @@ public final class FlightControlRuntimeManager {
         Runtime runtime = runtime(controller);
         VehicleState state = runtime.snapshot;
         if (state == null) return;
+
+        Vec3 current = new Vec3(state.x, state.y, state.z);
         Vec3 target = runtime.targetActive ? runtime.target : null;
-        double distance = target == null ? -1.0D : target.distanceTo(new Vec3(state.x, state.y, state.z));
+        double distance = target == null ? -1.0D : target.distanceTo(current);
         double heading = normalizeDegrees(Math.toDegrees(state.yaw));
         double speed = safeSpeed(state.vx, state.vy, state.vz);
+        double bearing = target == null ? 0.0D : bearing(current, target);
+
+        ThrusterRegistry registry = runtime.computer == null ? null : runtime.computer.getRegistry();
+        double[] stabiliser = vectorOutputs(registry, FlightMode.STABILIZE);
+        double[] autopilot = vectorOutputs(registry, FlightMode.CRUISE);
+
         FlightComputerNetwork.TelemetryPayload payload = new FlightComputerNetwork.TelemetryPayload(
                 controller.getControllerId(), state.x, state.y, state.z, speed, heading,
                 Math.toDegrees(state.pitch), Math.toDegrees(state.roll),
@@ -74,13 +83,38 @@ public final class FlightControlRuntimeManager {
                 controller.getTemperature(), controller.getMaxTemperature(), controller.getThermalState().ordinal(),
                 controller.getThermalCooldownTicksRemaining(), controller.getEnergyStorage().getEnergyStored(),
                 controller.getEnergyStorage().getMaxEnergyStored(), controller.getCoolingTier().ordinal(),
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                stabiliser[0], stabiliser[1], stabiliser[2], stabiliser[3], stabiliser[4], stabiliser[5],
+                autopilot[0], autopilot[1], autopilot[2], autopilot[3], autopilot[4], autopilot[5]);
+
         for (ServerPlayer player : level.players()) {
+            // Entity#distanceToSqr is Sable-aware; use the squared radius here, not a raw radius.
             if (player.distanceToSqr(controller.getBlockPos().getX() + 0.5D,
                     controller.getBlockPos().getY() + 0.5D,
                     controller.getBlockPos().getZ() + 0.5D) <= 128.0D * 128.0D)
                 FlightComputerNetwork.sendTelemetry(player, payload);
         }
+    }
+
+    private static double[] vectorOutputs(ThrusterRegistry registry, FlightMode mode) {
+        double[] result = new double[6];
+        if (registry == null) return result;
+        VectorDirection[] dirs = VectorDirection.values();
+        for (int i = 0; i < dirs.length; i++) {
+            double max = 0.0D, current = 0.0D;
+            for (ThrusterLink link : registry.getLinks(mode, dirs[i])) {
+                max += Math.max(0.0D, link.source.getMaxThrust());
+                current += Math.max(0.0D, link.source.getCurrentThrust());
+            }
+            result[i] = max <= 0.0D ? 0.0D : Math.max(0.0D, Math.min(1.0D, current / max));
+        }
+        return result;
+    }
+
+    private static double bearing(Vec3 from, Vec3 to) {
+        double dx = to.x - from.x;
+        double dz = to.z - from.z;
+        double degrees = Math.toDegrees(Math.atan2(dx, dz));
+        return normalizeDegrees(degrees);
     }
 
     public static synchronized void remove(FlightControllerBlockEntity controller) {
@@ -104,18 +138,21 @@ public final class FlightControlRuntimeManager {
         private FlightComputer computer;
         private Vec3 lastNavigatorTarget;
         private Object helper;
-        private Method getContaining, projectOut;
+        private Method getContainingBlockEntity, getContainingPosition, projectOut;
         private boolean initialized, available;
 
         public void update(FlightControllerBlockEntity controller) {
             if (controller == null || controller.getLevel() == null) return;
             Level level = controller.getLevel();
             Vec3 local = Vec3.atCenterOf(controller.getBlockPos());
-            Vec3 world = project(level, local);
+
+            // The controller is itself a Sable sub-level actor. Resolve its containing sub-level
+            // from the BlockEntity rather than guessing from an extreme plot coordinate.
+            Object subLevel = containing(level, controller, local);
+            Vec3 world = project(subLevel, level, local);
             VehicleState state = snapshot == null ? new VehicleState() : snapshot;
             state.x = world.x; state.y = world.y; state.z = world.z;
 
-            Object subLevel = containing(level, local);
             boolean physicalVelocity = false;
             boolean physicalInertia = false;
             if (subLevel != null) try {
@@ -127,14 +164,17 @@ public final class FlightControlRuntimeManager {
                     state.pitch=Math.asin(Math.max(-1,Math.min(1,2*(w*x-y*z))));
                     state.roll=Math.atan2(2*(w*z+x*y),1-2*(x*x+y*y));
                 }
+
                 Vector3d linear = readVectorField(subLevel, "latestLinearVelocity");
                 Vector3d angular = readVectorField(subLevel, "latestAngularVelocity");
                 if (linear != null && finite(linear)) {
-                    state.vx=linear.x; state.vy=linear.y; state.vz=linear.z; physicalVelocity=true;
+                    state.vx=linear.x; state.vy=linear.y; state.vz=linear.z;
+                    physicalVelocity=true;
                 }
                 if (angular != null && finite(angular)) {
                     state.pitchRate=angular.x; state.yawRate=angular.y; state.rollRate=angular.z;
                 }
+
                 Object tracker=invokeNoArg(subLevel,"getMassTracker","massTracker");
                 Object mass=tracker==null?null:invokeNoArg(tracker,"getMass","mass");
                 if(mass instanceof Number n&&n.doubleValue()>0)state.mass=n.doubleValue();
@@ -144,11 +184,22 @@ public final class FlightControlRuntimeManager {
                 double halfHeight=readDouble(subLevel,"getBoundingHalfHeight","boundingHalfHeight","getHalfHeight"); if(halfHeight>0)state.boundingHalfHeight=Math.max(1,halfHeight);
             } catch (ReflectiveOperationException|RuntimeException ignored) { }
 
-            if(!physicalVelocity&&previousPosition!=null){state.vx=(world.x-previousPosition.x)*20;state.vy=(world.y-previousPosition.y)*20;state.vz=(world.z-previousPosition.z)*20;}
-            else if(!physicalVelocity){state.vx=state.vy=state.vz=0;}
+            // Never differentiate raw Sable plot coordinates. If Sable velocity is unavailable,
+            // only differentiate already-projected logical world coordinates.
+            if(!physicalVelocity&&previousPosition!=null){
+                state.vx=(world.x-previousPosition.x)*20;
+                state.vy=(world.y-previousPosition.y)*20;
+                state.vz=(world.z-previousPosition.z)*20;
+            } else if(!physicalVelocity){state.vx=state.vy=state.vz=0;}
             if(!physicalInertia)estimateInertiaFromVehicleEnvelope(state,computer==null?null:computer.getRegistry());
-            if(!physicalVelocity&&previousPosition!=null){state.yawRate=angleDelta(state.yaw,previousYaw)*20;state.pitchRate=angleDelta(state.pitch,previousPitch)*20;state.rollRate=angleDelta(state.roll,previousRoll)*20;}
-            state.timestampNanos=System.nanoTime(); previousPosition=world;previousYaw=state.yaw;previousPitch=state.pitch;previousRoll=state.roll;snapshot=state.copy();
+            if(!physicalVelocity&&previousPosition!=null){
+                state.yawRate=angleDelta(state.yaw,previousYaw)*20;
+                state.pitchRate=angleDelta(state.pitch,previousPitch)*20;
+                state.rollRate=angleDelta(state.roll,previousRoll)*20;
+            }
+            state.timestampNanos=System.nanoTime();
+            previousPosition=world; previousYaw=state.yaw; previousPitch=state.pitch; previousRoll=state.roll;
+            snapshot=state.copy();
         }
 
         private void control(FlightControllerBlockEntity controller) {
@@ -166,20 +217,59 @@ public final class FlightControlRuntimeManager {
             if(powered)controller.addControlThermalLoad(computer.getAllocator().getLastThermalLoad());
         }
 
-        private static void estimateInertiaFromVehicleEnvelope(VehicleState state,ThrusterRegistry registry){
-            double halfX=1,halfY=Math.max(1,state.boundingHalfHeight),halfZ=Math.max(1,state.boundingRadius);
-            if(registry!=null)for(ThrusterLink link:registry.getAllLinks()){if(link==null||link.source==null)continue;double[] r=link.source.getMountOffset();if(r==null||r.length<3)continue;halfX=Math.max(halfX,Math.abs(r[0]));halfY=Math.max(halfY,Math.abs(r[1]));halfZ=Math.max(halfZ,Math.abs(r[2]));}
-            state.inertiaPitch=Math.max(1,state.mass*(halfY*halfY+halfZ*halfZ)/3);state.inertiaRoll=Math.max(1,state.mass*(halfX*halfX+halfY*halfY)/3);state.inertiaYaw=Math.max(1,state.mass*(halfX*halfX+halfZ*halfZ)/3);state.boundingRadius=Math.max(state.boundingRadius,Math.max(halfX,halfZ));state.boundingHalfHeight=Math.max(state.boundingHalfHeight,halfY);
-        }
         private static double[] readInertia(Object target){if(target==null)return null;for(String n:new String[]{"getMomentOfInertia","getInertia","momentOfInertia","inertia"}){double[] p=parseVector(invokeNoArg(target,n));if(p!=null)return p;}return null;}
         private static double[] parseVector(Object v){if(v instanceof Vector3d x)return new double[]{Math.abs(x.x),Math.abs(x.y),Math.abs(x.z)};if(v instanceof Vec3 x)return new double[]{Math.abs(x.x),Math.abs(x.y),Math.abs(x.z)};if(v instanceof double[] a&&a.length>=3)return new double[]{Math.abs(a[0]),Math.abs(a[1]),Math.abs(a[2])};return null;}
         private static double readDouble(Object target,String...names){if(target==null)return -1;for(String n:names){Object v=invokeNoArg(target,n);if(v instanceof Number x&&x.doubleValue()>0)return x.doubleValue();}return -1;}
-        private Vec3 project(Level level,Vec3 local){if(!ensure())return local;try{Object v=projectOut.invoke(helper,level,local);return v instanceof Vec3 x?x:local;}catch(ReflectiveOperationException|RuntimeException ignored){return local;}}
-        private Object containing(Level level,Vec3 local){if(!ensure())return null;try{return getContaining.invoke(helper,level,local);}catch(ReflectiveOperationException|RuntimeException ignored){return null;}}
-        private boolean ensure(){if(initialized)return available;initialized=true;try{Class<?> sable=Class.forName("dev.ryanhcode.sable.companion.SableCompanion",false,getClass().getClassLoader());helper=sable.getField("INSTANCE").get(null);getContaining=helper.getClass().getMethod("getContaining",Level.class,Vec3.class);projectOut=helper.getClass().getMethod("projectOutOfSubLevel",Level.class,Vec3.class);available=true;}catch(ReflectiveOperationException|LinkageError|RuntimeException ignored){available=false;}return available;}
+
+        private Vec3 project(Object subLevel, Level level, Vec3 local) {
+            if (subLevel != null) {
+                try {
+                    Object pose = subLevel.getClass().getMethod("logicalPose").invoke(subLevel);
+                    Object result = pose.getClass().getMethod("transformPosition", Vec3.class).invoke(pose, local);
+                    if (result instanceof Vec3 vec) return vec;
+                } catch (ReflectiveOperationException | RuntimeException ignored) { }
+            }
+            if (ensure()) {
+                try { Object result=projectOut.invoke(helper,level,local); if(result instanceof Vec3 vec)return vec; }
+                catch (ReflectiveOperationException|RuntimeException ignored) { }
+            }
+            return local;
+        }
+
+        private Object containing(Level level, FlightControllerBlockEntity controller, Vec3 local) {
+            if (!ensure()) return null;
+            try {
+                if (getContainingBlockEntity != null) {
+                    Object result=getContainingBlockEntity.invoke(helper,controller);
+                    if(result!=null)return result;
+                }
+                if (getContainingPosition != null) return getContainingPosition.invoke(helper,level,local);
+            } catch (ReflectiveOperationException|RuntimeException ignored) { }
+            return null;
+        }
+
+        private boolean ensure(){
+            if(initialized)return available;
+            initialized=true;
+            try{
+                Class<?> sable=Class.forName("dev.ryanhcode.sable.companion.SableCompanion",false,getClass().getClassLoader());
+                helper=sable.getField("INSTANCE").get(null);
+                if(helper==null)throw new IllegalStateException("SableCompanion.INSTANCE is null");
+                try { getContainingBlockEntity=helper.getClass().getMethod("getContaining",BlockEntity.class); }
+                catch (ReflectiveOperationException ignored) { getContainingBlockEntity=null; }
+                try { getContainingPosition=helper.getClass().getMethod("getContaining",Level.class,Vec3.class); }
+                catch (ReflectiveOperationException ignored) { getContainingPosition=null; }
+                try { projectOut=helper.getClass().getMethod("projectOutOfSubLevel",Level.class,Vec3.class); }
+                catch (ReflectiveOperationException ignored) { projectOut=null; }
+                available=getContainingBlockEntity!=null||getContainingPosition!=null||projectOut!=null;
+            }catch(ReflectiveOperationException|LinkageError|RuntimeException ignored){available=false;}
+            return available;
+        }
+
         private static Object invokeNoArg(Object target,String...names){if(target==null)return null;for(String n:names)try{return target.getClass().getMethod(n).invoke(target);}catch(ReflectiveOperationException|RuntimeException ignored){}return null;}
         private static Vector3d readVectorField(Object target,String name){try{Field f=target.getClass().getField(name);Object v=f.get(target);return v instanceof Vector3d x?new Vector3d(x):null;}catch(ReflectiveOperationException|RuntimeException ignored){return null;}}
         private static boolean finite(Vector3d v){return Double.isFinite(v.x)&&Double.isFinite(v.y)&&Double.isFinite(v.z);}
+        private static void estimateInertiaFromVehicleEnvelope(VehicleState state,ThrusterRegistry registry){double halfX=1,halfY=Math.max(1,state.boundingHalfHeight),halfZ=Math.max(1,state.boundingRadius);if(registry!=null)for(ThrusterLink link:registry.getAllLinks()){if(link==null||link.source==null)continue;double[] r=link.source.getMountOffset();if(r==null||r.length<3)continue;halfX=Math.max(halfX,Math.abs(r[0]));halfY=Math.max(halfY,Math.abs(r[1]));halfZ=Math.max(halfZ,Math.abs(r[2]));}state.inertiaPitch=Math.max(1,state.mass*(halfY*halfY+halfZ*halfZ)/3);state.inertiaRoll=Math.max(1,state.mass*(halfX*halfX+halfY*halfY)/3);state.inertiaYaw=Math.max(1,state.mass*(halfX*halfX+halfZ*halfZ)/3);state.boundingRadius=Math.max(state.boundingRadius,Math.max(halfX,halfZ));state.boundingHalfHeight=Math.max(state.boundingHalfHeight,halfY);}
         private static double angleDelta(double current,double previous){double d=current-previous;while(d>Math.PI)d-=Math.PI*2;while(d<-Math.PI)d+=Math.PI*2;return d;}
     }
 }
