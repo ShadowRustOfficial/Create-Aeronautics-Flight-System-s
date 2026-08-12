@@ -1,7 +1,6 @@
 package com.flightcomputer.control;
 
 import com.flightcomputer.avionics.FlightControllerState;
-
 import java.util.Map;
 
 /** One independent controller instance. Stabilisation and autopilot are independent objectives. */
@@ -21,17 +20,12 @@ public final class FlightComputer {
     public int replanIntervalTicks = 4;
     private int ticksSinceReplan;
     private StabilizationSetpoint latestCruiseSetpoint = StabilizationSetpoint.hover();
-
     private boolean altitudeHold, headingHold, positionHold, velocityHold;
     private boolean previousAltitudeHold, previousHeadingHold, previousPositionHold, previousVelocityHold;
     private double holdX, holdY, holdZ, holdYaw;
     private double holdVx, holdVy, holdVz;
 
-    public FlightComputer(VehicleStateProvider stateProvider, ObstacleSensor obstacleSensor) {
-        this.stateProvider = stateProvider;
-        this.navigator = new MPCNavigator(obstacleSensor);
-    }
-
+    public FlightComputer(VehicleStateProvider stateProvider, ObstacleSensor obstacleSensor) { this.stateProvider = stateProvider; this.navigator = new MPCNavigator(obstacleSensor); }
     public FlightComputer(VehicleStateProvider stateProvider) { this(stateProvider, null); }
     public ThrusterRegistry getRegistry() { return registry; }
     public ThrustAllocator getAllocator() { return allocator; }
@@ -40,130 +34,51 @@ public final class FlightComputer {
     public SixAxisStabilizer getStabilizeStabilizer() { return stabilizeStabilizer; }
     public SixAxisStabilizer getCruiseStabilizer() { return cruiseStabilizer; }
 
-    public void setManualInput(double pitch, double roll, double yawRate, double vertical, double longitudinal, double lateral) {
-        pitchStick = pitch;
-        rollStick = roll;
-        yawRateStick = yawRate;
-        verticalStick = vertical;
-        longitudinalStick = longitudinal;
-        lateralStick = lateral;
-    }
+    public void setManualInput(double pitch,double roll,double yawRate,double vertical,double longitudinal,double lateral){pitchStick=pitch;rollStick=roll;yawRateStick=yawRate;verticalStick=vertical;longitudinalStick=longitudinal;lateralStick=lateral;}
 
-    /** Synchronise hold latches with authoritative controller state and capture new setpoints. */
     public void syncHolds(FlightControllerState controllerState, VehicleState state) {
-        if (controllerState == null || state == null) return;
-        altitudeHold = controllerState.altitudeHold();
-        headingHold = controllerState.headingHold();
-        positionHold = controllerState.positionHold();
-        velocityHold = controllerState.velocityHold();
-
-        if (altitudeHold && !previousAltitudeHold) holdY = state.y;
-        if (headingHold && !previousHeadingHold) holdYaw = state.yaw;
-        if (positionHold && !previousPositionHold) { holdX = state.x; holdY = state.y; holdZ = state.z; }
-        if (velocityHold && !previousVelocityHold) { holdVx = state.vx; holdVy = state.vy; holdVz = state.vz; }
-        previousAltitudeHold = altitudeHold;
-        previousHeadingHold = headingHold;
-        previousPositionHold = positionHold;
-        previousVelocityHold = velocityHold;
+        if(controllerState==null||state==null)return;
+        altitudeHold=controllerState.altitudeHold(); headingHold=controllerState.headingHold(); positionHold=controllerState.positionHold(); velocityHold=controllerState.velocityHold();
+        if(altitudeHold&&!previousAltitudeHold)holdY=state.y; if(headingHold&&!previousHeadingHold)holdYaw=state.yaw; if(positionHold&&!previousPositionHold){holdX=state.x;holdY=state.y;holdZ=state.z;} if(velocityHold&&!previousVelocityHold){holdVx=state.vx;holdVy=state.vy;holdVz=state.vz;}
+        previousAltitudeHold=altitudeHold;previousHeadingHold=headingHold;previousPositionHold=positionHold;previousVelocityHold=velocityHold;
     }
 
-    public void engageCruise(double targetX, double targetY, double targetZ) {
-        navigator.setTarget(targetX, targetY, targetZ);
-        cruiseStabilizer.resetAll();
-        ticksSinceReplan = 0;
-        mode = FlightMode.CRUISE;
-    }
+    public void engageCruise(double targetX,double targetY,double targetZ){navigator.setTarget(targetX,targetY,targetZ);cruiseStabilizer.resetAll();ticksSinceReplan=0;mode=FlightMode.CRUISE;}
+    public void disengageCruise(){mode=FlightMode.STABILIZE;navigator.clearTarget();latestCruiseSetpoint=StabilizationSetpoint.hover();}
+    public double distanceToTarget(){VehicleState state=stateProvider.getState();return state!=null&&navigator.hasTarget()?navigator.distanceToTarget(state):-1;}
+    public boolean isCruisePathBlocked(){return mode==FlightMode.CRUISE&&navigator.isPathBlocked();}
+    public void tick(double dt){tick(dt,true,navigator.hasTarget());}
 
-    public void disengageCruise() {
-        mode = FlightMode.STABILIZE;
-        navigator.clearTarget();
-        latestCruiseSetpoint = StabilizationSetpoint.hover();
-    }
+    /** Runs exactly one actuator-control layer per tick. Autopilot owns the PID output while a route is active. */
+    public void tick(double dt,boolean stabiliserEnabled,boolean autopilotEnabled){
+        VehicleState state=stateProvider.getState(); if(state==null)return;
 
-    public double distanceToTarget() {
-        VehicleState state = stateProvider.getState();
-        return state != null && navigator.hasTarget() ? navigator.distanceToTarget(state) : -1;
-    }
+        Map<ControlAxis,Double> stabiliseCommands=Map.of();
+        // Never add the manual stabiliser output to autopilot output. Both layers ultimately
+        // drive the same physical thrusters, so doing so was the source of intermittent doubled thrust.
+        if(stabiliserEnabled&&!autopilotEnabled){
+            StabilizationSetpoint sp=StabilizationSetpoint.manualNudge(pitchStick,rollStick,yawRateStick,verticalStick,longitudinalStick,lateralStick,maxManualTiltRadians,maxManualYawRate,maxManualSpeed);
+            applyHoldSetpoints(sp,state,true);
+            stabiliseCommands=stabilizeStabilizer.computeCommands(state,sp,dt);
+        }else stabilizeStabilizer.resetAll();
 
-    public boolean isCruisePathBlocked() { return mode == FlightMode.CRUISE && navigator.isPathBlocked(); }
-
-    public void tick(double dt) { tick(dt, true, navigator.hasTarget()); }
-
-    /** Runs independent stabilisation and autopilot layers, then combines them at the allocator. */
-    public void tick(double dt, boolean stabiliserEnabled, boolean autopilotEnabled) {
-        VehicleState state = stateProvider.getState();
-        if (state == null) return;
-
-        Map<ControlAxis, Double> stabiliseCommands = Map.of();
-        if (stabiliserEnabled) {
-            StabilizationSetpoint stabiliseSetpoint = StabilizationSetpoint.manualNudge(
-                    pitchStick, rollStick, yawRateStick, verticalStick, longitudinalStick, lateralStick,
-                    maxManualTiltRadians, maxManualYawRate, maxManualSpeed);
-            if (!autopilotEnabled) applyHoldSetpoints(stabiliseSetpoint, state, true);
-            stabiliseCommands = stabilizeStabilizer.computeCommands(state, stabiliseSetpoint, dt);
-        } else {
-            stabilizeStabilizer.resetAll();
-        }
-
-        Map<ControlAxis, Double> autopilotCommands = Map.of();
-        if (autopilotEnabled && navigator.hasTarget()) {
+        Map<ControlAxis,Double> autopilotCommands=Map.of();
+        if(autopilotEnabled&&navigator.hasTarget()){
             ticksSinceReplan++;
-            if (ticksSinceReplan >= Math.max(1, replanIntervalTicks) || navigator.distanceToTarget(state) < 3.0) {
-                latestCruiseSetpoint = navigator.plan(state, cruiseMaxSpeed, estimateCruiseDeceleration(state));
-                ticksSinceReplan = 0;
-            }
-            StabilizationSetpoint cruiseSetpoint = latestCruiseSetpoint.copy();
-            // Navigation owns horizontal trajectory. Altitude/heading hold may constrain it,
-            // while position/velocity hold is intentionally ignored while an active route is flown.
-            applyHoldSetpoints(cruiseSetpoint, state, false);
-            autopilotCommands = cruiseStabilizer.computeCommands(state, cruiseSetpoint, dt);
-            mode = FlightMode.CRUISE;
-            if (navigator.distanceToTarget(state) < 1.0) disengageCruise();
-        } else {
-            cruiseStabilizer.resetAll();
-            ticksSinceReplan = 0;
-        }
-
-        allocator.applyCombined(registry, state, stabiliseCommands, autopilotCommands);
+            if(ticksSinceReplan>=Math.max(1,replanIntervalTicks)||navigator.distanceToTarget(state)<3.0){latestCruiseSetpoint=navigator.plan(state,cruiseMaxSpeed,estimateCruiseDeceleration(state));ticksSinceReplan=0;}
+            StabilizationSetpoint sp=latestCruiseSetpoint.copy(); applyHoldSetpoints(sp,state,false); autopilotCommands=cruiseStabilizer.computeCommands(state,sp,dt); mode=FlightMode.CRUISE;
+            if(navigator.distanceToTarget(state)<1.0)disengageCruise();
+        }else{cruiseStabilizer.resetAll();ticksSinceReplan=0;}
+        allocator.applyCombined(registry,state,stabiliseCommands,autopilotCommands);
     }
 
-    private void applyHoldSetpoints(StabilizationSetpoint sp, VehicleState state, boolean allowPosition) {
-        if (headingHold) {
-            sp.desiredYaw = holdYaw;
-            sp.yawIsRateNotHeading = false;
-        }
-
-        if (positionHold && allowPosition) {
-            double dx = holdX - state.x;
-            double dz = holdZ - state.z;
-            double[] body = worldToBodyVelocity(dx, dz, state.yaw);
-            sp.desiredLongitudinalVelocity = clamp(body[0] * 0.85, -maxManualSpeed, maxManualSpeed);
-            sp.desiredLateralVelocity = clamp(body[1] * 0.85, -maxManualSpeed, maxManualSpeed);
-        } else if (velocityHold && allowPosition) {
-            double[] targetBody = worldToBodyVelocity(holdVx, holdVz, state.yaw);
-            sp.desiredLongitudinalVelocity = clamp(targetBody[0], -maxManualSpeed, maxManualSpeed);
-            sp.desiredLateralVelocity = clamp(targetBody[1], -maxManualSpeed, maxManualSpeed);
-        }
-
-        if (positionHold || altitudeHold) {
-            sp.desiredVerticalVelocity = clamp((holdY - state.y) * 0.9, -maxManualSpeed, maxManualSpeed);
-        } else if (velocityHold) {
-            sp.desiredVerticalVelocity = clamp(holdVy, -maxManualSpeed, maxManualSpeed);
-        }
+    private void applyHoldSetpoints(StabilizationSetpoint sp,VehicleState state,boolean allowPosition){
+        if(headingHold){sp.desiredYaw=holdYaw;sp.yawIsRateNotHeading=false;}
+        if(positionHold&&allowPosition){double dx=holdX-state.x,dz=holdZ-state.z;double[] body=worldToBodyVelocity(dx,dz,state.yaw);sp.desiredLongitudinalVelocity=clamp(body[0]*.85,-maxManualSpeed,maxManualSpeed);sp.desiredLateralVelocity=clamp(body[1]*.85,-maxManualSpeed,maxManualSpeed);}
+        else if(velocityHold&&allowPosition){double[] targetBody=worldToBodyVelocity(holdVx,holdVz,state.yaw);sp.desiredLongitudinalVelocity=clamp(targetBody[0],-maxManualSpeed,maxManualSpeed);sp.desiredLateralVelocity=clamp(targetBody[1],-maxManualSpeed,maxManualSpeed);}
+        if(positionHold||altitudeHold)sp.desiredVerticalVelocity=clamp((holdY-state.y)*.9,-maxManualSpeed,maxManualSpeed); else if(velocityHold)sp.desiredVerticalVelocity=clamp(holdVy,-maxManualSpeed,maxManualSpeed);
     }
-
-    private static double[] worldToBodyVelocity(double vx, double vz, double yaw) {
-        double cos = Math.cos(-yaw), sin = Math.sin(-yaw);
-        double longitudinal = vz * cos - vx * sin;
-        double lateral = vz * sin + vx * cos;
-        return new double[]{longitudinal, lateral};
-    }
-
-    private static double clamp(double value, double min, double max) { return Math.max(min, Math.min(max, value)); }
-
-    private double estimateCruiseDeceleration(VehicleState state) {
-        double authority = registry.getVectorAuthority(FlightMode.CRUISE, VectorDirection.NORTH)
-                + registry.getVectorAuthority(FlightMode.CRUISE, VectorDirection.SOUTH);
-        return Math.max(0.5, authority / Math.max(state.mass, 1.0e-3));
-    }
+    private static double[] worldToBodyVelocity(double vx,double vz,double yaw){double cos=Math.cos(-yaw),sin=Math.sin(-yaw);return new double[]{vz*cos-vx*sin,vz*sin+vx*cos};}
+    private static double clamp(double value,double min,double max){return Math.max(min,Math.min(max,value));}
+    private double estimateCruiseDeceleration(VehicleState state){double authority=registry.getVectorAuthority(FlightMode.CRUISE,VectorDirection.NORTH)+registry.getVectorAuthority(FlightMode.CRUISE,VectorDirection.SOUTH);return Math.max(.5,authority/Math.max(state.mass,1.0e-3));}
 }
