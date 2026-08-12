@@ -8,7 +8,8 @@
     "FlightComputerNetworkSableDistanceMixin"
   ],
   "client": [
-    "client.FlightControllerGoggleMixin"
+    "client.FlightControllerGoggleMixin",
+    "client.NavigationConsoleMapTrackingMixin"
   ],
   "injectors": {
     "defaultRequire": 1
