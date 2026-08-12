@@ -23,8 +23,9 @@ public abstract class FlightControllerGoggleMixin implements IHaveGoggleInformat
         FlightControllerBlockEntity controller = (FlightControllerBlockEntity) (Object) this;
         FlightComputerNetwork.TelemetryPayload telemetry = FlightComputerTelemetryClient.get(controller.getControllerId());
 
-        tooltip.add(Component.literal("LIVE FLIGHT TELEMETRY / DIAGNOSTICS").withStyle(ChatFormatting.AQUA));
-        tooltip.add(Component.literal("SYSTEM: " + (controller.isEngaged() ? "ENGAGED" : "STANDBY"))
+        // Keep the flight computer's own diagnostics above Create's normal block information.
+        tooltip.add(0, Component.literal("LIVE FLIGHT TELEMETRY / DIAGNOSTICS").withStyle(ChatFormatting.AQUA));
+        tooltip.add(1, Component.literal("SYSTEM: " + (controller.isEngaged() ? "ENGAGED" : "STANDBY"))
                 .withStyle(controller.isEngaged() ? ChatFormatting.GREEN : ChatFormatting.GRAY));
 
         if (telemetry == null) {
