@@ -31,6 +31,12 @@ public final class MPCNavigator {
         return Math.sqrt(dx*dx+dy*dy+dz*dz);
     }
 
+    /** Returns the direct world-space bearing from the vessel to the active target. */
+    public double targetBearing(VehicleState state) {
+        if (!hasTarget || state == null) return state == null ? 0.0D : state.yaw;
+        return Math.atan2(targetX - state.x, targetZ - state.z);
+    }
+
     public StabilizationSetpoint plan(VehicleState state, double maxSpeed, double maxDeceleration) {
         StabilizationSetpoint sp = new StabilizationSetpoint();
         if (!hasTarget) return sp;
@@ -72,17 +78,23 @@ public final class MPCNavigator {
         pathBlocked=!accepted;
         if(!accepted){sp.desiredYaw=state.yaw;return sp;}
 
-        lastChosenHeadingOffsetDeg=normalizeDegrees(Math.toDegrees(bestHeading-bearing));
+        /*
+         * With no obstacle sensor the route must be followed directly. The sampled heading
+         * offsets are useful for obstacle avoidance, but there is no reason to let the outer
+         * loop choose a lateral heading when the route has no obstacle constraint. In particular,
+         * a destination west/east of the current course must produce an unambiguous yaw command.
+         */
+        double guidanceHeading = obstacleSensor == null ? bearing : bestHeading;
+        double guidanceSpeed = obstacleSensor == null ? bestSpeed : bestSpeed;
+        lastChosenHeadingOffsetDeg=normalizeDegrees(Math.toDegrees(guidanceHeading-bearing));
         sp.yawIsRateNotHeading=false;
-        sp.desiredYaw=bestHeading;
+        sp.desiredYaw=guidanceHeading;
 
         // The inner stabilizer consumes longitudinal/lateral velocities in the vessel's BODY
-        // frame. The previous implementation only supplied longitudinal speed, even though the
-        // MPC heading was in WORLD space. That made the route target and the actuator controller
-        // disagree whenever the vessel was not already pointing at the target. Convert the chosen
-        // world velocity into the current body frame and provide both horizontal components.
-        double worldVx=Math.sin(bestHeading)*bestSpeed;
-        double worldVz=Math.cos(bestHeading)*bestSpeed;
+        // frame. Convert the selected world velocity into the current body frame and provide
+        // both horizontal components so route guidance does not collapse into forward-only flight.
+        double worldVx=Math.sin(guidanceHeading)*guidanceSpeed;
+        double worldVz=Math.cos(guidanceHeading)*guidanceSpeed;
         double cosYaw=Math.cos(-state.yaw), sinYaw=Math.sin(-state.yaw);
         sp.desiredLongitudinalVelocity=worldVz*cosYaw-worldVx*sinYaw;
         sp.desiredLateralVelocity=worldVz*sinYaw+worldVx*cosYaw;
