@@ -67,13 +67,10 @@ public final class NavigationConsoleScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("ROUTE"), b->switchTab(Tab.ROUTE)).bounds(l+tabW+gap,y,tabW,22).build());
         addRenderableWidget(Button.builder(Component.literal("FLIGHT CONTROL"), b->switchTab(Tab.FLIGHT_CONTROL)).bounds(l+(tabW+gap)*2,y,tabW,22).build());
         addRenderableWidget(Button.builder(Component.literal("DIAGNOSTICS"), b->switchTab(Tab.DIAGNOSTICS)).bounds(l+(tabW+gap)*3,y,tabW,22).build());
-        // Thermal and Cooling are dedicated secondary screens. Keep them separate from the four primary tabs.
         int utilityY = y + 25;
         int utilityWidth = Math.max(120, (w - gap) / 2);
-        addRenderableWidget(Button.builder(Component.literal("THERMAL"), b -> minecraft.setScreen(new ThermalConsoleScreen(controllerPos)))
-                .bounds(l, utilityY, utilityWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("COOLING"), b -> minecraft.setScreen(new CoolingConsoleScreen(controllerPos)))
-                .bounds(l + utilityWidth + gap, utilityY, utilityWidth, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("THERMAL"), b -> minecraft.setScreen(new ThermalConsoleScreen(controllerPos))).bounds(l, utilityY, utilityWidth, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("COOLING"), b -> minecraft.setScreen(new CoolingConsoleScreen(controllerPos))).bounds(l + utilityWidth + gap, utilityY, utilityWidth, 20).build());
         if(tab==Tab.MAP) initMap(l,w); else if(tab==Tab.ROUTE) initRoute(l,w); else if(tab==Tab.FLIGHT_CONTROL) initFlightControl(l,w);
     }
 
