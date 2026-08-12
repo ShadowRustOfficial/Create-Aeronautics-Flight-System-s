@@ -5,6 +5,8 @@ import com.flightcomputer.avionics.FlightControllerAction;
 import com.flightcomputer.avionics.FlightControllerActionResult;
 import com.flightcomputer.avionics.FlightOperationsHolder;
 import com.flightcomputer.avionics.FlightOperationsState;
+import com.flightcomputer.avionics.FlightOperationsAction;
+import com.flightcomputer.avionics.FlightOperationsActionResult;
 import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.avionics.ThermalState;
@@ -120,6 +122,25 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     public CoolingUpgradeItem.Tier getCoolingTier() { return getCoolingTierInternal(); }
     public double[] getThermalHistory() { return Arrays.copyOf(thermalHistory, thermalHistory.length); }
 
+    public FlightOperationsActionResult applyOperationsAction(FlightOperationsAction action) {
+        if (action == null) return FlightOperationsActionResult.rejected(flightOperations, null, "INVALID_ACTION");
+        if (action != FlightOperationsAction.DOCKING_OVERRIDE && !isOperationPermitted(FlightControllerAction.PULSE_DISPLAY)) {
+            return FlightOperationsActionResult.rejected(flightOperations, action,
+                    isThermalLockout() ? "THERMAL_SHUTDOWN" : "NO_POWER");
+        }
+        FlightOperationsActionResult result = flightOperations.apply(action);
+        if (result.accepted()) {
+            if (action == FlightOperationsAction.DOCKING_OVERRIDE) {
+                // The override is an explicit safety release: clear the lower-level navigation target immediately.
+                flightOperations.clearTrackedContact();
+                flightOperations.setEmergencyReturn(false);
+                flightOperations.setLandingAssist(false);
+            }
+            markDirtyAndSync();
+        }
+        return result;
+    }
+
     /** Adds propulsion/control heat after the normal per-tick thermal accounting. */
     public void addControlThermalLoad(double normalizedLoad) {
         if (level == null || level.isClientSide || isThermalLockout()) return;
@@ -232,6 +253,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         thermalCooldownTicks = FlightComputerConfig.THERMAL_COOLDOWN_TICKS.get();
         energyStorage.extractEnergy(energyStorage.getEnergyStored(), false);
         if (controllerState.engaged()) controllerState = controllerState.apply(FlightControllerAction.TOGGLE_ENGAGED);
+        flightOperations.resetOperationalAssist();
         updatePowerState();
         updateThermalState();
         onThermalShutdown();
@@ -346,8 +368,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         super.saveAdditional(tag, registries);
         tag.putUUID("ControllerId", controllerId);
         flightOperations.save(tag);
-        flightOperations.save(tag);
-        flightOperations.save(tag);
         if (linkedControllerId != null) tag.putUUID("LinkedControllerId", linkedControllerId);
         tag.putBoolean("TerrainEnabled", terrainEnabled);
         controllerState.save(tag);
@@ -383,8 +403,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         super.loadAdditional(tag, registries);
         boolean firstClientLoad = renderedModePulseId == -1 && renderedDisplayPulseId == -1;
         controllerId = tag.hasUUID("ControllerId") ? tag.getUUID("ControllerId") : UUID.randomUUID();
-        flightOperations = FlightOperationsState.load(tag);
-        flightOperations = FlightOperationsState.load(tag);
         flightOperations = FlightOperationsState.load(tag);
         linkedControllerId = tag.hasUUID("LinkedControllerId") ? tag.getUUID("LinkedControllerId") : null;
         terrainEnabled = !tag.contains("TerrainEnabled") || tag.getBoolean("TerrainEnabled");
