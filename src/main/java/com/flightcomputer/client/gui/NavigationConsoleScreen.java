@@ -5,6 +5,7 @@ import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.PowerState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.client.FlightComputerTelemetryClient;
+import com.flightcomputer.client.FlightSetupTelemetryClient;
 import com.flightcomputer.client.map.FlightControllerWorldPositionResolver;
 import com.flightcomputer.client.map.FlightMapDiagnostics;
 import com.flightcomputer.client.map.FlightMapMarker;
@@ -72,7 +73,6 @@ public final class NavigationConsoleScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("FLIGHT CONTROL"), b -> switchTab(Tab.FLIGHT_CONTROL)).bounds(left + 320, top, 150, 22).build());
         addRenderableWidget(Button.builder(Component.literal("DIAGNOSTICS"), b -> switchTab(Tab.DIAGNOSTICS)).bounds(left + 480, top, 150, 22).build());
 
-        // These are navigation entry points only. Their actual UIs are separate screens.
         addRenderableWidget(Button.builder(Component.literal("THERMAL"), b -> minecraft.setScreen(new ThermalConsoleScreen(controllerPos)))
                 .bounds(left + 480, top + 24, 75, 20).build());
         addRenderableWidget(Button.builder(Component.literal("COOLING"), b -> minecraft.setScreen(new CoolingConsoleScreen(controllerPos)))
@@ -112,9 +112,6 @@ public final class NavigationConsoleScreen extends Screen {
 
     private void initFlightControl(int left, int top) {
         FlightControllerState s = controller == null ? FlightControllerState.DEFAULT : controller.getControllerState();
-        // Do not rebuild the screen immediately after sending a server action. The old client-side
-        // BE state could still be present for one tick and would make a working button appear to
-        // have reverted. The authoritative BE update will refresh the state naturally.
         addRenderableWidget(Button.builder(Component.literal(s.engaged() ? "DISENGAGE SYSTEM" : "ENGAGE SYSTEM"), b -> send(FlightControllerAction.TOGGLE_ENGAGED)).bounds(left + 20, top + 180, 140, 20).build());
         addRenderableWidget(Button.builder(Component.literal(s.stabiliser() ? "STABILISER: ON" : "STABILISER: OFF"), b -> send(FlightControllerAction.TOGGLE_STABILISER)).bounds(left + 165, top + 180, 130, 20).build());
         addRenderableWidget(Button.builder(Component.literal(s.flightMode().name().replace('_',' ')), b -> send(FlightControllerAction.CYCLE_MODE)).bounds(left + 300, top + 180, 120, 20).build());
@@ -132,7 +129,6 @@ public final class NavigationConsoleScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal(name + ": " + on(active)), b -> send(action)).bounds(x, y, 140, 20).build());
     }
 
-    private void refreshWidgets() { clearWidgets(); init(); }
     private static String on(boolean value) { return value ? "ON" : "OFF"; }
 
     private void sendTarget() {
@@ -259,10 +255,8 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font,"ROUTE / FLIGHT PLAN",left+20,top+10,TEXT);
         var s=controller==null?null:FlightComputerTelemetryClient.get(controller.getControllerId());
         if(s==null||!s.targetPresent()){g.drawString(font,"DESTINATION: NONE",left+20,top+48,MUTED);g.drawString(font,"Enter coordinates, or select a Waypoint / Waystone below.",left+20,top+76,MUTED);return;}
-
         double currentX = s.x(), currentY = s.y(), currentZ = s.z();
-        double bearing = Math.toDegrees(Math.atan2(s.targetX() - currentX, s.targetZ() - currentZ));
-        bearing = normalizeDegrees(bearing);
+        double bearing = normalizeDegrees(Math.toDegrees(Math.atan2(s.targetX() - currentX, s.targetZ() - currentZ)));
         g.drawString(font,"DESTINATION: "+s.targetName(),left+20,top+48,BRIGHT);
         g.drawString(font,String.format("CURRENT X %.1f  Y %.1f  Z %.1f",currentX,currentY,currentZ),left+20,top+72,TEXT);
         g.drawString(font,String.format("TARGET  X %.1f  Y %.1f  Z %.1f",s.targetX(),s.targetY(),s.targetZ()),left+20,top+94,TEXT);
@@ -285,11 +279,30 @@ public final class NavigationConsoleScreen extends Screen {
 
     private void renderDiagnostics(GuiGraphics g,int left,int top){
         long e=controller==null?0:controller.getEnergyStorage().getEnergyStored(), cap=controller==null?0:controller.getEnergyStorage().getMaxEnergyStored();
-        g.drawString(font,"DIAGNOSTICS",left+20,top+10,TEXT); g.drawString(font,"CONTROLLER: "+(powered()?"OPERATIONAL":"OFFLINE"),left+20,top+42,powered()?GREEN:RED);
+        g.drawString(font,"DIAGNOSTICS / TELEMETRY",left+20,top+10,TEXT); g.drawString(font,"CONTROLLER: "+(powered()?"OPERATIONAL":"OFFLINE"),left+20,top+42,powered()?GREEN:RED);
         g.drawString(font,"LINK: "+linkStatus(),left+20,top+65,powered()?GREEN:RED); g.drawString(font,"ENERGY: "+format(e)+" / "+format(cap)+" FE",left+20,top+88,e>0?GREEN:RED);
         FlightMapDiagnostics d=mapPipeline.diagnostics(); g.drawString(font,"MAP ENGINE: NATIVE CPU TERRAIN",left+20,top+120,BRIGHT);
         g.drawString(font,"REQUESTED "+d.requestedCount()+"  PENDING "+d.pendingCount()+"  DECODED "+d.decodedCount()+"  FAILED "+d.failedCount(),left+20,top+144,MUTED);
         g.drawString(font,String.format("WORLD X %.2f  Y %.2f  Z %.2f",controllerX,controllerY,controllerZ),left+20,top+168,TEXT);
+
+        var setup = controller == null ? null : FlightSetupTelemetryClient.get(controller.getControllerId());
+        if (setup != null) {
+            boolean enoughLift = setup.upwardThrusterCount() > 0 && setup.hoverFraction() <= 1.0D;
+            int c = enoughLift ? GREEN : RED;
+            g.drawString(font, String.format("VESSEL MASS %.2f kg   WEIGHT %.1f N", setup.mass(), setup.weightForce()), left+20, top+192, TEXT);
+            g.drawString(font, String.format("ENVELOPE Ø %.2f m   HEIGHT %.2f m", setup.envelopeDiameter(), setup.envelopeHeight()), left+20, top+214, TEXT);
+            g.drawString(font, String.format("UPWARD THRUST %.1f N   THRUSTERS %d", setup.verticalMaxThrust(), setup.upwardThrusterCount()), left+20, top+236, c);
+            if (Double.isFinite(setup.hoverFraction())) {
+                g.drawString(font, String.format("HOVER BASELINE: %.1f%%   REDSTONE: %d/15", setup.hoverFraction()*100.0D, setup.recommendedRedstonePower()), left+20, top+258, c);
+                g.drawString(font, String.format("SET EACH LIFT THRUSTER TO ~%d/15 (%d%%) FOR STATIC HOVER", setup.recommendedRedstonePower(), Math.round(setup.hoverFraction()*100.0D)), left+20, top+280, c);
+                g.drawString(font, String.format("LIFT RESERVE: %+.1f%%   CURRENT LIFT: %.1f%%", setup.liftMargin()*100.0D, setup.currentVerticalFraction()*100.0D), left+20, top+302, MUTED);
+            } else {
+                g.drawString(font, "HOVER BASELINE: NO UPWARD THRUSTERS DETECTED", left+20, top+258, RED);
+                g.drawString(font, "LINK UPWARD/LIFT THRUSTERS BEFORE ENABLING STABILISATION", left+20, top+280, RED);
+            }
+        } else {
+            g.drawString(font, "THRUSTER SETUP: WAITING FOR SERVER TELEMETRY...", left+20, top+202, MUTED);
+        }
     }
     private static String format(long v){return String.format("%,d",Math.max(0,v));}
     private static double normalizeDegrees(double degrees){double value=degrees%360.0D;return value<0?value+360.0D:value;}
