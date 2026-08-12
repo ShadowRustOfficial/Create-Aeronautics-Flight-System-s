@@ -11,6 +11,9 @@ public final class MPCNavigator {
     private static final double HYSTERESIS_BONUS = 6.0;
     private static final double HEADING_PENALTY_WEIGHT = 1.0;
     private static final double EFFORT_WEIGHT = 0.03;
+    private static final double MIN_HORIZONTAL_GUIDANCE_DISTANCE = 3.0;
+    private static final double MIN_HORIZONTAL_GUIDANCE_SPEED_FRACTION = 0.25;
+    private static final double MIN_HORIZONTAL_GUIDANCE_SPEED = 1.0;
 
     private final ObstacleSensor obstacleSensor;
     private double targetX, targetY, targetZ;
@@ -82,6 +85,26 @@ public final class MPCNavigator {
                 if(score<bestScore){bestScore=score;bestHeading=heading;bestSpeed=horizontalSpeed;accepted=true;}
             }
         }
+
+        // A valid route must not silently collapse into a hover command while meaningful
+        // horizontal separation remains. This is especially important when the sampled
+        // horizon is temporarily conservative or a planner state has just been refreshed.
+        if (accepted && flatDist >= MIN_HORIZONTAL_GUIDANCE_DISTANCE && bestSpeed <= 1.0e-6) {
+            double fallbackSpeed=Math.min(Math.max(0.0, maxSpeed),
+                    Math.max(MIN_HORIZONTAL_GUIDANCE_SPEED, maxSpeed * MIN_HORIZONTAL_GUIDANCE_SPEED_FRACTION));
+            double fallbackX=Math.sin(bearing)*fallbackSpeed;
+            double fallbackZ=Math.cos(bearing)*fallbackSpeed;
+            double stoppingDistance=(fallbackSpeed*fallbackSpeed)/(2*safeDeceleration);
+            double requiredClearance=stoppingDistance+radius+CLEARANCE_MARGIN;
+            boolean clear=isClear(state,fallbackX,targetVerticalSpeed,fallbackZ,radius,halfHeight,requiredClearance);
+            if (clear) {
+                bestHeading=bearing;
+                bestSpeed=fallbackSpeed;
+            } else {
+                accepted=false;
+            }
+        }
+
         pathBlocked=!accepted;
         if(!accepted){sp.desiredYaw=state.yaw;return sp;}
 
