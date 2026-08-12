@@ -5,9 +5,12 @@ import java.util.Map;
 
 /** One independent 6-vector stabilizer. A separate instance is used for STABILIZE and CRUISE. */
 public final class SixAxisStabilizer {
-    private final AxisPID pitchPID = new AxisPID(6.0, 0.5, 2.5, 20.0);
-    private final AxisPID rollPID = new AxisPID(6.0, 0.5, 2.5, 20.0);
-    private final AxisPID yawPID = new AxisPID(4.0, 0.2, 1.5, 15.0);
+    // Tuned for stronger recovery from large pitch/roll disturbances while retaining a
+    // relatively soft response around level flight.  The derivative term supplies angular-rate
+    // damping; the output clamp prevents a large impact from requesting unlimited torque.
+    private final AxisPID pitchPID = new AxisPID(8.0, 0.35, 4.0, 30.0);
+    private final AxisPID rollPID = new AxisPID(8.0, 0.35, 4.0, 30.0);
+    private final AxisPID yawPID = new AxisPID(4.5, 0.2, 2.0, 18.0);
     private final AxisPID verticalPID = new AxisPID(3.0, 0.6, 1.2, 40.0);
     private final AxisPID longitudinalPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
     private final AxisPID lateralPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
