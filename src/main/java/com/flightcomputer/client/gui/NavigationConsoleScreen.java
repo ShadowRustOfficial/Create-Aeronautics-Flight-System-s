@@ -98,16 +98,18 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void initRoute(int left, int top) {
-        targetInput = new EditBox(font, left + 20, top + 150, 360, 20, Component.literal("Target X Y Z"));
+        // Route telemetry occupies the upper section. Keep all interactive widgets below it;
+        // the previous layout placed the coordinate editor directly over the ETA line.
+        targetInput = new EditBox(font, left + 20, top + 175, 360, 20, Component.literal("Target X Y Z"));
         targetInput.setHint(Component.literal("X Y Z  (example: 120 80 -240)"));
         addRenderableWidget(targetInput);
-        addRenderableWidget(Button.builder(Component.literal("SET DESTINATION"), b -> sendTarget()).bounds(left + 390, top + 150, 190, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("CLEAR DESTINATION"), b -> FlightComputerNetwork.clearTarget(controllerPos)).bounds(left + 20, top + 180, 180, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("START ROUTE"), b -> send(FlightControllerAction.START_ROUTE)).bounds(left + 210, top + 180, 180, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("ABORT ROUTE"), b -> send(FlightControllerAction.ABORT_ROUTE)).bounds(left + 400, top + 180, 180, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("SELECT WAYSTONE"), this::selectWaystone).bounds(left + 20, top + 230, 180, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("SELECT WAYPOINT"), this::selectWaypoint).bounds(left + 210, top + 230, 180, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("REFRESH LOCATIONS"), b -> refreshLocations()).bounds(left + 400, top + 230, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("SET DESTINATION"), b -> sendTarget()).bounds(left + 390, top + 175, 190, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("CLEAR DESTINATION"), b -> FlightComputerNetwork.clearTarget(controllerPos)).bounds(left + 20, top + 205, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("START ROUTE"), b -> send(FlightControllerAction.START_ROUTE)).bounds(left + 210, top + 205, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("ABORT ROUTE"), b -> send(FlightControllerAction.ABORT_ROUTE)).bounds(left + 400, top + 205, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("SELECT WAYSTONE"), this::selectWaystone).bounds(left + 20, top + 235, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("SELECT WAYPOINT"), this::selectWaypoint).bounds(left + 210, top + 235, 180, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("REFRESH LOCATIONS"), b -> refreshLocations()).bounds(left + 400, top + 235, 180, 20).build());
     }
 
     private void initFlightControl(int left, int top) {
@@ -141,7 +143,7 @@ public final class NavigationConsoleScreen extends Screen {
 
     private void selectWaystone(Button b) {
         if (minecraft == null || minecraft.level == null) return;
-        routeWaystones.tick(minecraft.level);
+        routeWaystones.requestRefresh(minecraft.level);
         var list = routeWaystones.markers();
         if (list.isEmpty()) { b.setMessage(Component.literal("NO WAYSTONES FOUND")); return; }
         waystoneIndex = Math.floorMod(waystoneIndex, list.size());
@@ -163,7 +165,11 @@ public final class NavigationConsoleScreen extends Screen {
 
     private void refreshLocations() {
         waypointIndex = waystoneIndex = 0;
-        if (minecraft != null && minecraft.level != null) { routeWaystones.tick(minecraft.level); routeWaypoints.tick(minecraft.level); }
+        if (minecraft != null && minecraft.level != null) {
+            routeWaystones.requestRefresh(minecraft.level);
+            routeWaypoints.clear();
+            routeWaypoints.tick(minecraft.level);
+        }
     }
     private void refreshMarkers() { refreshLocations(); }
 
@@ -254,14 +260,29 @@ public final class NavigationConsoleScreen extends Screen {
     private void renderRoute(GuiGraphics g,int left,int top){
         g.drawString(font,"ROUTE / FLIGHT PLAN",left+20,top+10,TEXT);
         var s=controller==null?null:FlightComputerTelemetryClient.get(controller.getControllerId());
-        if(s==null||!s.targetPresent()){g.drawString(font,"DESTINATION: NONE",left+20,top+48,MUTED);g.drawString(font,"Enter coordinates, or select a Waypoint / Waystone below.",left+20,top+76,MUTED);return;}
+        if(s==null||!s.targetPresent()){
+            g.drawString(font,"DESTINATION: NONE",left+20,top+48,MUTED);
+            g.drawString(font,"Enter coordinates, or select a Waypoint / Waystone below.",left+20,top+76,MUTED);
+            g.drawString(font,"LOCATION SOURCES: WAYPOINTS + WAYSTONES",left+20,top+100,MUTED);
+            return;
+        }
         double currentX = s.x(), currentY = s.y(), currentZ = s.z();
         double bearing = normalizeDegrees(Math.toDegrees(Math.atan2(s.targetX() - currentX, s.targetZ() - currentZ)));
         g.drawString(font,"DESTINATION: "+s.targetName(),left+20,top+48,BRIGHT);
         g.drawString(font,String.format("CURRENT X %.1f  Y %.1f  Z %.1f",currentX,currentY,currentZ),left+20,top+72,TEXT);
         g.drawString(font,String.format("TARGET  X %.1f  Y %.1f  Z %.1f",s.targetX(),s.targetY(),s.targetZ()),left+20,top+94,TEXT);
         g.drawString(font,String.format("ALT %.1f m  DIST %.1f m  BRG %.1f°  HDG %.1f°  SPEED %.2f m/s",currentY,s.distance(),bearing,normalizeDegrees(s.heading()),s.speed()),left+20,top+116,TEXT);
-        double eta=s.speed()>.1?s.distance()/s.speed():-1; g.drawString(font,eta<0?"ETA: CALCULATING":String.format("ETA %.1f s  ROUTE: MPC / SMOOTH ACCELERATION",eta),left+20,top+140,eta<0?MUTED:GREEN);
+        double eta=s.speed()>.1?s.distance()/s.speed():-1;
+        g.drawString(font,eta<0?"ETA: CALCULATING":String.format("ETA %.1f s  ROUTE: MPC / SMOOTH ACCELERATION",eta),left+20,top+140,eta<0?MUTED:GREEN);
+        g.drawString(font,"TARGET SOURCE: "+sourceLabel(s.targetName()),left+20,top+160,MUTED);
+    }
+
+    private String sourceLabel(String name) {
+        if (name == null || name.isBlank()) return "CUSTOM";
+        String value = name.toLowerCase(java.util.Locale.ROOT);
+        if (value.contains("waystone")) return "WAYSTONE";
+        if (value.contains("waypoint")) return "XAERO WAYPOINT";
+        return value.equals("custom destination") ? "CUSTOM" : "NAVIGATION DESTINATION";
     }
 
     private void renderFlight(GuiGraphics g,int left,int top){
