@@ -54,6 +54,12 @@ public final class FlightMapDiagnostics {
     public String lastError() { return lastError; }
     public boolean renderStateClean() { return renderStateClean; }
 
+    // Compatibility accessors retained for older Navigation Console builds.
+    public long requestedTiles() { return requestedCount(); }
+    public long pendingTiles() { return pendingCount(); }
+    public long decodedTiles() { return decodedCount(); }
+    public long failedTiles() { return failedCount(); }
+
     private static long tick() {
         return System.nanoTime() / 50_000_000L;
     }
