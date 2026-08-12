@@ -1,6 +1,8 @@
 package com.flightcomputer.control;
 
-import java.util.EnumMap;
+import org.joml.Quaterniond;
+import org.joml.Vector3d;
+
 import java.util.Map;
 
 /** A dependency-free six degree-of-freedom force/torque demand. */
@@ -21,6 +23,20 @@ public final class ControlWrench {
         wrench.forceZ = axes.getOrDefault(ControlAxis.LONGITUDINAL, 0.0);
         wrench.forceX = axes.getOrDefault(ControlAxis.LATERAL, 0.0);
         return wrench;
+    }
+
+    /** Converts the controller's body-frame demand into the world frame used by the allocator. */
+    public ControlWrench toWorld(Quaterniond vehicleRotation) {
+        Vector3d force = vehicleRotation.transform(new Vector3d(forceX, forceY, forceZ));
+        Vector3d torque = vehicleRotation.transform(new Vector3d(torqueX, torqueY, torqueZ));
+        ControlWrench world = new ControlWrench();
+        world.forceX = force.x;
+        world.forceY = force.y;
+        world.forceZ = force.z;
+        world.torqueX = torque.x;
+        world.torqueY = torque.y;
+        world.torqueZ = torque.z;
+        return world;
     }
 
     public ControlWrench add(ControlWrench other) {
