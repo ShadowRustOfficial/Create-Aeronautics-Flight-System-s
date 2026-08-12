@@ -8,7 +8,7 @@ import java.util.Map;
 public final class FlightComputer {
     private final VehicleStateProvider stateProvider;
     private final ThrusterRegistry registry = new ThrusterRegistry();
-    private final SixAxisStabilizer stabilizeStabilizer = new SixAxisStabilizer();
+    private final SixAxisStabilizer stabilizeStabilizer = new SixAxisStabilizer(true);
     private final SixAxisStabilizer cruiseStabilizer = new SixAxisStabilizer();
     private final ThrustAllocator allocator = new ThrustAllocator();
     private final MPCNavigator navigator;
