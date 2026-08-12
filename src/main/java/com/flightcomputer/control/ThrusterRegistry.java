@@ -27,7 +27,15 @@ public final class ThrusterRegistry {
         if (level == null || controllerPos == null || gameTime == lastRefreshTick) return;
         lastRefreshTick = gameTime;
         refreshBank(level, controllerPos, FlightMode.STABILIZE, stabiliserLinks);
-        refreshBank(level, controllerPos, FlightMode.CRUISE, autopilotLinks);
+
+        // Autopilot does not require a second physical set of thrusters. If a direction has not
+        // explicitly been assigned to the CRUISE bank, inherit that direction from the existing
+        // stabiliser bank. This preserves explicit CRUISE assignments while allowing a vessel
+        // linked once through the Flight Link Tool to be controlled by both systems.
+        Map<VectorDirection, BlockPos> effectiveAutopilotLinks = new EnumMap<>(VectorDirection.class);
+        if (stabiliserLinks != null) effectiveAutopilotLinks.putAll(stabiliserLinks);
+        if (autopilotLinks != null) effectiveAutopilotLinks.putAll(autopilotLinks);
+        refreshBank(level, controllerPos, FlightMode.CRUISE, effectiveAutopilotLinks);
     }
 
     private void refreshBank(Level level, BlockPos controllerPos, FlightMode mode,
