@@ -10,6 +10,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /** Client presentation adapter for server-authoritative Waystone snapshots. */
 public final class WaystoneMapProvider {
@@ -126,6 +127,7 @@ public final class WaystoneMapProvider {
     private Iterable<?> asIterable(Object result) {
         if (result instanceof Iterable<?> iterable) return iterable;
         if (result instanceof Map<?, ?> map) return map.values();
+        if (result instanceof Stream<?> stream) return stream.toList();
         if (result instanceof java.util.Optional<?> optional && optional.isPresent()) return asIterable(optional.get());
         return List.of();
     }
