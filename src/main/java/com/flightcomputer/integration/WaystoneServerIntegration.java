@@ -9,6 +9,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * Server-only reflection adapter for Waystones. The API owns the registry; the flight computer
@@ -25,11 +26,11 @@ public final class WaystoneServerIntegration {
         try {
             Class<?> api = Class.forName(API, false, WaystoneServerIntegration.class.getClassLoader());
             Object result = invokeWaystoneCollection(api, level, player.server);
-            if (!(result instanceof Iterable<?> iterable) && !(result instanceof java.util.Map<?, ?>)) return List.of();
+            Iterable<?> values = asIterable(result);
+            if (values == null) return List.of();
 
             String currentDimension = level.dimension().location().toString();
             List<Entry> entries = new ArrayList<>();
-            Iterable<?> values = result instanceof java.util.Map<?, ?> map ? map.values() : (Iterable<?>) result;
             for (Object waystone : values) {
                 if (waystone == null) continue;
                 Object valid = invokeNoArg(waystone, "isValid");
@@ -54,16 +55,23 @@ public final class WaystoneServerIntegration {
     }
 
     private static Object invokeWaystoneCollection(Class<?> api, ServerLevel level, MinecraftServer server) throws ReflectiveOperationException {
-        // Current Waystones API: registry is queried for the world/dimension.
+        // Waystones 21.1.1x+ exposes getAllWaystones(MinecraftServer), returning a Stream.
+        Method all = findStatic(api, "getAllWaystones", MinecraftServer.class);
+        if (all != null) return all.invoke(null, server);
+
+        // Compatibility fallback for older API builds used by earlier development versions.
         Method current = findStatic(api, "getWaystones", ServerLevel.class);
         if (current != null) return current.invoke(null, level);
         Method levelApi = findStatic(api, "getWaystones", net.minecraft.world.level.Level.class);
         if (levelApi != null) return levelApi.invoke(null, level);
-
-        // Compatibility fallback for older API builds used by earlier development versions.
-        Method legacy = findStatic(api, "getAllWaystones", MinecraftServer.class);
-        if (legacy != null) return legacy.invoke(null, server);
         return List.of();
+    }
+
+    private static Iterable<?> asIterable(Object result) {
+        if (result instanceof Iterable<?> iterable) return iterable;
+        if (result instanceof java.util.Map<?, ?> map) return map.values();
+        if (result instanceof Stream<?> stream) return stream.toList();
+        return null;
     }
 
     private static Method findStatic(Class<?> type, String name, Class<?> parameter) {
