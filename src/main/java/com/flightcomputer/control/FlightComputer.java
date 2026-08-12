@@ -63,10 +63,6 @@ public final class FlightComputer {
         lastCruiseLongitudinalVelocity=0.0D;
         latestCruiseSetpoint=StabilizationSetpoint.hover();
     }
-    private void resetControlLoops() {
-        stabilizeStabilizer.resetAll();
-        resetCruiseGuidance();
-    }
     private void synchronizeExternalTarget() {
         if (!navigator.hasTarget()) {
             if (lastAppliedTargetValid) {
@@ -84,19 +80,10 @@ public final class FlightComputer {
             lastAppliedTargetX=x; lastAppliedTargetY=y; lastAppliedTargetZ=z; lastAppliedTargetValid=true;
         }
     }
+    /** Mirrors the known-good 0.6.8 hold capture path: state changes capture new targets, but do not reset every PID loop. */
     public void syncHolds(FlightControllerState controllerState, VehicleState state) {
         if(controllerState==null||state==null)return;
-
-        boolean newAltitudeHold=controllerState.altitudeHold();
-        boolean newHeadingHold=controllerState.headingHold();
-        boolean newPositionHold=controllerState.positionHold();
-        boolean newVelocityHold=controllerState.velocityHold();
-        if (newAltitudeHold!=previousAltitudeHold || newHeadingHold!=previousHeadingHold
-                || newPositionHold!=previousPositionHold || newVelocityHold!=previousVelocityHold) {
-            resetControlLoops();
-        }
-
-        altitudeHold=newAltitudeHold; headingHold=newHeadingHold; positionHold=newPositionHold; velocityHold=newVelocityHold;
+        altitudeHold=controllerState.altitudeHold(); headingHold=controllerState.headingHold(); positionHold=controllerState.positionHold(); velocityHold=controllerState.velocityHold();
         if(altitudeHold && Double.isFinite(altitudeHoldTargetY)) holdY=altitudeHoldTargetY;
         else if(altitudeHold&&!previousAltitudeHold)holdY=state.y;
         if(headingHold&&!previousHeadingHold)holdYaw=state.yaw;
@@ -129,15 +116,9 @@ public final class FlightComputer {
             }
             StabilizationSetpoint sp=latestCruiseSetpoint.copy();
             sp.desiredLongitudinalVelocity=smoothCruiseVelocity(state,sp.desiredYaw,sp.desiredLongitudinalVelocity,dt);
-            sp.desiredLateralVelocity=smoothCruiseLateralVelocity(state,sp.desiredYaw,sp.desiredLateralVelocity,dt);
-            if(altitudeHold && Double.isFinite(altitudeHoldTargetY)) {
+            if(altitudeHold && Double.isFinite(altitudeHoldTargetY))
                 sp.desiredVerticalVelocity=clamp((altitudeHoldTargetY-state.y)*.9,-maxManualSpeed,maxManualSpeed);
-            }
-            // Autopilot owns navigation yaw and horizontal translation. Do not allow an old
-            // heading/position/velocity hold to overwrite the MPC's current target vector.
-            if (altitudeHold && !Double.isFinite(altitudeHoldTargetY)) {
-                sp.desiredVerticalVelocity=clamp((holdY-state.y)*.9,-maxManualSpeed,maxManualSpeed);
-            }
+            applyHoldSetpoints(sp,state,false);
             autopilotCommands=cruiseStabilizer.computeCommands(state,sp,dt);
             if(stabiliserEnabled) autopilotCommands=filterAutopilotAxes(autopilotCommands);
             mode=FlightMode.CRUISE;
@@ -154,12 +135,6 @@ public final class FlightComputer {
         double delta=clamp(alignedTarget-lastCruiseLongitudinalVelocity,-maxDelta,maxDelta);
         lastCruiseLongitudinalVelocity+=delta;
         return lastCruiseLongitudinalVelocity;
-    }
-    /** Suppresses lateral cruise translation while badly misaligned so the aircraft turns toward the destination first. */
-    private double smoothCruiseLateralVelocity(VehicleState state,double desiredYaw,double desiredVelocity,double dt){
-        double headingError=Math.abs(normalizeRadians(desiredYaw-state.yaw));
-        double alignment=clamp(Math.cos(headingError),0.0,1.0);
-        return desiredVelocity*alignment;
     }
     private static double normalizeRadians(double radians){double r=radians%(Math.PI*2.0);if(r>Math.PI)r-=Math.PI*2.0;if(r<-Math.PI)r+=Math.PI*2.0;return r;}
     /** When both systems are active, the stabiliser keeps the vessel level while autopilot owns navigation yaw. */
