@@ -2,48 +2,39 @@ package com.flightcomputer.control;
 
 import org.joml.Quaterniond;
 import org.joml.Vector3d;
-
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Final allocator: both objectives are combined before any physical output is written. */
+/** Final allocator: combined controller output is converted into one physical actuator command per thruster. */
 public final class ThrustAllocator {
     private static final int ITERATIONS = 8;
+    private final Map<String, PropulsionSource> lastActiveSources = new LinkedHashMap<>();
     private double lastThermalLoad;
     public double getLastThermalLoad() { return lastThermalLoad; }
 
-    /**
-     * Allocate the combined wrench in world space. Only banks belonging to an active control
-     * layer are considered: stabilisation uses STABILIZE links, autopilot uses CRUISE links.
-     * This prevents an autopilot-only thruster from unexpectedly fighting manual/stabiliser
-     * control and makes the Link Tool's mode selection authoritative.
-     */
     public void applyCombined(ThrusterRegistry registry, VehicleState state,
                               Map<ControlAxis, Double> stabiliser, Map<ControlAxis, Double> autopilot) {
-        if (state == null) { lastThermalLoad = 0.0D; return; }
+        if (state == null) { hardStop(); lastThermalLoad = 0.0D; return; }
         Quaterniond vehicleRotation = vehicleRotation(state);
-        // PID/MPC setpoints are expressed in vehicle/body axes; actuator contributions are
-        // evaluated in world axes. Convert once here so the allocator solves the same frame.
-        ControlWrench target = ControlWrench.fromAxes(stabiliser)
-                .add(ControlWrench.fromAxes(autopilot))
-                .toWorld(vehicleRotation);
-        if (target.normSquared() <= 1.0e-12) {
-            zeroActiveSources(registry, stabiliser, autopilot);
+        ControlWrench target = ControlWrench.fromAxes(stabiliser).add(ControlWrench.fromAxes(autopilot)).toWorld(vehicleRotation);
+
+        Map<String, ThrusterLink> unique = collectActiveSources(registry, stabiliser, autopilot);
+        // Every tick owns the actuator outputs. Any source which was active on the previous tick
+        // but is no longer part of the active control layer is explicitly driven to zero.
+        for (Map.Entry<String, PropulsionSource> previous : lastActiveSources.entrySet()) {
+            if (!unique.containsKey(previous.getKey())) previous.getValue().applyThrust(0.0D);
+        }
+        lastActiveSources.clear();
+        for (Map.Entry<String, ThrusterLink> entry : unique.entrySet()) lastActiveSources.put(entry.getKey(), entry.getValue().source);
+
+        if (target.normSquared() <= 1.0e-12 || unique.isEmpty()) {
+            hardStop();
             lastThermalLoad = 0.0D;
             return;
         }
 
-        Map<String, ThrusterLink> unique = new LinkedHashMap<>();
-        if (stabiliser != null && !stabiliser.isEmpty()) {
-            for (ThrusterLink link : registry.getAllLinks(FlightMode.STABILIZE)) unique.putIfAbsent(link.source.getId(), link);
-        }
-        if (autopilot != null && !autopilot.isEmpty()) {
-            for (ThrusterLink link : registry.getAllLinks(FlightMode.CRUISE)) unique.putIfAbsent(link.source.getId(), link);
-        }
         List<ThrusterLink> sources = List.copyOf(unique.values());
-        if (sources.isEmpty()) { lastThermalLoad = 0.0D; return; }
-
         double[] commands = new double[sources.size()];
         for (int iteration = 0; iteration < ITERATIONS; iteration++) {
             double[] achieved = achieved(sources, commands, vehicleRotation);
@@ -77,40 +68,21 @@ public final class ThrustAllocator {
         applyCombined(registry, new VehicleState(), mode == FlightMode.STABILIZE ? commands : Map.of(), mode == FlightMode.CRUISE ? commands : Map.of());
     }
 
-    private void zeroActiveSources(ThrusterRegistry registry, Map<ControlAxis, Double> stabiliser, Map<ControlAxis, Double> autopilot) {
+    /** Immediate zero of every actuator owned by the allocator. */
+    public void hardStop() {
+        for (PropulsionSource source : lastActiveSources.values()) source.applyThrust(0.0D);
+        lastActiveSources.clear();
+    }
+
+    private Map<String, ThrusterLink> collectActiveSources(ThrusterRegistry registry, Map<ControlAxis, Double> stabiliser, Map<ControlAxis, Double> autopilot) {
         Map<String, ThrusterLink> unique = new LinkedHashMap<>();
         if (stabiliser != null && !stabiliser.isEmpty()) for (ThrusterLink link : registry.getAllLinks(FlightMode.STABILIZE)) unique.putIfAbsent(link.source.getId(), link);
         if (autopilot != null && !autopilot.isEmpty()) for (ThrusterLink link : registry.getAllLinks(FlightMode.CRUISE)) unique.putIfAbsent(link.source.getId(), link);
-        for (ThrusterLink link : unique.values()) link.source.applyThrust(0.0D);
+        return unique;
     }
 
-    private double[] achieved(List<ThrusterLink> links, double[] commands, Quaterniond rotation) {
-        double[] result = new double[6];
-        for (int i = 0; i < links.size(); i++) {
-            double[] c = contribution(links.get(i), links.get(i).source.getAvailableThrust(), rotation);
-            for (int k = 0; k < 6; k++) result[k] += c[k] * commands[i];
-        }
-        return result;
-    }
-
-    private double[] contribution(ThrusterLink link, double thrust, Quaterniond rotation) {
-        VectorDirection d = link.direction;
-        Vector3d force = new Vector3d(d.x(), d.y(), d.z()).mul(thrust * link.polarity);
-        Vector3d r = new Vector3d(link.source.getMountOffset());
-        rotation.transform(force);
-        rotation.transform(r);
-        double fx = force.x, fy = force.y, fz = force.z;
-        return new double[]{
-                fx, fy, fz,
-                r.y * fz - r.z * fy,
-                r.z * fx - r.x * fz,
-                r.x * fy - r.y * fx
-        };
-    }
-
-    private static Quaterniond vehicleRotation(VehicleState state) {
-        return new Quaterniond().rotationY(state.yaw).rotateX(state.pitch).rotateZ(state.roll);
-    }
-
-    private static double clamp(double value, double min, double max) { return Math.max(min, Math.min(max, value)); }
+    private double[] achieved(List<ThrusterLink> links,double[] commands,Quaterniond rotation){double[] result=new double[6];for(int i=0;i<links.size();i++){double[] c=contribution(links.get(i),links.get(i).source.getAvailableThrust(),rotation);for(int k=0;k<6;k++)result[k]+=c[k]*commands[i];}return result;}
+    private double[] contribution(ThrusterLink link,double thrust,Quaterniond rotation){VectorDirection d=link.direction;Vector3d force=new Vector3d(d.x(),d.y(),d.z()).mul(thrust*link.polarity);Vector3d r=new Vector3d(link.source.getMountOffset());rotation.transform(force);rotation.transform(r);double fx=force.x,fy=force.y,fz=force.z;return new double[]{fx,fy,fz,r.y*fz-r.z*fy,r.z*fx-r.x*fz,r.x*fy-r.y*fx};}
+    private static Quaterniond vehicleRotation(VehicleState state){return new Quaterniond().rotationY(state.yaw).rotateX(state.pitch).rotateZ(state.roll);}
+    private static double clamp(double value,double min,double max){return Math.max(min,Math.min(max,value));}
 }
