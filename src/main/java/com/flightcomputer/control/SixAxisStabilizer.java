@@ -5,17 +5,47 @@ import java.util.Map;
 
 /** One independent 6-vector stabilizer. A separate instance is used for STABILIZE and CRUISE. */
 public final class SixAxisStabilizer {
-    // Conservative attitude tuning: damp roll/pitch without allowing integral buildup to
-    // reintroduce the side-to-side hunting seen during forward flight.
-    private final AxisPID pitchPID = new AxisPID(3.5, 0.05, 4.0, 16.0);
-    private final AxisPID rollPID = new AxisPID(3.5, 0.05, 4.0, 16.0);
-    private final AxisPID yawPID = new AxisPID(4.0, 0.1, 2.5, 16.0);
-    private final AxisPID verticalPID = new AxisPID(3.0, 0.4, 1.2, 36.0);
-    private final AxisPID longitudinalPID = new AxisPID(2.0, 0.15, 0.8, 36.0);
-    private final AxisPID lateralPID = new AxisPID(2.0, 0.15, 0.8, 36.0);
+    private final AxisPID pitchPID;
+    private final AxisPID rollPID;
+    private final AxisPID yawPID;
+    private final AxisPID verticalPID;
+    private final AxisPID longitudinalPID;
+    private final AxisPID lateralPID;
+    private final boolean legacyStableProfile;
 
     /** Create Aeronautics/Sable gravity is 11 m/s² in the mod's kpg/pN physics units. */
     public double gravity = 11.0;
+
+    /** Default profile is retained for the CRUISE/MPC controller. */
+    public SixAxisStabilizer() {
+        this(false);
+    }
+
+    /**
+     * Uses the exact attitude tuning found in the supplied known-good flightcomputer-0.6.8.jar.
+     * This profile is intentionally isolated to the manual STABILIZE controller so that restoring
+     * the previous roll/pitch behaviour cannot disturb the currently-working Autopilot/MPC loop.
+     */
+    public SixAxisStabilizer(boolean legacyStableProfile) {
+        this.legacyStableProfile = legacyStableProfile;
+        if (legacyStableProfile) {
+            // Values extracted from flightcomputer-0.6.8.jar:
+            // pitch/roll P=8.0 I=0.35 D=4.0 MaxOutput=30.0
+            pitchPID = new AxisPID(8.0, 0.35, 4.0, 30.0);
+            rollPID = new AxisPID(8.0, 0.35, 4.0, 30.0);
+            yawPID = new AxisPID(4.5, 0.2, 2.0, 18.0);
+            verticalPID = new AxisPID(3.0, 0.6, 1.2, 40.0);
+            longitudinalPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
+            lateralPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
+        } else {
+            pitchPID = new AxisPID(3.5, 0.05, 4.0, 16.0);
+            rollPID = new AxisPID(3.5, 0.05, 4.0, 16.0);
+            yawPID = new AxisPID(4.0, 0.1, 2.5, 16.0);
+            verticalPID = new AxisPID(3.0, 0.4, 1.2, 36.0);
+            longitudinalPID = new AxisPID(2.0, 0.15, 0.8, 36.0);
+            lateralPID = new AxisPID(2.0, 0.15, 0.8, 36.0);
+        }
+    }
 
     public Map<ControlAxis, Double> computeCommands(VehicleState state, StabilizationSetpoint sp, double dt) {
         Map<ControlAxis, Double> out = new EnumMap<>(ControlAxis.class);
@@ -25,17 +55,23 @@ public final class SixAxisStabilizer {
                 ? sp.desiredYawRate - state.yawRate
                 : wrapAngle(sp.desiredYaw - state.yaw);
 
-        // Physical angular-rate feedback provides the main damping term. Keep it bounded so
-        // measured Sable rates cannot overpower the attitude controller on high-inertia craft.
-        double inertiaPitch = Math.max(state.inertiaPitch, 1.0e-3);
-        double inertiaRoll = Math.max(state.inertiaRoll, 1.0e-3);
-        double pitchRateDamping = clamp(-3.0 * state.pitchRate * inertiaPitch, -8.0, 8.0);
-        double rollRateDamping = clamp(-3.0 * state.rollRate * inertiaRoll, -8.0, 8.0);
+        if (!legacyStableProfile) {
+            // Physical angular-rate feedback is retained for the cruise/MPC controller. The
+            // legacy manual stabiliser deliberately omits this extra damping because the supplied
+            // known-good jar did not contain it.
+            double inertiaPitch = Math.max(state.inertiaPitch, 1.0e-3);
+            double inertiaRoll = Math.max(state.inertiaRoll, 1.0e-3);
+            double pitchRateDamping = clamp(-3.0 * state.pitchRate * inertiaPitch, -8.0, 8.0);
+            double rollRateDamping = clamp(-3.0 * state.rollRate * inertiaRoll, -8.0, 8.0);
+            out.put(ControlAxis.PITCH, pitchPID.update(pitchError, state.pitch, dt, inertiaPitch) + pitchRateDamping);
+            out.put(ControlAxis.ROLL, rollPID.update(rollError, state.roll, dt, inertiaRoll) + rollRateDamping);
+        } else {
+            out.put(ControlAxis.PITCH, pitchPID.update(pitchError, state.pitch, dt, state.inertiaPitch));
+            out.put(ControlAxis.ROLL, rollPID.update(rollError, state.roll, dt, state.inertiaRoll));
+        }
 
-        out.put(ControlAxis.PITCH, pitchPID.update(pitchError, state.pitch, dt, inertiaPitch) + pitchRateDamping);
-        out.put(ControlAxis.ROLL, rollPID.update(rollError, state.roll, dt, inertiaRoll) + rollRateDamping);
         out.put(ControlAxis.YAW, yawPID.update(yawError,
-                sp.yawIsRateNotHeading ? state.yawRate : state.yaw, dt, Math.max(state.inertiaYaw, 1.0e-3)));
+                sp.yawIsRateNotHeading ? state.yawRate : state.yaw, dt, state.inertiaYaw));
 
         double mass = Math.max(state.mass, 1.0e-3);
         double vertError = sp.desiredVerticalVelocity - state.vy;
