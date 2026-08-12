@@ -27,6 +27,8 @@ public final class FlightComputer {
     private double holdVx, holdVy, holdVz;
     private double altitudeHoldTargetY = Double.NaN;
     private double lastCruiseLongitudinalVelocity;
+    private double lastAppliedTargetX, lastAppliedTargetY, lastAppliedTargetZ;
+    private boolean lastAppliedTargetValid;
 
     public FlightComputer(VehicleStateProvider stateProvider, ObstacleSensor obstacleSensor) { this.stateProvider = stateProvider; this.navigator = new MPCNavigator(obstacleSensor); }
     public FlightComputer(VehicleStateProvider stateProvider) { this(stateProvider, null); }
@@ -47,17 +49,36 @@ public final class FlightComputer {
                 || Math.abs(navigator.targetZ() - targetZ) > 1.0e-6;
         navigator.setTarget(targetX, targetY, targetZ);
         if (changed) resetCruiseGuidance();
+        lastAppliedTargetX=targetX; lastAppliedTargetY=targetY; lastAppliedTargetZ=targetZ; lastAppliedTargetValid=true;
     }
     /** Clears the active navigation target and all cached guidance derived from it. */
     public void clearNavigationTarget() {
         navigator.clearTarget();
         resetCruiseGuidance();
+        lastAppliedTargetValid=false;
     }
     private void resetCruiseGuidance() {
         cruiseStabilizer.resetAll();
         ticksSinceReplan = 0;
         lastCruiseLongitudinalVelocity = 0.0D;
         latestCruiseSetpoint = StabilizationSetpoint.hover();
+    }
+    private void synchronizeExternalTarget() {
+        if (!navigator.hasTarget()) {
+            if (lastAppliedTargetValid) {
+                resetCruiseGuidance();
+                lastAppliedTargetValid=false;
+            }
+            return;
+        }
+        double x=navigator.targetX(), y=navigator.targetY(), z=navigator.targetZ();
+        if (!lastAppliedTargetValid
+                || Math.abs(lastAppliedTargetX-x)>1.0e-6
+                || Math.abs(lastAppliedTargetY-y)>1.0e-6
+                || Math.abs(lastAppliedTargetZ-z)>1.0e-6) {
+            resetCruiseGuidance();
+            lastAppliedTargetX=x; lastAppliedTargetY=y; lastAppliedTargetZ=z; lastAppliedTargetValid=true;
+        }
     }
     public void syncHolds(FlightControllerState controllerState, VehicleState state) {
         if(controllerState==null||state==null)return;
@@ -77,6 +98,7 @@ public final class FlightComputer {
     /** Runs the active control layers once. Stabilisation and autopilot share the actuator allocator without disabling one another. */
     public void tick(double dt,boolean stabiliserEnabled,boolean autopilotEnabled){
         VehicleState state=stateProvider.getState(); if(state==null)return;
+        synchronizeExternalTarget();
         Map<ControlAxis,Double> stabiliseCommands=Map.of();
         if(stabiliserEnabled){
             StabilizationSetpoint sp=StabilizationSetpoint.manualNudge(pitchStick,rollStick,yawRateStick,verticalStick,longitudinalStick,lateralStick,maxManualTiltRadians,maxManualYawRate,maxManualSpeed);
@@ -92,10 +114,8 @@ public final class FlightComputer {
                 ticksSinceReplan=0;
             }
             StabilizationSetpoint sp=latestCruiseSetpoint.copy();
-            double desiredLongitudinalVelocity=smoothCruiseVelocity(state,sp.desiredYaw,sp.desiredLongitudinalVelocity,dt);
-            double desiredLateralVelocity=smoothCruiseLateralVelocity(state,sp.desiredYaw,sp.desiredLateralVelocity,dt);
-            sp.desiredLongitudinalVelocity=desiredLongitudinalVelocity;
-            sp.desiredLateralVelocity=desiredLateralVelocity;
+            sp.desiredLongitudinalVelocity=smoothCruiseVelocity(state,sp.desiredYaw,sp.desiredLongitudinalVelocity,dt);
+            sp.desiredLateralVelocity=smoothCruiseLateralVelocity(state,sp.desiredYaw,sp.desiredLateralVelocity,dt);
             if(altitudeHold && Double.isFinite(altitudeHoldTargetY)) sp.desiredVerticalVelocity=clamp((altitudeHoldTargetY-state.y)*.9,-maxManualSpeed,maxManualSpeed);
             applyHoldSetpoints(sp,state,false);
             autopilotCommands=cruiseStabilizer.computeCommands(state,sp,dt);
