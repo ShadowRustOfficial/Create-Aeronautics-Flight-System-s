@@ -65,11 +65,7 @@ public final class FlightSetupTelemetryNetwork {
     }
 
     private static void handle(SetupPayload payload, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            if (context.player() == null) return;
-            net.neoforged.fml.DistExecutor.unsafeRunWhenOn(Dist.CLIENT,
-                    () -> () -> com.flightcomputer.client.FlightSetupTelemetryClient.accept(payload));
-        });
+        context.enqueueWork(() -> com.flightcomputer.client.FlightSetupTelemetryClient.accept(payload));
     }
 
     public static void send(FlightControllerBlockEntity controller, VehicleState state, ThrusterRegistry registry) {
