@@ -14,6 +14,10 @@ public final class PIDController {
     public PIDController withIntegralClamp(double min, double max) { integralMin = min; integralMax = max; return this; }
     public PIDController withDerivativeFilter(double alpha) { derivativeFilterAlpha = clamp(alpha, 0, 1); return this; }
 
+    /**
+     * Updates the controller using the measured process variable. Derivative is deliberately
+     * taken from the measurement so setpoint changes do not create derivative kick.
+     */
     public double update(double error, double measurement, double dt) {
         double safeDt = clamp(dt, 1.0 / 200.0, 0.5);
         if (!initialized) { lastMeasurement = measurement; initialized = true; }
@@ -27,7 +31,6 @@ public final class PIDController {
         return clamped;
     }
 
-    public double update(double error, double dt) { return update(error, -error, dt); }
     public void reset() { integral = 0; filteredDerivative = 0; initialized = false; }
 
     private static double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
