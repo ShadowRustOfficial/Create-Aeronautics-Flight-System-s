@@ -9,12 +9,11 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Keeps the Navigation Console map centred on the Flight Computer's authoritative logical
- * position while preserving manual map panning. The controller BlockEntity may remain at a
- * Sable plot/storage coordinate, so the map must follow telemetry rather than raw BlockPos.
+ * position while preserving the screen's own map interaction. The controller BlockEntity may
+ * remain at a Sable plot/storage coordinate, so the map must follow telemetry rather than raw BlockPos.
  */
 @Mixin(NavigationConsoleScreen.class)
 public abstract class NavigationConsoleMapTrackingMixin {
@@ -36,19 +35,6 @@ public abstract class NavigationConsoleMapTrackingMixin {
     private void flightcomputer$trackController(CallbackInfo ci) {
         if (flightcomputer$followController) {
             flightcomputer$followTelemetryPosition();
-        }
-    }
-
-    /**
-     * NavigationConsoleScreen.mouseDragged returns boolean in Minecraft 1.21.1, so this
-     * injection must receive CallbackInfoReturnable rather than CallbackInfo.
-     */
-    @Inject(method = "mouseDragged", at = @At("HEAD"))
-    private void flightcomputer$manualPanDisablesFollow(double mouseX, double mouseY, int button,
-                                                         double dragX, double dragY,
-                                                         CallbackInfoReturnable<Boolean> cir) {
-        if (button == 0) {
-            flightcomputer$followController = false;
         }
     }
 
