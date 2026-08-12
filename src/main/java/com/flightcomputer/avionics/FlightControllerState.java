@@ -2,7 +2,7 @@ package com.flightcomputer.avionics;
 
 import net.minecraft.nbt.CompoundTag;
 
-/** Immutable, persisted source of truth for one controller. */
+/** Immutable, persisted source of truth for one controller. Stabiliser and autopilot are independent control layers. */
 public record FlightControllerState(
         boolean engaged, boolean stabiliser, FlightMode flightMode,
         boolean altitudeHold, boolean headingHold, boolean positionHold, boolean velocityHold,
@@ -14,28 +14,26 @@ public record FlightControllerState(
         return switch (action) {
             case TOGGLE_ENGAGED -> engaged
                     ? new FlightControllerState(false, false, FlightMode.DISENGAGED, false, false, false, false, false, false)
-                    : new FlightControllerState(true, false, FlightMode.MANUAL,
+                    : new FlightControllerState(true, stabiliser, stabiliser ? FlightMode.STABILIZED : FlightMode.MANUAL,
                             altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
             case TOGGLE_STABILISER -> {
                 boolean enabled = !stabiliser;
-                yield enabled
-                        ? new FlightControllerState(true, true, FlightMode.STABILIZED,
-                        altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive)
-                        : new FlightControllerState(engaged, false,
-                        flightMode == FlightMode.STABILIZED ? FlightMode.MANUAL : flightMode,
+                FlightMode nextMode = flightMode == FlightMode.AUTOPILOT
+                        ? FlightMode.AUTOPILOT
+                        : enabled ? FlightMode.STABILIZED : FlightMode.MANUAL;
+                yield new FlightControllerState(true, enabled, nextMode,
                         altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
             }
             case TOGGLE_AUTOPILOT -> {
                 boolean enabled = flightMode != FlightMode.AUTOPILOT;
-                yield enabled
-                        ? new FlightControllerState(true, false, FlightMode.AUTOPILOT,
-                        altitudeHold, headingHold, positionHold, velocityHold, true, routeActive)
-                        : new FlightControllerState(engaged, false, FlightMode.MANUAL,
-                        altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
+                FlightMode nextMode = enabled ? FlightMode.AUTOPILOT : (stabiliser ? FlightMode.STABILIZED : FlightMode.MANUAL);
+                yield new FlightControllerState(true, stabiliser, nextMode,
+                        altitudeHold, headingHold, positionHold, velocityHold, enabled || navigationEnabled, routeActive);
             }
             case CYCLE_MODE -> {
                 FlightMode next = flightMode.next();
-                boolean nextStabiliser = next == FlightMode.STABILIZED;
+                boolean nextStabiliser = next == FlightMode.STABILIZED || (next == FlightMode.MANUAL && stabiliser)
+                        || (next == FlightMode.AUTOPILOT && stabiliser);
                 boolean nextEngaged = next != FlightMode.DISENGAGED && (engaged || nextStabiliser || next == FlightMode.AUTOPILOT);
                 yield new FlightControllerState(nextEngaged, nextStabiliser, next,
                         altitudeHold, headingHold, positionHold, velocityHold,
@@ -47,9 +45,10 @@ public record FlightControllerState(
             case TOGGLE_VELOCITY_HOLD -> toggleHold(3);
             case TOGGLE_NAVIGATION -> new FlightControllerState(engaged, stabiliser, flightMode,
                     altitudeHold, headingHold, positionHold, velocityHold, !navigationEnabled, routeActive);
-            case START_ROUTE -> new FlightControllerState(true, false, FlightMode.AUTOPILOT,
+            case START_ROUTE -> new FlightControllerState(true, stabiliser, FlightMode.AUTOPILOT,
                     altitudeHold, headingHold, positionHold, velocityHold, true, true);
-            case ABORT_ROUTE -> new FlightControllerState(engaged, false, FlightMode.MANUAL,
+            case ABORT_ROUTE -> new FlightControllerState(engaged, stabiliser,
+                    stabiliser ? FlightMode.STABILIZED : FlightMode.MANUAL,
                     altitudeHold, headingHold, positionHold, velocityHold, false, false);
             case EMERGENCY_SHUTDOWN -> new FlightControllerState(false, false, FlightMode.DISENGAGED,
                     false, false, false, false, false, false);
@@ -65,11 +64,8 @@ public record FlightControllerState(
         boolean enabling = (hold == 0 && nextAltitude) || (hold == 1 && nextHeading)
                 || (hold == 2 && nextPosition) || (hold == 3 && nextVelocity);
 
-        // A hold is a PID control request. If the user enables one while the controller is idle,
-        // arm the stabilised flight path automatically. Autopilot remains the owner of guidance
-        // when it is already active.
         boolean nextEngaged = enabling ? true : engaged;
-        boolean nextStabiliser = flightMode == FlightMode.AUTOPILOT ? false : (enabling || stabiliser);
+        boolean nextStabiliser = flightMode == FlightMode.AUTOPILOT ? stabiliser : (enabling || stabiliser);
         FlightMode nextMode = flightMode == FlightMode.AUTOPILOT ? FlightMode.AUTOPILOT
                 : (enabling ? FlightMode.STABILIZED : (flightMode == FlightMode.STABILIZED && !nextStabiliser ? FlightMode.MANUAL : flightMode));
         return new FlightControllerState(nextEngaged, nextStabiliser, nextMode,
