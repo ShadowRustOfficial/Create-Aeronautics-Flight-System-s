@@ -8,15 +8,7 @@ import java.lang.reflect.Modifier;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Runtime adapter for propulsion mods that are intentionally not compile-time dependencies.
- *
- * <p>The controller itself is allowed to be the propulsion power command source. A
- * redstone/throttle setter is therefore treated as an actuator interface, not as an
- * external power-state requirement. This avoids the old circular condition where
- * getAvailableThrust() required isPowered() before the controller was allowed to call
- * setRedstonePower(), which made stabilisation unable to wake an otherwise usable thruster.</p>
- */
+/** Runtime adapter for propulsion mods that are intentionally not compile-time dependencies. */
 public final class ReflectivePropulsionSource implements PropulsionSource {
     private static final double SIMULATED_STANDARD_MAX_THRUST = 600.0D;
     private static final String SIMULATED_THRUSTER = "dev.createpropulsionsimulated.content.thruster.ThrusterBlockEntity";
@@ -85,16 +77,20 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
     @Override public double getAvailableThrust() {
         if (!isEnabled() || !isOperational()) return 0.0D;
 
-        // Fuel/energy is a real resource gate. A controller-driven redstone/throttle
-        // setter is not: the setter is how this controller supplies the command.
-        if (accessor.fuelAmount != null && accessor.fuelCapacity != null) {
-            Object amount = invoke(accessor.fuelAmount);
-            Object capacity = invoke(accessor.fuelCapacity);
-            if (amount instanceof Number a && capacity instanceof Number c && c.doubleValue() > 0.0D) {
-                if (a.doubleValue() <= 0.0D) return 0.0D;
+        // Create: Propulsion Simulated Creative Thrusters inherit the normal fuel accessors,
+        // but their tank is intentionally disabled. The inherited getFuelAmountMb() therefore
+        // returns zero even though the Creative Thruster is fully usable. Treat an explicit
+        // isCreative() actuator as infinite-resource rather than gating it on the empty tank.
+        if (!accessor.creative(blockEntity)) {
+            if (accessor.fuelAmount != null && accessor.fuelCapacity != null) {
+                Object amount = invoke(accessor.fuelAmount);
+                Object capacity = invoke(accessor.fuelCapacity);
+                if (amount instanceof Number a && capacity instanceof Number c && c.doubleValue() > 0.0D
+                        && a.doubleValue() <= 0.0D) return 0.0D;
+            } else if (accessor.redstonePower == null && accessor.thrustSetter == null
+                    && accessor.throttleSetter == null && !hasPower()) {
+                return 0.0D;
             }
-        } else if (accessor.redstonePower == null && accessor.thrustSetter == null && accessor.throttleSetter == null && !hasPower()) {
-            return 0.0D;
         }
         return Math.max(0.0D, getMaxThrust());
     }
@@ -115,12 +111,11 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
     }
 
     @Override public boolean hasPower() {
+        if (accessor.creative(blockEntity)) return true;
         if (accessor.fuelAmount != null && accessor.fuelCapacity != null) {
             Object amount = invoke(accessor.fuelAmount);
             Object capacity = invoke(accessor.fuelCapacity);
-            if (amount instanceof Number a && capacity instanceof Number c && c.doubleValue() > 0.0D) {
-                return a.doubleValue() > 0.0D;
-            }
+            if (amount instanceof Number a && capacity instanceof Number c && c.doubleValue() > 0.0D) return a.doubleValue() > 0.0D;
         }
         Object powered = invoke(accessor.powered);
         return !(powered instanceof Boolean bool) || bool;
@@ -134,10 +129,8 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
             return;
         }
 
-        // Fuel is checked only when the implementation exposes a fuel API. For a
-        // controller-driven redstone/throttle actuator, the command itself is what
-        // enables the thruster, so isPowered() must not prevent the command reaching it.
-        if (accessor.fuelAmount != null && accessor.fuelCapacity != null && !hasPower()) {
+        if (!accessor.creative(blockEntity)
+                && accessor.fuelAmount != null && accessor.fuelCapacity != null && !hasPower()) {
             invokeInt(accessor.redstonePower, 0);
             if (accessor.thrustSetter != null) invokeNumber(accessor.thrustSetter, 0.0D);
             else if (accessor.throttleSetter != null) invokeNumber(accessor.throttleSetter, 0.0D);
@@ -164,9 +157,9 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
     private void invokeNumber(Method method, double value) {
         if (method == null) return;
         try {
-            Class<?> type = method.getParameterTypes()[0];
-            if (type == float.class || type == Float.class) method.invoke(blockEntity, (float) value);
-            else if (type == int.class || type == Integer.class) method.invoke(blockEntity, (int) Math.round(value));
+            Class<?> parameter = method.getParameterTypes()[0];
+            if (parameter == float.class || parameter == Float.class) method.invoke(blockEntity, (float) value);
+            else if (parameter == int.class || parameter == Integer.class) method.invoke(blockEntity, (int) Math.round(value));
             else method.invoke(blockEntity, value);
         } catch (ReflectiveOperationException | RuntimeException ignored) { }
     }
@@ -201,6 +194,7 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
         final Method enabled;
         final Method operational;
         final Method powered;
+        final Method creativeMethod;
         final Method redstonePower;
         final Method thrustSetter;
         final Method throttleSetter;
@@ -217,12 +211,20 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
             enabled = findNoArg(type, "isEnabled");
             operational = findNoArg(type, "isOperational", "isFunctional");
             powered = findNoArg(type, "hasPower", "isPowered");
+            creativeMethod = findNoArg(type, "isCreative");
             redstonePower = findSetter(type, "setRedstonePower");
             thrustSetter = findSetter(type, "setThrust", "setOutputThrust");
             throttleSetter = findSetter(type, "setThrottle", "setPower");
             compatible = currentThrust != null || creativeTargetThrust != null || maxThrust != null
                     || redstonePower != null || thrustSetter != null || throttleSetter != null;
         }
+
+        boolean creative(BlockEntity blockEntity) {
+            if (creativeMethod == null) return false;
+            try { return Boolean.TRUE.equals(creativeMethod.invoke(blockEntity)); }
+            catch (ReflectiveOperationException | RuntimeException ignored) { return false; }
+        }
+
         static Accessor inspect(Class<?> type) { return new Accessor(type); }
     }
 }
