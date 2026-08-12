@@ -53,9 +53,6 @@ public final class MPCNavigator {
                 double dirX=Math.sin(heading), dirZ=Math.cos(heading);
                 for (double vFrac:VERTICAL_OFFSET_FRACTIONS) {
                     double verticalSpeed=vFrac*Math.max(0.0, maxSpeed)*0.5;
-                    // candidateSpeed is the requested 3D speed. Build a real velocity vector
-                    // before obstacle testing instead of mixing unit horizontal components with
-                    // a world-unit vertical speed. This keeps diagonal raycasts physically correct.
                     double horizontalSpeed=Math.sqrt(Math.max(0.0, candidateSpeed*candidateSpeed-verticalSpeed*verticalSpeed));
                     double velocityX=dirX*horizontalSpeed;
                     double velocityZ=dirZ*horizontalSpeed;
@@ -68,15 +65,28 @@ public final class MPCNavigator {
                     double altitudePenalty=ALTITUDE_PENALTY_WEIGHT*Math.abs(vFrac);
                     double hysteresis=Math.abs(headingOffsetDeg-lastChosenHeadingOffsetDeg)<1.0e-6?-HYSTERESIS_BONUS:0;
                     double score=predictedRemaining*predictedRemaining+effortPenalty+headingPenalty+altitudePenalty+hysteresis;
-                    if(score<bestScore){bestScore=score;bestHeading=heading;bestSpeed=candidateSpeed;bestVerticalSpeed=verticalSpeed;accepted=true;}
+                    if(score<bestScore){bestScore=score;bestHeading=heading;bestSpeed=horizontalSpeed;bestVerticalSpeed=verticalSpeed;accepted=true;}
                 }
             }
         }
         pathBlocked=!accepted;
         if(!accepted){sp.desiredYaw=state.yaw;return sp;}
+
         lastChosenHeadingOffsetDeg=normalizeDegrees(Math.toDegrees(bestHeading-bearing));
-        sp.yawIsRateNotHeading=false; sp.desiredYaw=bestHeading;
-        sp.desiredLongitudinalVelocity=bestSpeed; sp.desiredLateralVelocity=0; sp.desiredVerticalVelocity=bestVerticalSpeed;
+        sp.yawIsRateNotHeading=false;
+        sp.desiredYaw=bestHeading;
+
+        // The inner stabilizer consumes longitudinal/lateral velocities in the vessel's BODY
+        // frame. The previous implementation only supplied longitudinal speed, even though the
+        // MPC heading was in WORLD space. That made the route target and the actuator controller
+        // disagree whenever the vessel was not already pointing at the target. Convert the chosen
+        // world velocity into the current body frame and provide both horizontal components.
+        double worldVx=Math.sin(bestHeading)*bestSpeed;
+        double worldVz=Math.cos(bestHeading)*bestSpeed;
+        double cosYaw=Math.cos(-state.yaw), sinYaw=Math.sin(-state.yaw);
+        sp.desiredLongitudinalVelocity=worldVz*cosYaw-worldVx*sinYaw;
+        sp.desiredLateralVelocity=worldVz*sinYaw+worldVx*cosYaw;
+        sp.desiredVerticalVelocity=bestVerticalSpeed;
         return sp;
     }
 
