@@ -18,22 +18,31 @@ public record FlightControllerState(
                             altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
             case TOGGLE_STABILISER -> {
                 boolean enabled = !stabiliser;
-                FlightMode nextMode = enabled ? FlightMode.STABILIZED : (flightMode == FlightMode.STABILIZED ? FlightMode.MANUAL : flightMode);
-                yield new FlightControllerState(engaged, enabled, nextMode,
+                // Stabilisation is an independently selectable flight function. Enabling it also
+                // arms the controller so the user does not have to discover a hidden prerequisite
+                // before the linked thrusters can receive the stabilisation output.
+                yield enabled
+                        ? new FlightControllerState(true, true, FlightMode.STABILIZED,
+                        altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive)
+                        : new FlightControllerState(engaged, false,
+                        flightMode == FlightMode.STABILIZED ? FlightMode.MANUAL : flightMode,
                         altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
             }
             case TOGGLE_AUTOPILOT -> {
-                boolean enabled = engaged && flightMode != FlightMode.AUTOPILOT;
-                // Autopilot and the standalone stabiliser are separate control modes. Autopilot
-                // owns its full navigation loop; leaving the stabiliser latched on would make both
-                // controllers write competing translational/attitude setpoints into the allocator.
-                yield new FlightControllerState(engaged, false, enabled ? FlightMode.AUTOPILOT : FlightMode.MANUAL,
-                        altitudeHold, headingHold, positionHold, velocityHold, enabled || navigationEnabled, routeActive);
+                boolean enabled = flightMode != FlightMode.AUTOPILOT;
+                // Autopilot is independently selectable as well. Target validation happens in the
+                // runtime layer; without a target it simply remains armed but produces no thrust.
+                yield enabled
+                        ? new FlightControllerState(true, false, FlightMode.AUTOPILOT,
+                        altitudeHold, headingHold, positionHold, velocityHold, true, routeActive)
+                        : new FlightControllerState(engaged, false, FlightMode.MANUAL,
+                        altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
             }
             case CYCLE_MODE -> {
                 FlightMode next = flightMode.next();
                 boolean nextStabiliser = next == FlightMode.STABILIZED;
-                yield new FlightControllerState(engaged, nextStabiliser, next,
+                boolean nextEngaged = next != FlightMode.DISENGAGED && (engaged || nextStabiliser || next == FlightMode.AUTOPILOT);
+                yield new FlightControllerState(nextEngaged, nextStabiliser, next,
                         altitudeHold, headingHold, positionHold, velocityHold,
                         next == FlightMode.AUTOPILOT || navigationEnabled, routeActive);
             }
