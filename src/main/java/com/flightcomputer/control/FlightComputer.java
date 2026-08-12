@@ -1,6 +1,7 @@
 package com.flightcomputer.control;
 
 import com.flightcomputer.avionics.FlightControllerState;
+import java.util.EnumMap;
 import java.util.Map;
 
 /** One independent controller instance. Stabilisation and autopilot are independent objectives. */
@@ -24,6 +25,7 @@ public final class FlightComputer {
     private boolean previousAltitudeHold, previousHeadingHold, previousPositionHold, previousVelocityHold;
     private double holdX, holdY, holdZ, holdYaw;
     private double holdVx, holdVy, holdVz;
+    private double altitudeHoldTargetY = Double.NaN;
 
     public FlightComputer(VehicleStateProvider stateProvider, ObstacleSensor obstacleSensor) { this.stateProvider = stateProvider; this.navigator = new MPCNavigator(obstacleSensor); }
     public FlightComputer(VehicleStateProvider stateProvider) { this(stateProvider, null); }
@@ -36,10 +38,17 @@ public final class FlightComputer {
 
     public void setManualInput(double pitch,double roll,double yawRate,double vertical,double longitudinal,double lateral){pitchStick=pitch;rollStick=roll;yawRateStick=yawRate;verticalStick=vertical;longitudinalStick=longitudinal;lateralStick=lateral;}
 
+    /** Set an explicit world Y altitude for the altitude-hold controller. */
+    public void setAltitudeHoldTarget(double y) { altitudeHoldTargetY = Double.isFinite(y) ? y : Double.NaN; }
+
     public void syncHolds(FlightControllerState controllerState, VehicleState state) {
         if(controllerState==null||state==null)return;
         altitudeHold=controllerState.altitudeHold(); headingHold=controllerState.headingHold(); positionHold=controllerState.positionHold(); velocityHold=controllerState.velocityHold();
-        if(altitudeHold&&!previousAltitudeHold)holdY=state.y; if(headingHold&&!previousHeadingHold)holdYaw=state.yaw; if(positionHold&&!previousPositionHold){holdX=state.x;holdY=state.y;holdZ=state.z;} if(velocityHold&&!previousVelocityHold){holdVx=state.vx;holdVy=state.vy;holdVz=state.vz;}
+        if(altitudeHold && Double.isFinite(altitudeHoldTargetY)) holdY=altitudeHoldTargetY;
+        else if(altitudeHold&&!previousAltitudeHold)holdY=state.y;
+        if(headingHold&&!previousHeadingHold)holdYaw=state.yaw;
+        if(positionHold&&!previousPositionHold){holdX=state.x;holdY=state.y;holdZ=state.z;}
+        if(velocityHold&&!previousVelocityHold){holdVx=state.vx;holdVy=state.vy;holdVz=state.vz;}
         previousAltitudeHold=altitudeHold;previousHeadingHold=headingHold;previousPositionHold=positionHold;previousVelocityHold=velocityHold;
     }
 
@@ -49,27 +58,40 @@ public final class FlightComputer {
     public boolean isCruisePathBlocked(){return mode==FlightMode.CRUISE&&navigator.isPathBlocked();}
     public void tick(double dt){tick(dt,true,navigator.hasTarget());}
 
-    /** Runs exactly one actuator-control layer per tick. Autopilot owns the PID output while a route is active. */
+    /** Runs the active control layers once. When both are enabled, stabilisation owns rotational axes and autopilot owns translation so the same actuator is never commanded twice. */
     public void tick(double dt,boolean stabiliserEnabled,boolean autopilotEnabled){
         VehicleState state=stateProvider.getState(); if(state==null)return;
 
         Map<ControlAxis,Double> stabiliseCommands=Map.of();
-        // Never add the manual stabiliser output to autopilot output. Both layers ultimately
-        // drive the same physical thrusters, so doing so was the source of intermittent doubled thrust.
-        if(stabiliserEnabled&&!autopilotEnabled){
+        if(stabiliserEnabled){
             StabilizationSetpoint sp=StabilizationSetpoint.manualNudge(pitchStick,rollStick,yawRateStick,verticalStick,longitudinalStick,lateralStick,maxManualTiltRadians,maxManualYawRate,maxManualSpeed);
-            applyHoldSetpoints(sp,state,true);
+            applyHoldSetpoints(sp,state,!autopilotEnabled);
             stabiliseCommands=stabilizeStabilizer.computeCommands(state,sp,dt);
+            if(autopilotEnabled) stabiliseCommands=filterAxes(stabiliseCommands,true);
         }else stabilizeStabilizer.resetAll();
 
         Map<ControlAxis,Double> autopilotCommands=Map.of();
         if(autopilotEnabled&&navigator.hasTarget()){
             ticksSinceReplan++;
             if(ticksSinceReplan>=Math.max(1,replanIntervalTicks)||navigator.distanceToTarget(state)<3.0){latestCruiseSetpoint=navigator.plan(state,cruiseMaxSpeed,estimateCruiseDeceleration(state));ticksSinceReplan=0;}
-            StabilizationSetpoint sp=latestCruiseSetpoint.copy(); applyHoldSetpoints(sp,state,false); autopilotCommands=cruiseStabilizer.computeCommands(state,sp,dt); mode=FlightMode.CRUISE;
+            StabilizationSetpoint sp=latestCruiseSetpoint.copy();
+            // An explicit altitude hold target is allowed to override the route's Y setpoint while
+            // MPC continues to own horizontal guidance.
+            if(altitudeHold && Double.isFinite(altitudeHoldTargetY)) sp.desiredVerticalVelocity=clamp((altitudeHoldTargetY-state.y)*.9,-maxManualSpeed,maxManualSpeed);
+            applyHoldSetpoints(sp,state,false);
+            autopilotCommands=cruiseStabilizer.computeCommands(state,sp,dt);
+            if(stabiliserEnabled) autopilotCommands=filterAxes(autopilotCommands,false);
+            mode=FlightMode.CRUISE;
             if(navigator.distanceToTarget(state)<1.0)disengageCruise();
         }else{cruiseStabilizer.resetAll();ticksSinceReplan=0;}
         allocator.applyCombined(registry,state,stabiliseCommands,autopilotCommands);
+    }
+
+    private static Map<ControlAxis,Double> filterAxes(Map<ControlAxis,Double> source,boolean rotational){
+        if(source==null||source.isEmpty())return Map.of();
+        Map<ControlAxis,Double> result=new EnumMap<>(ControlAxis.class);
+        for(Map.Entry<ControlAxis,Double> entry:source.entrySet()) if(entry.getKey().isRotational()==rotational) result.put(entry.getKey(),entry.getValue());
+        return result;
     }
 
     private void applyHoldSetpoints(StabilizationSetpoint sp,VehicleState state,boolean allowPosition){
