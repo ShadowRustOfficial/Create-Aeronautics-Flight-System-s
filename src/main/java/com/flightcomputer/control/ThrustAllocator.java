@@ -95,7 +95,7 @@ public final class ThrustAllocator {
 
     private double[] contribution(ThrusterLink link, double thrust, Quaterniond rotation) {
         VectorDirection d = link.direction;
-        Vector3d force = new Vector3d(d.x(), d.y(), d.z()).mul(thrust);
+        Vector3d force = new Vector3d(d.x(), d.y(), d.z()).mul(thrust * link.polarity);
         Vector3d r = new Vector3d(link.source.getMountOffset());
         rotation.transform(force);
         rotation.transform(r);
