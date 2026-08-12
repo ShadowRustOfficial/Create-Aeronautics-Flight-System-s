@@ -6,7 +6,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.*;
 
-/** Runtime actuator registry. Stored vector links are controller-local positions. */
+/** Runtime actuator registry. Links may be persisted as controller-local offsets or legacy absolute positions. */
 public final class ThrusterRegistry {
     private static final int DISCOVERY_RADIUS = 24;
     private final Map<FlightMode, Map<VectorDirection, List<ThrusterLink>>> links = new EnumMap<>(FlightMode.class);
@@ -59,14 +59,27 @@ public final class ThrusterRegistry {
     }
 
     private void addExplicit(Level level, BlockPos controllerPos, FlightMode mode,
-                             VectorDirection direction, BlockPos localTarget,
+                             VectorDirection direction, BlockPos storedTarget,
                              Map<VectorDirection, List<ThrusterLink>> bank) {
-        if (localTarget == null || direction == null) return;
-        BlockPos target = controllerPos.offset(localTarget);
-        BlockEntity blockEntity = level.getBlockEntity(target);
-        if (blockEntity == null) return;
-        PropulsionSource source = ReflectivePropulsionSource.tryCreate(blockEntity, direction, mountOffset(controllerPos, target));
-        if (source != null) addIfUnique(bank.get(direction), new ThrusterLink(source, direction, mode));
+        if (storedTarget == null || direction == null) return;
+
+        // The link tool currently sends/stores the actual clicked BlockPos, while older patches
+        // described the value as a controller-local offset. Resolve both forms so existing saved
+        // controllers keep working and newly linked thrusters are not double-offset into nowhere.
+        BlockPos absoluteTarget = storedTarget;
+        BlockEntity direct = level.getBlockEntity(absoluteTarget);
+        PropulsionSource directSource = direct == null ? null
+                : ReflectivePropulsionSource.tryCreate(direct, direction, mountOffset(controllerPos, absoluteTarget));
+        if (directSource != null) {
+            addIfUnique(bank.get(direction), new ThrusterLink(directSource, direction, mode));
+            return;
+        }
+
+        BlockPos localTarget = controllerPos.offset(storedTarget);
+        BlockEntity local = level.getBlockEntity(localTarget);
+        if (local == null) return;
+        PropulsionSource localSource = ReflectivePropulsionSource.tryCreate(local, direction, mountOffset(controllerPos, localTarget));
+        if (localSource != null) addIfUnique(bank.get(direction), new ThrusterLink(localSource, direction, mode));
     }
 
     private static double[] mountOffset(BlockPos controllerPos, BlockPos target) {
