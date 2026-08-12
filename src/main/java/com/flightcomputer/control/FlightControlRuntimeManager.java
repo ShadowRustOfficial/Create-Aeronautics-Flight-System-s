@@ -3,6 +3,7 @@ package com.flightcomputer.control;
 import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.network.FlightComputerNetwork;
+import com.flightcomputer.network.FlightSetupTelemetryNetwork;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
@@ -17,7 +18,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/** Server-authoritative bridge between Sable state, MCP/PID guidance and physical thruster banks. */
+/** Server-authoritative bridge between Sable state, MPC/PID guidance and physical thruster banks. */
 public final class FlightControlRuntimeManager {
     private FlightControlRuntimeManager() { }
     private static final Map<UUID, Runtime> RUNTIMES = new HashMap<>();
@@ -69,7 +70,6 @@ public final class FlightControlRuntimeManager {
         double distance = target == null ? -1.0D : target.distanceTo(current);
         double heading = normalizeDegrees(Math.toDegrees(state.yaw));
         double speed = safeSpeed(state.vx, state.vy, state.vz);
-        double bearing = target == null ? 0.0D : bearing(current, target);
 
         ThrusterRegistry registry = runtime.computer == null ? null : runtime.computer.getRegistry();
         double[] stabiliser = vectorOutputs(registry, FlightMode.STABILIZE);
@@ -87,7 +87,6 @@ public final class FlightControlRuntimeManager {
                 autopilot[0], autopilot[1], autopilot[2], autopilot[3], autopilot[4], autopilot[5]);
 
         for (ServerPlayer player : level.players()) {
-            // Entity#distanceToSqr is Sable-aware; use the squared radius here, not a raw radius.
             if (player.distanceToSqr(controller.getBlockPos().getX() + 0.5D,
                     controller.getBlockPos().getY() + 0.5D,
                     controller.getBlockPos().getZ() + 0.5D) <= 128.0D * 128.0D)
@@ -108,13 +107,6 @@ public final class FlightControlRuntimeManager {
             result[i] = max <= 0.0D ? 0.0D : Math.max(0.0D, Math.min(1.0D, current / max));
         }
         return result;
-    }
-
-    private static double bearing(Vec3 from, Vec3 to) {
-        double dx = to.x - from.x;
-        double dz = to.z - from.z;
-        double degrees = Math.toDegrees(Math.atan2(dx, dz));
-        return normalizeDegrees(degrees);
     }
 
     public static synchronized void remove(FlightControllerBlockEntity controller) {
@@ -140,6 +132,7 @@ public final class FlightControlRuntimeManager {
         private Object helper;
         private Method getContainingBlockEntity, getContainingPosition, projectOut;
         private boolean initialized, available;
+        private int setupTelemetryTicker;
 
         public void update(FlightControllerBlockEntity controller) {
             if (controller == null || controller.getLevel() == null) return;
@@ -213,7 +206,12 @@ public final class FlightControlRuntimeManager {
             boolean powered=controller.isEngaged()&&!controller.isThermalLockout()&&controller.getEnergyStorage().getEnergyStored()>0;
             boolean stabiliserEnabled=powered&&controller.isStabiliser();
             boolean autopilotEnabled=powered&&state.flightMode()==com.flightcomputer.avionics.FlightMode.AUTOPILOT&&targetActive&&target!=null;
+            computer.syncHolds(state, snapshot);
             computer.tick(1.0D/20.0D,stabiliserEnabled,autopilotEnabled);
+            if (powered && ++setupTelemetryTicker >= 5) {
+                setupTelemetryTicker = 0;
+                FlightSetupTelemetryNetwork.send(controller, snapshot, registry);
+            }
             if(powered)controller.addControlThermalLoad(computer.getAllocator().getLastThermalLoad());
         }
 
