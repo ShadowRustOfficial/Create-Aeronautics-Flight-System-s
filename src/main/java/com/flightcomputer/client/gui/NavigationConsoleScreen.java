@@ -136,7 +136,27 @@ public final class NavigationConsoleScreen extends Screen {
     private int screenZ(double z,int t,int h){return (int)(t+h/2D+(z-centerZ));}
     private void diamond(GuiGraphics g,int x,int y,int color){g.fill(x-3,y,x+4,y+1,color);g.fill(x-2,y-1,x+3,y+2,color);g.fill(x-1,y-2,x+2,y+3,color);}
     private void renderMarkers(GuiGraphics g,List<FlightMapMarker> markers,int l,int t,int w,int h,int color){for(FlightMapMarker marker:markers){int x=screenX(marker.worldX(),l,w),y=screenZ(marker.worldZ(),t,h);if(x>=l&&x<l+w&&y>=t&&y<t+h){diamond(g,x,y,color);g.drawString(font,marker.label(),x+6,y-4,color);}}}
-    private void renderRoute(GuiGraphics g,int l,int top){g.drawString(font,"ROUTE / DESTINATION",l,top+18,TEXT);g.drawString(font,"Select a Waystone or Waypoint, or enter coordinates.",l,top+38,MUTED);g.drawString(font,"WAYSTONES: "+routeWaystones.markers().size(),l,top+82,WAYSTONE);g.drawString(font,"WAYPOINTS: "+routeWaypoints.markers().size(),l+160,top+82,CYAN);}
+    private void renderRoute(GuiGraphics g,int l,int top){
+        g.drawString(font,"ROUTE / FLIGHT PLAN",l,top+18,TEXT);
+        FlightComputerNetwork.TelemetryPayload telemetry=FlightComputerTelemetryClient.get(controller==null?null:controller.getControllerId());
+        FlightControllerState state=controller==null?null:controller.getControllerState();
+        if(telemetry!=null&&telemetry.targetPresent()){
+            g.drawString(font,"DESTINATION: "+(telemetry.targetName().isBlank()?"NAVIGATION TARGET":telemetry.targetName()),l,top+58,CYAN);
+            g.drawString(font,String.format(Locale.ROOT,"CURRENT  X %.1f  Y %.1f  Z %.1f",telemetry.x(),telemetry.y(),telemetry.z()),l,top+82,TEXT);
+            g.drawString(font,String.format(Locale.ROOT,"TARGET   X %.1f  Y %.1f  Z %.1f",telemetry.targetX(),telemetry.targetY(),telemetry.targetZ()),l,top+106,TEXT);
+            double bearing=Math.toDegrees(Math.atan2(telemetry.targetX()-telemetry.x(),telemetry.targetZ()-telemetry.z()));
+            if(bearing<0)bearing+=360.0;
+            g.drawString(font,String.format(Locale.ROOT,"ALT %.1f m   DIST %.1f m   BRG %.1f°   HDG %.1f°   SPEED %.2f m/s",telemetry.y(),telemetry.distance(),bearing,telemetry.heading(),telemetry.speed()),l,top+130,TEXT);
+            String mode=state==null?"UNKNOWN":state.flightMode().name();
+            String route=state!=null&&state.routeActive()?"ACTIVE":"IDLE";
+            g.drawString(font,"MODE: "+mode+"   ROUTE: "+route+"   NAVIGATION: "+(state!=null&&state.navigationEnabled()?"ON":"OFF"),l,top+154,telemetry.targetPresent()&&state!=null&&state.flightMode()==FlightMode.AUTOPILOT?GREEN:MUTED);
+            g.drawString(font,"TARGET SOURCE: NAVIGATION DESTINATION",l,top+178,MUTED);
+        } else {
+            g.drawString(font,"NO ACTIVE NAVIGATION TARGET",l,top+58,MUTED);
+        }
+        g.drawString(font,"WAYSTONES: "+routeWaystones.markers().size(),l,top+205,WAYSTONE);
+        g.drawString(font,"WAYPOINTS: "+routeWaypoints.markers().size(),l+160,top+205,CYAN);
+    }
     private void renderFlight(GuiGraphics g,int l,int top){g.drawString(font,"FLIGHT CONTROL",l,top+18,TEXT);g.drawString(font,"Manual, Stabilised and Autopilot control share the server-authoritative runtime.",l,top+38,MUTED);g.drawString(font,"Independent hold controls are available below.",l,top+56,MUTED);if(controller!=null){var s=controller.getControllerState();g.drawString(font,"MODE: "+s.flightMode().name(),l,top+84,CYAN);g.drawString(font,"NAVIGATION: "+on(s.navigationEnabled()),l+180,top+84,CYAN);g.drawString(font,"ALTITUDE HOLD: "+on(s.altitudeHold()),l+360,top+84,CYAN);g.drawString(font,"HEADING HOLD: "+on(s.headingHold()),l,top+104,CYAN);g.drawString(font,"POSITION HOLD: "+on(s.positionHold()),l+180,top+104,CYAN);g.drawString(font,"VELOCITY HOLD: "+on(s.velocityHold()),l+360,top+104,CYAN);}}
     private void renderDiagnostics(GuiGraphics g,int l,int top){FlightMapDiagnostics d=mapPipeline.diagnostics();g.drawString(font,"DIAGNOSTICS",l,top+18,TEXT);g.drawString(font,"PROVIDER: "+d.provider(),l,top+44,CYAN);g.drawString(font,"STATE: "+d.state(),l,top+62,CYAN);g.drawString(font,"CACHE HITS: "+d.cacheHits(),l,top+80,TEXT);g.drawString(font,"CACHE MISSES: "+d.cacheMisses(),l+180,top+80,TEXT);g.drawString(font,"REQUESTED: "+d.requestedTiles(),l+360,top+80,TEXT);g.drawString(font,"DECODED: "+d.decodedTiles(),l,top+100,TEXT);g.drawString(font,"FAILED: "+d.failedTiles(),l+180,top+100,TEXT);g.drawString(font,"PENDING: "+d.pendingTiles(),l+360,top+100,TEXT);var setup=FlightSetupTelemetryClient.get(controller==null?null:controller.getControllerId());if(setup!=null){g.drawString(font,"SETUP: READY",l,top+128,GREEN);g.drawString(font,"POWER "+setup.powerLevel()+"%",l,top+148,TEXT);g.drawString(font,"CONTROL "+setup.controlLevel()+"%",l+180,top+148,TEXT);g.drawString(font,"PROPULSION "+setup.propulsionLevel()+"%",l+360,top+148,TEXT);g.drawString(font,"NAVIGATION "+setup.navigationLevel()+"%",l,top+168,TEXT);}}
     @Override public void onClose(){if(minecraft!=null)minecraft.setScreen(null);}
