@@ -38,6 +38,27 @@ public final class FlightComputer {
     public SixAxisStabilizer getCruiseStabilizer() { return cruiseStabilizer; }
     public void setManualInput(double pitch,double roll,double yawRate,double vertical,double longitudinal,double lateral){pitchStick=pitch;rollStick=roll;yawRateStick=yawRate;verticalStick=vertical;longitudinalStick=longitudinal;lateralStick=lateral;}
     public void setAltitudeHoldTarget(double y) { altitudeHoldTargetY = Double.isFinite(y) ? y : Double.NaN; }
+    /** Replaces the active navigation target and invalidates any cached cruise setpoint immediately. */
+    public void setNavigationTarget(double targetX, double targetY, double targetZ) {
+        if (!Double.isFinite(targetX) || !Double.isFinite(targetY) || !Double.isFinite(targetZ)) return;
+        boolean changed = !navigator.hasTarget()
+                || Math.abs(navigator.targetX() - targetX) > 1.0e-6
+                || Math.abs(navigator.targetY() - targetY) > 1.0e-6
+                || Math.abs(navigator.targetZ() - targetZ) > 1.0e-6;
+        navigator.setTarget(targetX, targetY, targetZ);
+        if (changed) resetCruiseGuidance();
+    }
+    /** Clears the active navigation target and all cached guidance derived from it. */
+    public void clearNavigationTarget() {
+        navigator.clearTarget();
+        resetCruiseGuidance();
+    }
+    private void resetCruiseGuidance() {
+        cruiseStabilizer.resetAll();
+        ticksSinceReplan = 0;
+        lastCruiseLongitudinalVelocity = 0.0D;
+        latestCruiseSetpoint = StabilizationSetpoint.hover();
+    }
     public void syncHolds(FlightControllerState controllerState, VehicleState state) {
         if(controllerState==null||state==null)return;
         altitudeHold=controllerState.altitudeHold(); headingHold=controllerState.headingHold(); positionHold=controllerState.positionHold(); velocityHold=controllerState.velocityHold();
@@ -48,8 +69,8 @@ public final class FlightComputer {
         if(velocityHold&&!previousVelocityHold){holdVx=state.vx;holdVy=state.vy;holdVz=state.vz;}
         previousAltitudeHold=altitudeHold;previousHeadingHold=headingHold;previousPositionHold=positionHold;previousVelocityHold=velocityHold;
     }
-    public void engageCruise(double targetX,double targetY,double targetZ){navigator.setTarget(targetX,targetY,targetZ);cruiseStabilizer.resetAll();ticksSinceReplan=0;lastCruiseLongitudinalVelocity=0;latestCruiseSetpoint=StabilizationSetpoint.hover();mode=FlightMode.CRUISE;}
-    public void disengageCruise(){mode=FlightMode.STABILIZE;navigator.clearTarget();latestCruiseSetpoint=StabilizationSetpoint.hover();lastCruiseLongitudinalVelocity=0;}
+    public void engageCruise(double targetX,double targetY,double targetZ){setNavigationTarget(targetX,targetY,targetZ);mode=FlightMode.CRUISE;}
+    public void disengageCruise(){mode=FlightMode.STABILIZE;clearNavigationTarget();}
     public double distanceToTarget(){VehicleState state=stateProvider.getState();return state!=null&&navigator.hasTarget()?navigator.distanceToTarget(state):-1;}
     public boolean isCruisePathBlocked(){return mode==FlightMode.CRUISE&&navigator.isPathBlocked();}
     public void tick(double dt){tick(dt,true,navigator.hasTarget());}
@@ -71,7 +92,10 @@ public final class FlightComputer {
                 ticksSinceReplan=0;
             }
             StabilizationSetpoint sp=latestCruiseSetpoint.copy();
-            sp.desiredLongitudinalVelocity=smoothCruiseVelocity(state,sp.desiredYaw,sp.desiredLongitudinalVelocity,dt);
+            double desiredLongitudinalVelocity=smoothCruiseVelocity(state,sp.desiredYaw,sp.desiredLongitudinalVelocity,dt);
+            double desiredLateralVelocity=smoothCruiseLateralVelocity(state,sp.desiredYaw,sp.desiredLateralVelocity,dt);
+            sp.desiredLongitudinalVelocity=desiredLongitudinalVelocity;
+            sp.desiredLateralVelocity=desiredLateralVelocity;
             if(altitudeHold && Double.isFinite(altitudeHoldTargetY)) sp.desiredVerticalVelocity=clamp((altitudeHoldTargetY-state.y)*.9,-maxManualSpeed,maxManualSpeed);
             applyHoldSetpoints(sp,state,false);
             autopilotCommands=cruiseStabilizer.computeCommands(state,sp,dt);
@@ -81,7 +105,7 @@ public final class FlightComputer {
         }else{cruiseStabilizer.resetAll();ticksSinceReplan=0;lastCruiseLongitudinalVelocity=0;}
         allocator.applyCombined(registry,state,stabiliseCommands,autopilotCommands);
     }
-    /** Smooths acceleration only after the vessel is pointed toward the MPC-selected heading. */
+    /** Smooths forward acceleration only after the vessel is pointed toward the MPC-selected heading. */
     private double smoothCruiseVelocity(VehicleState state,double desiredYaw,double desiredVelocity,double dt){
         double headingError=Math.abs(normalizeRadians(desiredYaw-state.yaw));
         double alignment=clamp(Math.cos(headingError),0.0,1.0);
@@ -90,6 +114,12 @@ public final class FlightComputer {
         double delta=clamp(alignedTarget-lastCruiseLongitudinalVelocity,-maxDelta,maxDelta);
         lastCruiseLongitudinalVelocity+=delta;
         return lastCruiseLongitudinalVelocity;
+    }
+    /** Suppresses lateral cruise translation while badly misaligned so the aircraft turns toward the destination first. */
+    private double smoothCruiseLateralVelocity(VehicleState state,double desiredYaw,double desiredVelocity,double dt){
+        double headingError=Math.abs(normalizeRadians(desiredYaw-state.yaw));
+        double alignment=clamp(Math.cos(headingError),0.0,1.0);
+        return desiredVelocity*alignment;
     }
     private static double normalizeRadians(double radians){double r=radians%(Math.PI*2.0);if(r>Math.PI)r-=Math.PI*2.0;if(r<-Math.PI)r+=Math.PI*2.0;return r;}
     /** When both systems are active, the stabiliser keeps the vessel level while autopilot owns navigation yaw. */
