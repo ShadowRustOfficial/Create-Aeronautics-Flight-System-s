@@ -112,21 +112,24 @@ public final class NavigationConsoleScreen extends Screen {
 
     private void initFlightControl(int left, int top) {
         FlightControllerState s = controller == null ? FlightControllerState.DEFAULT : controller.getControllerState();
-        addRenderableWidget(Button.builder(Component.literal(s.engaged() ? "DISENGAGE SYSTEM" : "ENGAGE SYSTEM"), b -> { send(FlightControllerAction.TOGGLE_ENGAGED); refreshWidgets(); }).bounds(left + 20, top + 180, 140, 20).build());
-        addRenderableWidget(Button.builder(Component.literal(s.stabiliser() ? "STABILISER: ON" : "STABILISER: OFF"), b -> { send(FlightControllerAction.TOGGLE_STABILISER); refreshWidgets(); }).bounds(left + 165, top + 180, 130, 20).build());
-        addRenderableWidget(Button.builder(Component.literal(s.flightMode().name().replace('_',' ')), b -> { send(FlightControllerAction.CYCLE_MODE); refreshWidgets(); }).bounds(left + 300, top + 180, 120, 20).build());
-        addRenderableWidget(Button.builder(Component.literal(s.flightMode() == com.flightcomputer.avionics.FlightMode.AUTOPILOT ? "AUTOPILOT: ON" : "AUTOPILOT: OFF"), b -> { send(FlightControllerAction.TOGGLE_AUTOPILOT); refreshWidgets(); }).bounds(left + 425, top + 180, 135, 20).build());
+        // Do not rebuild the screen immediately after sending a server action. The old client-side
+        // BE state could still be present for one tick and would make a working button appear to
+        // have reverted. The authoritative BE update will refresh the state naturally.
+        addRenderableWidget(Button.builder(Component.literal(s.engaged() ? "DISENGAGE SYSTEM" : "ENGAGE SYSTEM"), b -> send(FlightControllerAction.TOGGLE_ENGAGED)).bounds(left + 20, top + 180, 140, 20).build());
+        addRenderableWidget(Button.builder(Component.literal(s.stabiliser() ? "STABILISER: ON" : "STABILISER: OFF"), b -> send(FlightControllerAction.TOGGLE_STABILISER)).bounds(left + 165, top + 180, 130, 20).build());
+        addRenderableWidget(Button.builder(Component.literal(s.flightMode().name().replace('_',' ')), b -> send(FlightControllerAction.CYCLE_MODE)).bounds(left + 300, top + 180, 120, 20).build());
+        addRenderableWidget(Button.builder(Component.literal(s.flightMode() == com.flightcomputer.avionics.FlightMode.AUTOPILOT ? "AUTOPILOT: ON" : "AUTOPILOT: OFF"), b -> send(FlightControllerAction.TOGGLE_AUTOPILOT)).bounds(left + 425, top + 180, 135, 20).build());
         addHoldButton(left + 20, top + 210, "ALTITUDE HOLD", FlightControllerAction.TOGGLE_ALTITUDE_HOLD, s.altitudeHold());
         addHoldButton(left + 165, top + 210, "HEADING HOLD", FlightControllerAction.TOGGLE_HEADING_HOLD, s.headingHold());
         addHoldButton(left + 310, top + 210, "POSITION HOLD", FlightControllerAction.TOGGLE_POSITION_HOLD, s.positionHold());
         addHoldButton(left + 455, top + 210, "VELOCITY HOLD", FlightControllerAction.TOGGLE_VELOCITY_HOLD, s.velocityHold());
-        addRenderableWidget(Button.builder(Component.literal(s.navigationEnabled() ? "NAVIGATION: ON" : "NAVIGATION: OFF"), b -> { send(FlightControllerAction.TOGGLE_NAVIGATION); refreshWidgets(); }).bounds(left + 20, top + 240, 145, 20).build());
+        addRenderableWidget(Button.builder(Component.literal(s.navigationEnabled() ? "NAVIGATION: ON" : "NAVIGATION: OFF"), b -> send(FlightControllerAction.TOGGLE_NAVIGATION)).bounds(left + 20, top + 240, 145, 20).build());
         addRenderableWidget(Button.builder(Component.literal("EMERGENCY SHUTDOWN"), b -> send(FlightControllerAction.EMERGENCY_SHUTDOWN)).bounds(left + 170, top + 240, 180, 20).build());
         addRenderableWidget(Button.builder(Component.literal("DISPLAY TEST"), b -> send(FlightControllerAction.PULSE_DISPLAY)).bounds(left + 355, top + 240, 130, 20).build());
     }
 
     private void addHoldButton(int x, int y, String name, FlightControllerAction action, boolean active) {
-        addRenderableWidget(Button.builder(Component.literal(name + ": " + on(active)), b -> { send(action); refreshWidgets(); }).bounds(x, y, 140, 20).build());
+        addRenderableWidget(Button.builder(Component.literal(name + ": " + on(active)), b -> send(action)).bounds(x, y, 140, 20).build());
     }
 
     private void refreshWidgets() { clearWidgets(); init(); }
@@ -233,7 +236,7 @@ public final class NavigationConsoleScreen extends Screen {
     private void renderTerrain(GuiGraphics g, net.minecraft.client.multiplayer.ClientLevel level, int l,int t,int r,int b) {
         int tile = 16, step = 2;
         int minX=(int)Math.floor((centerX-(r-l)/2D)/16D)-1, maxX=(int)Math.floor((centerX+(r-l)/2D)/16D)+1;
-        int minZ=(int)Math.floor((centerZ-(b-t)/2D)/16D)-1, maxZ=(int)Math.floor((centerZ+(b-t)/2D)/16D)+1;
+        int minZ=(int)Math.floor((centerZ-(r-l)/2D)/16D)-1, maxZ=(int)Math.floor((centerZ+(b-t)/2D)/16D)+1;
         for(int cz=minZ;cz<=maxZ;cz++) for(int cx=minX;cx<=maxX;cx++) {
             int[] data=mapPipeline.getCachedTile(level,cx,cz); int px=(int)(l+(cx*16-centerX)+(r-l)/2D), py=(int)(t+(cz*16-centerZ)+(b-t)/2D);
             if(data==null){g.fill(px,py,px+tile,py+tile,0xFF171B1E);continue;}
@@ -256,10 +259,15 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font,"ROUTE / FLIGHT PLAN",left+20,top+10,TEXT);
         var s=controller==null?null:FlightComputerTelemetryClient.get(controller.getControllerId());
         if(s==null||!s.targetPresent()){g.drawString(font,"DESTINATION: NONE",left+20,top+48,MUTED);g.drawString(font,"Enter coordinates, or select a Waypoint / Waystone below.",left+20,top+76,MUTED);return;}
+
+        double currentX = s.x(), currentY = s.y(), currentZ = s.z();
+        double bearing = Math.toDegrees(Math.atan2(s.targetX() - currentX, s.targetZ() - currentZ));
+        bearing = normalizeDegrees(bearing);
         g.drawString(font,"DESTINATION: "+s.targetName(),left+20,top+48,BRIGHT);
-        g.drawString(font,String.format("POS X %.1f  Y %.1f  Z %.1f",s.targetX(),s.targetY(),s.targetZ()),left+20,top+72,TEXT);
-        g.drawString(font,String.format("DIST %.1f m  BEARING %.1f°  SPEED %.1f m/s",s.distance(),s.heading(),s.speed()),left+20,top+96,TEXT);
-        double eta=s.speed()>.1?s.distance()/s.speed():-1; g.drawString(font,eta<0?"ETA: CALCULATING":String.format("ETA %.1f s  ROUTE: MPC / SMOOTH ACCELERATION",eta),left+20,top+120,eta<0?MUTED:GREEN);
+        g.drawString(font,String.format("CURRENT X %.1f  Y %.1f  Z %.1f",currentX,currentY,currentZ),left+20,top+72,TEXT);
+        g.drawString(font,String.format("TARGET  X %.1f  Y %.1f  Z %.1f",s.targetX(),s.targetY(),s.targetZ()),left+20,top+94,TEXT);
+        g.drawString(font,String.format("ALT %.1f m  DIST %.1f m  BRG %.1f°  HDG %.1f°  SPEED %.2f m/s",currentY,s.distance(),bearing,normalizeDegrees(s.heading()),s.speed()),left+20,top+116,TEXT);
+        double eta=s.speed()>.1?s.distance()/s.speed():-1; g.drawString(font,eta<0?"ETA: CALCULATING":String.format("ETA %.1f s  ROUTE: MPC / SMOOTH ACCELERATION",eta),left+20,top+140,eta<0?MUTED:GREEN);
     }
 
     private void renderFlight(GuiGraphics g,int left,int top){
@@ -272,7 +280,7 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font,"MODE: "+s.flightMode(),left+20,top+88,BRIGHT);
         g.drawString(font,"NAVIGATION: "+on(s.navigationEnabled())+"   ROUTE: "+on(s.routeActive()),left+200,top+88,TEXT);
         g.drawString(font,"HOLDS  ALT "+on(s.altitudeHold())+"  HDG "+on(s.headingHold())+"  POS "+on(s.positionHold())+"  VEL "+on(s.velocityHold()),left+20,top+112,MUTED);
-        if(t!=null) g.drawString(font,String.format("ALT %.1f  SPEED %.1f  HEADING %.1f°  TARGET %s",t.y(),t.speed(),t.heading(),t.targetPresent()?t.targetName():"NONE"),left+20,top+136,TEXT);
+        if(t!=null) g.drawString(font,String.format("ALT %.1f  SPEED %.1f  HEADING %.1f°  TARGET %s",t.y(),t.speed(),normalizeDegrees(t.heading()),t.targetPresent()?t.targetName():"NONE"),left+20,top+136,TEXT);
     }
 
     private void renderDiagnostics(GuiGraphics g,int left,int top){
@@ -284,6 +292,7 @@ public final class NavigationConsoleScreen extends Screen {
         g.drawString(font,String.format("WORLD X %.2f  Y %.2f  Z %.2f",controllerX,controllerY,controllerZ),left+20,top+168,TEXT);
     }
     private static String format(long v){return String.format("%,d",Math.max(0,v));}
+    private static double normalizeDegrees(double degrees){double value=degrees%360.0D;return value<0?value+360.0D:value;}
 
     @Override public boolean mouseClicked(double x,double y,int button){if(tab==Tab.MAP&&button==0&&x>=mapLeft()&&x<mapRight()&&y>=mapTop()&&y<mapBottom()){dragging=true;return true;}return super.mouseClicked(x,y,button);}
     @Override public boolean mouseReleased(double x,double y,int button){if(button==0)dragging=false;return super.mouseReleased(x,y,button);}
