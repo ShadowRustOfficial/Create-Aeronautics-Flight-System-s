@@ -11,7 +11,8 @@ import java.util.concurrent.ConcurrentHashMap;
 /** Runtime adapter for propulsion mods that are intentionally not compile-time dependencies. */
 public final class ReflectivePropulsionSource implements PropulsionSource {
     private static final double SIMULATED_STANDARD_MAX_THRUST = 600.0D;
-    private static final String SIMULATED_THRUSTER = "dev.createpropulsionsimulated.content.thruster.ThrusterBlockEntity";
+    private static final String SIMULATED_THRUSTER = "dev.propulsionteam.propulsionsimulated.content.thruster.ThrusterBlockEntity";
+    private static final String SIMULATED_ABSTRACT_THRUSTER = "dev.propulsionteam.propulsionsimulated.content.thruster.AbstractThrusterBlockEntity";
     private static final Map<Class<?>, Accessor> ACCESSORS = new ConcurrentHashMap<>();
 
     private final BlockEntity blockEntity;
@@ -36,8 +37,10 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
 
         String className = blockEntity.getClass().getName();
         String blockId = String.valueOf(blockEntity.getBlockState().getBlock().builtInRegistryHolder().key().location());
-        boolean simulated = className.equals(SIMULATED_THRUSTER)
-                || className.contains("createpropulsionsimulated")
+        boolean simulated = blockEntity.getClass().getName().equals(SIMULATED_THRUSTER)
+                || blockEntity.getClass().getSuperclass() != null
+                && blockEntity.getClass().getSuperclass().getName().equals(SIMULATED_ABSTRACT_THRUSTER)
+                || className.contains("propulsionsimulated")
                 || blockId.contains("propulsion") || blockId.contains("thruster");
         boolean aeronautics = className.toLowerCase().contains("aeronautics") || blockId.contains("aeronautics");
         PropulsionType type = simulated ? PropulsionType.CREATE_PROPULSION_SIMULATED
@@ -76,11 +79,6 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
 
     @Override public double getAvailableThrust() {
         if (!isEnabled() || !isOperational()) return 0.0D;
-
-        // Create: Propulsion Simulated Creative Thrusters inherit the normal fuel accessors,
-        // but their tank is intentionally disabled. The inherited getFuelAmountMb() therefore
-        // returns zero even though the Creative Thruster is fully usable. Treat an explicit
-        // isCreative() actuator as infinite-resource rather than gating it on the empty tank.
         if (!accessor.creative(blockEntity)) {
             if (accessor.fuelAmount != null && accessor.fuelCapacity != null) {
                 Object amount = invoke(accessor.fuelAmount);
@@ -126,22 +124,26 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
     @Override public void applyThrust(double signedFraction) {
         if (!isEnabled() || !isOperational()) {
             invokeInt(accessor.redstonePower, 0);
+            invokeNumber(accessor.digitalInput, 0.0D);
             return;
         }
 
         if (!accessor.creative(blockEntity)
                 && accessor.fuelAmount != null && accessor.fuelCapacity != null && !hasPower()) {
             invokeInt(accessor.redstonePower, 0);
+            invokeNumber(accessor.digitalInput, 0.0D);
             if (accessor.thrustSetter != null) invokeNumber(accessor.thrustSetter, 0.0D);
             else if (accessor.throttleSetter != null) invokeNumber(accessor.throttleSetter, 0.0D);
             return;
         }
 
         double fraction = Math.max(0.0D, Math.min(1.0D, signedFraction));
-        if (accessor.redstonePower != null) {
-            invokeInt(accessor.redstonePower, (int) Math.round(fraction * 15.0D));
-            return;
-        }
+        // Create: Propulsion Simulated 1.1.5 exposes both NORMAL/redstone and PERIPHERAL/digital
+        // control. Writing both inputs is intentional: the thruster's configured ControlMode picks
+        // the correct one, so the flight computer does not silently fail when a player has changed
+        // the actuator's control mode.
+        if (accessor.redstonePower != null) invokeInt(accessor.redstonePower, (int) Math.round(fraction * 15.0D));
+        if (accessor.digitalInput != null) invokeNumber(accessor.digitalInput, fraction);
         if (accessor.thrustSetter != null) invokeNumber(accessor.thrustSetter, fraction * getMaxThrust());
         else if (accessor.throttleSetter != null) invokeNumber(accessor.throttleSetter, fraction);
     }
@@ -196,6 +198,7 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
         final Method powered;
         final Method creativeMethod;
         final Method redstonePower;
+        final Method digitalInput;
         final Method thrustSetter;
         final Method throttleSetter;
         final boolean compatible;
@@ -203,7 +206,7 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
         private Accessor(Class<?> type) {
             facing = findNoArg(type, "getFacing", "getDirection", "getPropulsionDirection");
             currentThrust = findNoArg(type, "getCurrentThrust", "getThrust", "getOutputThrust");
-            creativeTargetThrust = findNoArg(type, "getCreativeTargetThrust");
+            creativeTargetThrust = findNoArg(type, "getCreativeTargetThrust", "getTargetThrustNewtons");
             maxThrust = findNoArg(type, "getMaxThrust", "getMaximumThrust", "getThrustCapacity");
             throttle = findNoArg(type, "getThrottle", "getPower", "getOutputLevel");
             fuelAmount = findNoArg(type, "getFuelAmountMb", "getFuelAmount");
@@ -212,11 +215,12 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
             operational = findNoArg(type, "isOperational", "isFunctional");
             powered = findNoArg(type, "hasPower", "isPowered");
             creativeMethod = findNoArg(type, "isCreative");
-            redstonePower = findSetter(type, "setRedstonePower");
+            redstonePower = findSetter(type, "setRedstonePower", "setRedstoneInput");
+            digitalInput = findSetter(type, "setDigitalInput");
             thrustSetter = findSetter(type, "setThrust", "setOutputThrust");
             throttleSetter = findSetter(type, "setThrottle", "setPower");
             compatible = currentThrust != null || creativeTargetThrust != null || maxThrust != null
-                    || redstonePower != null || thrustSetter != null || throttleSetter != null;
+                    || redstonePower != null || digitalInput != null || thrustSetter != null || throttleSetter != null;
         }
 
         boolean creative(BlockEntity blockEntity) {
