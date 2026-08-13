@@ -29,6 +29,8 @@ public final class FlightComputerSoundClient {
     private static final double PROPULSION_FULL_SPEED = 1.60D;
     private static final float DRONE_VOLUME = 0.17F;
     private static final float PROPULSION_MAX_VOLUME = 0.40F;
+    private static final int SABLE_REFRESH_INTERVAL_TICKS = 5;
+    private static int sableRefreshCooldown;
 
     private FlightComputerSoundClient() { }
 
@@ -36,6 +38,7 @@ public final class FlightComputerSoundClient {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.level == null || minecraft.player == null) {
             stopAmbient();
+            sableRefreshCooldown = 0;
             SableAcousticCache.tick(null);
             return;
         }
@@ -60,7 +63,8 @@ public final class FlightComputerSoundClient {
 
         if (best == null) {
             stopAmbient();
-            SableAcousticCache.tick(minecraft);
+            sableRefreshCooldown = 0;
+            SableAcousticCache.tick(null);
             return;
         }
 
@@ -68,6 +72,7 @@ public final class FlightComputerSoundClient {
         if (activeController == null || !id.equals(activeController)) {
             stopAmbient();
             activeController = id;
+            sableRefreshCooldown = 0;
         }
 
         SableAcousticCache.registerSource(new net.minecraft.world.phys.Vec3(best.x(), best.y(), best.z()));
@@ -94,8 +99,15 @@ public final class FlightComputerSoundClient {
             activePropulsion.setIntensity((float) intensity);
         }
 
-        // Refresh all prepared Sable acoustic data only on the client thread.
-        SableAcousticCache.tick(minecraft);
+        // Sound Physics: Aeronautics prepares Sable acoustic snapshots on the client side.
+        // Do the same work here only while a Flight Computer sound is active, and at a bounded
+        // cadence so a sound start cannot force a synchronous raycast burst every tick.
+        if (sableRefreshCooldown <= 0) {
+            SableAcousticCache.tick(minecraft);
+            sableRefreshCooldown = SABLE_REFRESH_INTERVAL_TICKS;
+        } else {
+            sableRefreshCooldown--;
+        }
     }
 
     public static boolean isMuted(UUID controllerId) {
