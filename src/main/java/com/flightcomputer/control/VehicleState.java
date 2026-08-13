@@ -22,12 +22,16 @@ public final class VehicleState {
         return s;
     }
 
+    /**
+     * Converts world horizontal velocity into the vessel body frame used by the six-axis PID.
+     * The controller's yaw convention defines forward as (sin(yaw), 0, cos(yaw)) and right as
+     * (cos(yaw), 0, -sin(yaw)).
+     */
     public double[] bodyFrameVelocity() {
-        double cosY = Math.cos(-yaw), sinY = Math.sin(-yaw);
-        double worldLong = vz;
-        double worldLat = vx;
-        double longitudinal = worldLong * cosY - worldLat * sinY;
-        double lateral = worldLong * sinY + worldLat * cosY;
+        double sinY = Math.sin(yaw);
+        double cosY = Math.cos(yaw);
+        double longitudinal = vx * sinY + vz * cosY;
+        double lateral = vx * cosY - vz * sinY;
         return new double[]{longitudinal, lateral, vy};
     }
 }
