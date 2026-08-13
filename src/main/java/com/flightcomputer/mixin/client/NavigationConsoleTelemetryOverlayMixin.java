@@ -1,6 +1,5 @@
 package com.flightcomputer.mixin.client;
 
-import com.flightcomputer.avionics.FlightControllerState;
 import com.flightcomputer.avionics.FlightMode;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.client.FlightComputerTelemetryClient;
@@ -15,7 +14,6 @@ import com.flightcomputer.network.FlightRouteTelemetryNetwork;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -28,6 +26,9 @@ import java.util.Locale;
 /**
  * Keeps the original Navigation Console controls untouched while restoring the full live Route
  * and Diagnostics information from the authoritative runtime telemetry caches.
+ *
+ * The target screen inherits its Font/Minecraft fields from Screen, so they must not be @Shadowed
+ * here. Resolve them through Minecraft.getInstance() instead.
  */
 @Mixin(com.flightcomputer.client.gui.NavigationConsoleScreen.class)
 public abstract class NavigationConsoleTelemetryOverlayMixin {
@@ -36,15 +37,13 @@ public abstract class NavigationConsoleTelemetryOverlayMixin {
     @Shadow @Final private WaypointMapProvider routeWaypoints;
     @Shadow private FlightControllerBlockEntity controller;
 
-    @Shadow protected Font font;
-    @Shadow protected Minecraft minecraft;
-
-    private static final int CYAN = 0xFF55AAFF, BRIGHT = 0xFF66D9FF, GREEN = 0xFF55FF55;
+    private static final int CYAN = 0xFF55AAFF, GREEN = 0xFF55FF55;
     private static final int RED = 0xFFFF5555, TEXT = 0xFFE6EEF2, MUTED = 0xFF9DAEB5, YELLOW = 0xFFFFCC55;
 
     @Inject(method = "renderRoute", at = @At("HEAD"), cancellable = true)
     private void flightComputer$renderLiveRoute(GuiGraphics g, int l, int top, CallbackInfo ci) {
         ci.cancel();
+        Font font = Minecraft.getInstance().font;
         g.drawString(font, "ROUTE / FLIGHT PLAN", l, top + 18, TEXT);
 
         FlightComputerNetwork.TelemetryPayload flight = FlightComputerTelemetryClient.get(controller == null ? null : controller.getControllerId());
@@ -90,6 +89,7 @@ public abstract class NavigationConsoleTelemetryOverlayMixin {
     @Inject(method = "renderDiagnostics", at = @At("HEAD"), cancellable = true)
     private void flightComputer$renderExpandedDiagnostics(GuiGraphics g, int l, int top, CallbackInfo ci) {
         ci.cancel();
+        Font font = Minecraft.getInstance().font;
         g.drawString(font, "DIAGNOSTICS", l, top + 18, TEXT);
 
         FlightMapDiagnostics map = mapPipeline.diagnostics();
