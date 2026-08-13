@@ -1,6 +1,8 @@
 {
   "ambient_ship": {
-    "sounds": ["flightcomputer:ambient_drone_quiet"],
+    "sounds": [
+      {"name": "flightcomputer:ambient_ship", "stream": true, "attenuation_distance": 32}
+    ],
     "replace": true
   },
   "ambient_drone_quiet": {
