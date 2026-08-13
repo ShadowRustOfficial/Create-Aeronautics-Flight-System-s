@@ -21,11 +21,12 @@ public final class FlightComputerSoundClient {
     private static OneShotLoop activeTakeoff;
     private static UUID activeController;
     private static int activeTicks;
+    private static boolean takeoffStarted;
     private static final double MAX_AMBIENT_SOURCE_DISTANCE = 32.0D;
     private static final int TAKEOFF_HANDOFF_TICKS = 440;
     private static final int TAKEOFF_CROSSFADE_TICKS = 20;
     private static final float FLIGHT_LOOP_VOLUME = 0.32F;
-    private static final float GHOST_AMBIENT_VOLUME = 0.11F;
+    private static final float GHOST_AMBIENT_VOLUME = 0.075F;
     private static final int SABLE_REFRESH_INTERVAL_TICKS = 5;
     private static int sableRefreshCooldown;
 
@@ -64,16 +65,20 @@ public final class FlightComputerSoundClient {
             stopAmbient();
             activeController = id;
             activeTicks = 0;
+            takeoffStarted = false;
             sableRefreshCooldown = 0;
         }
 
         activeTicks++;
         SableAcousticCache.registerSource(new net.minecraft.world.phys.Vec3(best.x(), best.y(), best.z()));
 
-        if (activeTakeoff == null || activeTakeoff.isStopped()) {
+        // Start the supplied integrated takeoff sound once per active controller. It must
+        // never restart simply because a non-looping instance naturally reaches its end.
+        if (!takeoffStarted) {
+            takeoffStarted = true;
             activeTakeoff = new OneShotLoop(ModSounds.TAKEOFF_INTEGRATED.get(), best, FLIGHT_LOOP_VOLUME);
             mc.getSoundManager().play(activeTakeoff);
-        } else {
+        } else if (activeTakeoff != null && !activeTakeoff.isStopped()) {
             activeTakeoff.setTelemetry(best);
         }
 
@@ -131,6 +136,7 @@ public final class FlightComputerSoundClient {
         activeGhostAmbient = null;
         activeController = null;
         activeTicks = 0;
+        takeoffStarted = false;
     }
 
     private static abstract class PositionalLoop extends AbstractTickableSoundInstance {
