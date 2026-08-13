@@ -23,6 +23,16 @@ When Sound Physics Remastered is installed, the same sound source is eligible fo
 
 Supported Doppler behaviour is likewise left to Sound Physics: Aeronautics. Flight Computer only keeps the source moving with the authoritative Sable/world position.
 
+## External-only flyby rule
+
+Aircraft flybys are intended to be exterior-only effects. Before a flyby sound is created, the compatibility layer can compare the listener's Sable sublevel with the Sable sublevel containing the flyby source position.
+
+- Player outside the source sublevel: flyby is eligible.
+- Player inside the same source sublevel: flyby is suppressed completely.
+- Sable unavailable/API lookup unavailable: the compatibility layer fails open and treats the listener as external rather than suppressing an external effect accidentally.
+
+The check uses Sable's runtime `HELPER.getContaining(Entity)` and `HELPER.getContaining(Level, Position)` APIs and compares the returned sublevel `getUniqueId()` values. It is reflection-only, so the Flight Computer project does not acquire a hard Sable compile dependency.
+
 ## State safety
 
 Route telemetry is treated as authoritative for whether Stabiliser ambience should be active. Client-side Route state expires after two seconds without an update so a vanished or unloaded controller cannot leave a stale ambient sound running indefinitely.
