@@ -1,6 +1,7 @@
 package com.flightcomputer.client;
 
 import com.flightcomputer.block.FlightControllerBlockEntity;
+import com.flightcomputer.integration.SoundPhysicsCompat;
 import com.flightcomputer.network.FlightComputerNetwork;
 import com.flightcomputer.registry.ModSounds;
 import net.minecraft.client.Minecraft;
@@ -17,11 +18,19 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/** Client-side ship-wide stabiliser ambience and per-controller mute state. */
+/**
+ * Client-side ship-wide stabiliser ambience and per-controller mute state.
+ *
+ * The sound is intentionally a normal, positional BLOCKS source rather than a
+ * player-relative UI sound. This lets vanilla provide the fallback attenuation
+ * and allows Sound Physics Remastered / Sound Physics: Aeronautics to perform
+ * occlusion, absorption, reverberation and supported Doppler processing.
+ */
 public final class FlightComputerSoundClient {
     private static final Map<UUID, Boolean> MUTED = new HashMap<>();
     private static AmbientLoop activeLoop;
     private static UUID activeController;
+    private static String lastLoggedMode = "";
 
     private FlightComputerSoundClient() { }
 
@@ -30,6 +39,15 @@ public final class FlightComputerSoundClient {
         if (minecraft == null || minecraft.level == null || minecraft.player == null) {
             stopAmbient();
             return;
+        }
+
+        if (SoundPhysicsCompat.isLoaded()) {
+            String mode = SoundPhysicsCompat.mode();
+            if (!mode.equals(lastLoggedMode)) {
+                lastLoggedMode = mode;
+            }
+        } else {
+            lastLoggedMode = "VANILLA_POSITIONAL";
         }
 
         LocalPlayer player = minecraft.player;
@@ -59,8 +77,10 @@ public final class FlightComputerSoundClient {
         if (activeLoop == null || activeLoop.isStopped() || !id.equals(activeController)) {
             stopAmbient();
             activeController = id;
-            activeLoop = new AmbientLoop(player, ModSounds.AMBIENT_SHIP.get());
+            activeLoop = new AmbientLoop(ModSounds.AMBIENT_SHIP.get(), best);
             minecraft.getSoundManager().play(activeLoop);
+        } else {
+            activeLoop.setTelemetry(best);
         }
     }
 
@@ -83,32 +103,40 @@ public final class FlightComputerSoundClient {
     }
 
     private static final class AmbientLoop extends AbstractTickableSoundInstance {
-        private final LocalPlayer player;
+        private FlightComputerNetwork.TelemetryPayload telemetry;
 
-        private AmbientLoop(LocalPlayer player, SoundEvent sound) {
-            super(sound, SoundSource.AMBIENT, RandomSource.create());
-            this.player = player;
+        private AmbientLoop(SoundEvent sound, FlightComputerNetwork.TelemetryPayload telemetry) {
+            super(sound, SoundSource.BLOCKS, RandomSource.create());
+            this.telemetry = telemetry;
             this.looping = true;
             this.delay = 0;
             this.volume = 0.35F;
             this.pitch = 1.0F;
-            this.attenuation = SoundInstance.Attenuation.NONE;
-            this.relative = true;
+            this.attenuation = SoundInstance.Attenuation.LINEAR;
+            this.relative = false;
             updatePosition();
         }
 
         @Override public void tick() {
-            if (player.isRemoved()) {
+            if (Minecraft.getInstance().player == null || Minecraft.getInstance().player.isRemoved()) {
                 stop();
                 return;
             }
             updatePosition();
         }
 
+        private void setTelemetry(FlightComputerNetwork.TelemetryPayload telemetry) {
+            if (telemetry != null) this.telemetry = telemetry;
+        }
+
         private void updatePosition() {
-            this.x = player.getX();
-            this.y = player.getY();
-            this.z = player.getZ();
+            if (telemetry == null) {
+                stop();
+                return;
+            }
+            this.x = telemetry.x();
+            this.y = telemetry.y();
+            this.z = telemetry.z();
         }
 
         private void stopNow() { stop(); }
