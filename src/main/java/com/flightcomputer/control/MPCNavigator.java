@@ -46,6 +46,14 @@ public final class MPCNavigator {
         return Math.atan2(targetX - state.x, targetZ - state.z);
     }
 
+    /**
+     * Returns the vessel yaw that makes the Flight Computer's BACK point along the selected
+     * world-space travel bearing. Translation is deliberately kept independent of this heading.
+     */
+    private static double desiredVesselYawForBearing(VehicleState state, double bearing) {
+        return normalizeRadians(bearing - state.bodyBackYawOffset);
+    }
+
     public StabilizationSetpoint plan(VehicleState state, double maxSpeed, double maxDeceleration) {
         StabilizationSetpoint sp = StabilizationSetpoint.hover();
         if (!hasTarget || state == null) return sp;
@@ -58,6 +66,8 @@ public final class MPCNavigator {
             arrivalLocked = true;
             pathBlocked = false;
             routePoints = List.of(new Vec3(state.x,state.y,state.z), new Vec3(targetX,targetY,targetZ));
+            // At the exact destination there is no meaningful travel bearing. Hold the current
+            // vessel orientation rather than injecting a new yaw impulse while position-locking.
             sp.desiredYaw=state.yaw;
             sp.yawIsRateNotHeading=false;
             double sinYaw=Math.sin(state.yaw), cosYaw=Math.cos(state.yaw);
@@ -87,7 +97,8 @@ public final class MPCNavigator {
         double desiredSpeed=Math.min(Math.max(0.0,maxSpeed),stoppingSpeed);
         if(distanceForSpeed>6.0) desiredSpeed=Math.max(desiredSpeed,Math.min(maxSpeed,6.0));
 
-        double headingOffset=Math.toDegrees(normalizeRadians(bearing-targetBearing(state)));
+        double desiredVesselYaw=desiredVesselYawForBearing(state,bearing);
+        double headingOffset=Math.toDegrees(normalizeRadians(desiredVesselYaw-state.yaw));
         lastChosenHeadingOffsetDeg=headingOffset;
 
         double horizontalSpeed=segFlat<1.0e-6?0.0:Math.min(desiredSpeed,Math.max(0.0,segFlat*1.5));
@@ -100,7 +111,12 @@ public final class MPCNavigator {
         }
 
         sp.yawIsRateNotHeading=false;
-        sp.desiredYaw=bearing;
+        sp.desiredYaw=desiredVesselYaw;
+
+        // Keep the desired translation in WORLD space. This is intentionally independent of
+        // heading so a vessel can begin translating toward the target while it turns to present
+        // the Flight Computer's back to the route. The subsequent body-frame conversion preserves
+        // the sign of the requested north/south/east/west velocity.
         double worldVx=Math.sin(bearing)*horizontalSpeed;
         double worldVz=Math.cos(bearing)*horizontalSpeed;
         double cosYaw=Math.cos(-state.yaw), sinYaw=Math.sin(-state.yaw);
