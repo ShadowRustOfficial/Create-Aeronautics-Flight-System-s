@@ -10,31 +10,43 @@ displayName="${mod_name}"
 [[mixins]]
 config="flightcomputer.mixins.json"
 
-# Optional Sound Physics Remastered integration. The mixin config is soft-gated and
-# does not add a dependency, so Flight Computer remains functional without SPR.
 [[mixins]]
 config="flightcomputer.soundphysics.mixins.json"
 
 [[dependencies.'${mod_id}']]
-    modId="neoforge"
-    type="required"
-    versionRange="${loader_version_range}"
-    ordering="NONE"
-    side="BOTH"
+modId="neoforge"
+type="required"
+versionRange="${loader_version_range}"
+ordering="NONE"
+side="BOTH"
 
 [[dependencies.'${mod_id}']]
-    modId="minecraft"
-    type="required"
-    versionRange="${minecraft_version_range}"
-    ordering="NONE"
-    side="BOTH"
+modId="minecraft"
+type="required"
+versionRange="${minecraft_version_range}"
+ordering="NONE"
+side="BOTH"
 
 [[dependencies.'${mod_id}']]
-    modId="geckolib"
-    type="required"
-    versionRange="[4.8.4,)"
-    ordering="AFTER"
-    side="BOTH"
+modId="geckolib"
+type="required"
+versionRange="[4.8.4,)"
+ordering="AFTER"
+side="BOTH"
+
+[[dependencies.'${mod_id}']]
+modId="sable"
+type="required"
+versionRange="[2.0.0,)"
+ordering="AFTER"
+side="BOTH"
+
+[[dependencies.'${mod_id}']]
+modId="sound_physics_remastered"
+type="required"
+versionRange="[1.4.11,)"
+ordering="AFTER"
+side="BOTH"
 
 # The map engine is Flight Computer-owned. JourneyMap's architecture is used
 # as a design reference only; JourneyMap itself is never loaded or required.
