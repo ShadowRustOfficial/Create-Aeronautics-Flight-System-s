@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "com.flightcomputer.integration.soundphysics.mixin",
+  "plugin": "com.flightcomputer.integration.soundphysics.SoundPhysicsMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "SoundPhysicsOcclusionMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
