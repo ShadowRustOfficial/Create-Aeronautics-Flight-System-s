@@ -31,9 +31,11 @@ public final class FlightComputerClientEvents {
         var be = minecraft.level.getBlockEntity(console.controllerPos());
         if (!(be instanceof FlightControllerBlockEntity controller)) return;
 
+        int screenWidth = minecraft.getWindow().getGuiScaledWidth();
+        int screenHeight = minecraft.getWindow().getGuiScaledHeight();
         int width = 150;
-        int x = Math.max(4, console.width - width - 8);
-        int y = Math.max(4, console.height - 28);
+        int x = Math.max(4, screenWidth - width - 8);
+        int y = Math.max(4, screenHeight - 28);
         Button mute = Button.builder(Component.literal(label(controller)), button -> {
             boolean muted = FlightComputerSoundClient.toggleMuted(controller.getControllerId());
             button.setMessage(Component.literal(muted ? "STABILISER AMBIENT: MUTED" : "STABILISER AMBIENT: ON"));
