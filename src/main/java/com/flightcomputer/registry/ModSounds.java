@@ -12,6 +12,7 @@ public final class ModSounds {
             DeferredRegister.create(BuiltInRegistries.SOUND_EVENT, FlightComputer.MOD_ID);
 
     public static final DeferredHolder<SoundEvent, SoundEvent> AMBIENT_SHIP = register("ambient_ship");
+    public static final DeferredHolder<SoundEvent, SoundEvent> AMBIENT_DRONE = register("ambient_drone_quiet");
     public static final DeferredHolder<SoundEvent, SoundEvent> ENGINE_HEAT_CRITICAL = register("engine_heat_critical");
     public static final DeferredHolder<SoundEvent, SoundEvent> WARNING_ENGINE_OVERHEAT = register("warning_engine_overheat");
     public static final DeferredHolder<SoundEvent, SoundEvent> FIRE_SYSTEMS_ACTIVE = register("fire_systems_active");
