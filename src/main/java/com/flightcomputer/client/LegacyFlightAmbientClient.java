@@ -1,6 +1,8 @@
 package com.flightcomputer.client;
 
+import com.flightcomputer.integration.soundphysics.SableAcousticCache;
 import com.flightcomputer.network.FlightComputerNetwork;
+import com.flightcomputer.network.FlightRouteTelemetryNetwork;
 import com.flightcomputer.registry.ModSounds;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.sounds.AbstractTickableSoundInstance;
@@ -16,16 +18,19 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
 import java.util.UUID;
 
 /**
- * Legacy ship ambient layer. It deliberately runs independently of the quiet stabiliser drone
- * so the supplied legacy ambience can be heard whenever stabiliser OR autopilot is active.
+ * Legacy ship ambient layer. It runs independently of the quiet stabiliser drone so the supplied
+ * legacy ambience is audible whenever stabiliser OR autopilot is active.
  */
 @EventBusSubscriber(modid = com.flightcomputer.FlightComputer.MOD_ID, value = Dist.CLIENT)
 public final class LegacyFlightAmbientClient {
     private static final double MAX_SOURCE_DISTANCE = 32.0D;
     private static final float MAX_VOLUME = 0.22F;
     private static final float FADE_STEP = 0.08F;
+    private static final int SABLE_REFRESH_INTERVAL_TICKS = 5;
+
     private static LegacyAmbientLoop activeLoop;
     private static UUID activeController;
+    private static int sableRefreshCooldown;
 
     private LegacyFlightAmbientClient() { }
 
@@ -34,13 +39,16 @@ public final class LegacyFlightAmbientClient {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.level == null || minecraft.player == null) {
             stop();
+            sableRefreshCooldown = 0;
+            SableAcousticCache.tick(null);
             return;
         }
 
         FlightComputerNetwork.TelemetryPayload best = null;
         double bestDistance = Double.MAX_VALUE;
         for (FlightComputerNetwork.TelemetryPayload payload : FlightComputerTelemetryClient.snapshots()) {
-            if (!FlightRouteTelemetryClient.isStabiliserOrAutopilotActive(payload.controllerId())) continue;
+            FlightRouteTelemetryNetwork.RouteStatePayload state = FlightRouteTelemetryClient.get(payload.controllerId());
+            if (!isStabiliserOrAutopilot(state)) continue;
             double distance = minecraft.player.distanceToSqr(payload.x(), payload.y(), payload.z());
             if (distance <= MAX_SOURCE_DISTANCE * MAX_SOURCE_DISTANCE && distance < bestDistance) {
                 bestDistance = distance;
@@ -50,6 +58,8 @@ public final class LegacyFlightAmbientClient {
 
         if (best == null) {
             stop();
+            sableRefreshCooldown = 0;
+            SableAcousticCache.tick(null);
             return;
         }
 
@@ -58,9 +68,23 @@ public final class LegacyFlightAmbientClient {
             activeController = best.controllerId();
             activeLoop = new LegacyAmbientLoop(ModSounds.AMBIENT_SHIP.get(), best);
             minecraft.getSoundManager().play(activeLoop);
+            sableRefreshCooldown = 0;
         } else {
             activeLoop.setTelemetry(best);
         }
+
+        SableAcousticCache.registerSource(new net.minecraft.world.phys.Vec3(best.x(), best.y(), best.z()));
+        if (sableRefreshCooldown <= 0) {
+            SableAcousticCache.tick(minecraft);
+            sableRefreshCooldown = SABLE_REFRESH_INTERVAL_TICKS;
+        } else {
+            sableRefreshCooldown--;
+        }
+    }
+
+    private static boolean isStabiliserOrAutopilot(FlightRouteTelemetryNetwork.RouteStatePayload state) {
+        return state != null && (state.stabiliser()
+                || state.mode() == com.flightcomputer.control.FlightMode.AUTOPILOT.ordinal());
     }
 
     private static void stop() {
@@ -92,7 +116,8 @@ public final class LegacyFlightAmbientClient {
                 stop();
                 return;
             }
-            if (!FlightRouteTelemetryClient.isStabiliserOrAutopilotActive(activeController)) {
+            FlightRouteTelemetryNetwork.RouteStatePayload state = FlightRouteTelemetryClient.get(activeController);
+            if (!isStabiliserOrAutopilot(state)) {
                 fadingOut = true;
             }
             updatePosition();
