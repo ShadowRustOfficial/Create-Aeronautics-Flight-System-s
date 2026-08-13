@@ -5,13 +5,13 @@
   },
   "ambient_drone_quiet": {
     "sounds": [
-      {"name": "flightcomputer:ambient_drone_quiet", "stream": true, "attenuation_distance": 96}
+      {"name": "flightcomputer:ambient_drone_quiet", "stream": true, "attenuation_distance": 48}
     ],
     "replace": true
   },
   "ambient_flight": {
     "sounds": [
-      {"name": "flightcomputer:ambient_flight", "stream": true, "attenuation_distance": 128}
+      {"name": "flightcomputer:ambient_flight", "stream": true, "attenuation_distance": 56}
     ],
     "replace": true
   },
