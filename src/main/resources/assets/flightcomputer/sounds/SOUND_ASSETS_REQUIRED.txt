@@ -1,0 +1,12 @@
+Canonical Flight Computer sound assets:
+
+ambient_ship.ogg          <- Ambient Ship.mp3 (supplied and converted)
+engine_heat_critical.ogg  <- Engine Heat Critical.mp3 (supplied and converted)
+warning_engine_overheat.ogg <- Warning Engine Overheat.mp3 (supplied and converted)
+fire_systems_active.ogg   <- Fire Systems active.mp3 (supplied and converted)
+
+Referenced by the code but not present in the supplied attachments:
+emergency_shutdown.ogg
+fire_neutralised.ogg
+
+Do not rename the supplied OGG files. The resource IDs in Java and sounds.json are deliberately matched to these filenames.
