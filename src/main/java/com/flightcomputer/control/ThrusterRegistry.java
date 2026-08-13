@@ -52,23 +52,16 @@ public final class ThrusterRegistry {
             BlockEntity blockEntity = level.getBlockEntity(scanPos);
             if (blockEntity == null) continue;
             double[] offset = mountOffset(controllerPos, scanPos);
-            if (explicitLinks) {
-                for (VectorDirection direction : VectorDirection.values()) {
-                    if (!assignments.containsKey(direction)) continue;
-                    PropulsionSource source = ReflectivePropulsionSource.tryCreate(blockEntity, direction, offset);
-                    if (!(source instanceof ReflectivePropulsionSource reflective)) continue;
-                    if (reflective.getPhysicalDirection() != direction) continue;
-                    addIfUnique(bank.get(direction), new ThrusterLink(source, direction, mode));
-                }
-            } else {
-                // No links configured: compatible propulsion blocks inside the controller's
-                // discovery envelope become the automatic actuator banks for this sublevel.
-                for (VectorDirection direction : VectorDirection.values()) {
-                    PropulsionSource source = ReflectivePropulsionSource.tryCreate(blockEntity, direction, offset);
-                    if (!(source instanceof ReflectivePropulsionSource reflective)) continue;
-                    if (reflective.getPhysicalDirection() != direction) continue;
-                    addIfUnique(bank.get(direction), new ThrusterLink(source, direction, mode));
-                }
+
+            // Explicit links remain authoritative for their selected actuators, but they no
+            // longer suppress discovery of compatible thrusters on the other physical vectors.
+            // This is important for multi-axis autopilot: linking one E/W thruster must not make
+            // the N/S and U/D actuator banks disappear from the runtime registry.
+            for (VectorDirection direction : VectorDirection.values()) {
+                PropulsionSource source = ReflectivePropulsionSource.tryCreate(blockEntity, direction, offset);
+                if (!(source instanceof ReflectivePropulsionSource reflective)) continue;
+                if (reflective.getPhysicalDirection() != direction) continue;
+                addIfUnique(bank.get(direction), new ThrusterLink(source, direction, mode));
             }
         }
     }
