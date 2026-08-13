@@ -8,7 +8,8 @@
     "FlightComputerNetworkSableDistanceMixin",
     "FlightControlAutotuneMixin",
     "FlightControllerPidProfileMixin",
-    "FlightRouteTelemetryMixin"
+    "FlightRouteTelemetryMixin",
+    "FlightControllerRouteActionMixin"
   ],
   "client": [
     "client.FlightControllerGoggleMixin",
