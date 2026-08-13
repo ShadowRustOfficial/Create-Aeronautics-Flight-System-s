@@ -7,13 +7,13 @@ Flight Computer does not hard-link against Sound Physics Remastered or Sound Phy
 The Flight Computer audio layer supplies ordinary positional Minecraft sounds:
 
 - `engine_heat_critical`
-- `engine_overheat`
+- `warning_engine_overheat`
 - `fire_systems_active`
 - `fire_neutralised`
 - `emergency_shutdown`
-- `stabiliser_ambient`
+- `ambient_ship`
 
-The stabiliser ambience is deliberately emitted as a `SoundSource.BLOCKS` sound with normal linear attenuation and `relative=false`. This is the important integration boundary: Sound Physics can then intercept it as a positional source instead of treating it as player-relative UI audio.
+The stabiliser ambience is deliberately emitted as a `SoundSource.BLOCKS` sound with normal linear attenuation and `relative=false`. The source position follows authoritative flight telemetry, while authoritative Route telemetry supplies the Stabiliser state. This is the important integration boundary: Sound Physics can process it as a moving positional source instead of treating it as player-relative UI audio.
 
 ## Sound Physics behaviour
 
@@ -22,6 +22,10 @@ When `sound_physics_remastered` is not installed, Minecraft's normal positional 
 When Sound Physics Remastered is installed, the same sound source is eligible for its normal acoustic processing. Sound Physics: Aeronautics keeps the same mod id and adds Sable sublevel acoustic support, so the moving/rotated geometry of Aeronautics vehicles can participate in occlusion and related calculations without Flight Computer duplicating an acoustic engine.
 
 Supported Doppler behaviour is likewise left to Sound Physics: Aeronautics. Flight Computer only keeps the source moving with the authoritative Sable/world position.
+
+## State safety
+
+Route telemetry is treated as authoritative for whether Stabiliser ambience should be active. Client-side Route state expires after two seconds without an update so a vanished or unloaded controller cannot leave a stale ambient sound running indefinitely.
 
 ## Safety
 
@@ -40,4 +44,4 @@ The canonical resource names are:
 - `assets/flightcomputer/sounds/fire_neutralised.ogg`
 - `assets/flightcomputer/sounds/emergency_shutdown.ogg`
 
-The supplied OGG pack contains the matching converted warning/ambient assets. The two newest assets, `fire_neutralised.ogg` and `emergency_shutdown.ogg`, are part of the current user-provided sound set.
+The user-provided converted OGG pack contains all six matching assets. The binary OGGs are distributed separately from this source-only GitHub compatibility branch because the available repository write interface is text-file based.
