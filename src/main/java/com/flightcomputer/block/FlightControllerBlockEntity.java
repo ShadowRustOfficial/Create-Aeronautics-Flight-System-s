@@ -15,6 +15,7 @@ import com.flightcomputer.control.FlightMode;
 import com.flightcomputer.control.VectorDirection;
 import com.flightcomputer.item.CoolingUpgradeItem;
 import com.flightcomputer.registry.ModBlockEntities;
+import com.flightcomputer.registry.ModSounds;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -22,6 +23,7 @@ import net.minecraft.nbt.DoubleTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -131,7 +133,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         FlightOperationsActionResult result = flightOperations.apply(action);
         if (result.accepted()) {
             if (action == FlightOperationsAction.DOCKING_OVERRIDE) {
-                // The override is an explicit safety release: clear the lower-level navigation target immediately.
                 flightOperations.clearTrackedContact();
                 flightOperations.setEmergencyReturn(false);
                 flightOperations.setLandingAssist(false);
@@ -181,9 +182,17 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
             return FlightControllerActionResult.rejected(controllerState, action,
                     isThermalLockout() ? "THERMAL_SHUTDOWN" : "NO_POWER");
         }
+
         if (action == FlightControllerAction.TOGGLE_TERRAIN) terrainEnabled = !terrainEnabled;
         else controllerState = controllerState.apply(action);
-        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) energyStorage.extractEnergy(energyStorage.getEnergyStored(), false);
+
+        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) {
+            energyStorage.extractEnergy(energyStorage.getEnergyStored(), false);
+            if (level != null && !level.isClientSide) {
+                level.playSound(null, worldPosition, ModSounds.EMERGENCY_SHUTDOWN.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+            }
+        }
+
         lastAction = action;
         switch (action) {
             case CYCLE_MODE -> modePulseId++;
