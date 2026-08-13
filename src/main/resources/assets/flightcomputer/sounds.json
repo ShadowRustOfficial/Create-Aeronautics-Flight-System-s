@@ -5,6 +5,12 @@
     ],
     "replace": true
   },
+  "ambient_drone_quiet": {
+    "sounds": [
+      {"name": "flightcomputer:ambient_drone_quiet", "stream": true, "attenuation_distance": 96}
+    ],
+    "replace": true
+  },
   "engine_heat_critical": {
     "sounds": ["flightcomputer:engine_heat_critical"],
     "replace": true
