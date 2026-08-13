@@ -5,7 +5,9 @@
   "mixins": [
     "FlightControllerOperationsMixin",
     "FlightOperationsRuntimeMixin",
-    "FlightComputerNetworkSableDistanceMixin"
+    "FlightComputerNetworkSableDistanceMixin",
+    "FlightControlAutotuneMixin",
+    "FlightControllerPidProfileMixin"
   ],
   "client": [
     "client.FlightControllerGoggleMixin",
