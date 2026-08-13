@@ -15,15 +15,12 @@ import org.joml.Vector3d;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
-/** Bridges the model-based tuner into the existing server runtime without replacing MPC/PID control. */
+/** Runtime bridge for per-aircraft PID profiles. Calibration is never started implicitly. */
 public final class AutoTuneRuntimeBridge {
-    private static final Map<UUID, Entry> ENTRIES = new ConcurrentHashMap<>();
     private AutoTuneRuntimeBridge() { }
 
+    /** Apply a persisted profile only when its fingerprint still matches the live vehicle. */
     public static void tick(FlightControllerBlockEntity controller) {
         if (controller == null || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
         try {
@@ -31,38 +28,29 @@ public final class AutoTuneRuntimeBridge {
             VehicleState state = (VehicleState) field(runtime, "snapshot");
             FlightComputer computer = (FlightComputer) field(runtime, "computer");
             if (state == null || computer == null) return;
-            ThrusterRegistry registry = computer.getRegistry();
-            ShipDynamicsProvider provider = new RuntimeDynamicsProvider(state, registry);
+            RuntimeDynamicsProvider provider = new RuntimeDynamicsProvider(state, computer.getRegistry());
             long fingerprint = new PIDAutoTuner(controller.getControllerId(), provider).fingerprint();
-
-            Entry entry = ENTRIES.computeIfAbsent(controller.getControllerId(), id -> new Entry());
-            if (entry.appliedFingerprint == fingerprint) return;
-
             TuningResult saved = PIDAutoTuneStore.get(controller.getControllerId());
             if (saved != null && saved.fingerprint() == fingerprint) {
                 computer.getStabilizeStabilizer().applyProfile(saved);
-                entry.appliedFingerprint = fingerprint;
-                return;
-            }
-
-            if (entry.tuner == null || entry.tuner.fingerprint() != fingerprint || entry.tuner.isComplete()) {
-                entry.tuner = new PIDAutoTuner(controller.getControllerId(), provider);
-                entry.tuner.begin();
-            }
-            entry.tuner.tick();
-            if (entry.tuner.state() == TuningState.COMPLETE && entry.tuner.result() != null) {
-                computer.getStabilizeStabilizer().applyProfile(entry.tuner.result());
-                entry.appliedFingerprint = entry.tuner.result().fingerprint();
-                controller.setChanged();
             }
         } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // Auto-tune is an enhancement. A failure must never take the Flight Computer control loop down.
+            // Profiles are optional. Never allow tuning/telemetry support to break flight control.
         }
     }
 
-    public static synchronized void remove(FlightControllerBlockEntity controller) {
-        if (controller != null) ENTRIES.remove(controller.getControllerId());
+    public static void apply(FlightControllerBlockEntity controller, TuningResult result) {
+        if (controller == null || result == null) return;
+        try {
+            FlightControlRuntimeManager.Runtime runtime = FlightControlRuntimeManager.runtime(controller);
+            FlightComputer computer = (FlightComputer) field(runtime, "computer");
+            if (computer != null) computer.getStabilizeStabilizer().applyProfile(result);
+            PIDAutoTuneStore.put(controller.getControllerId(), result);
+            controller.setChanged();
+        } catch (ReflectiveOperationException | RuntimeException ignored) { }
     }
+
+    public static void remove(FlightControllerBlockEntity controller) { }
 
     private static Object field(Object target, String name) throws ReflectiveOperationException {
         Field f = target.getClass().getDeclaredField(name);
@@ -70,21 +58,18 @@ public final class AutoTuneRuntimeBridge {
         return f.get(target);
     }
 
-    private static final class Entry {
-        private PIDAutoTuner tuner;
-        private long appliedFingerprint = Long.MIN_VALUE;
-    }
-
-    private static final class RuntimeDynamicsProvider implements ShipDynamicsProvider {
+    /** Adapter over the existing server snapshot and real linked thrusters. */
+    public static final class RuntimeDynamicsProvider implements ShipDynamicsProvider {
         private final VehicleState state;
         private final ThrusterRegistry registry;
         private final List<Thruster> thrusters;
 
-        private RuntimeDynamicsProvider(VehicleState state, ThrusterRegistry registry) {
+        public RuntimeDynamicsProvider(VehicleState state, ThrusterRegistry registry) {
             this.state = state;
             this.registry = registry;
             this.thrusters = collect(registry);
         }
+
         @Override public double getMass() { return Math.max(1.0e-3, state.mass); }
         @Override public Vec3 getCenterOfMass() { return Vec3.ZERO; }
         @Override public Vec3 getMaxLinearAcceleration() {
@@ -109,6 +94,7 @@ public final class AutoTuneRuntimeBridge {
         @Override public Vec3 getVelocity() { return new Vec3(state.vx, state.vy, state.vz); }
         @Override public Vec3 getAngularVelocity() { return new Vec3(state.pitchRate, state.yawRate, state.rollRate); }
         @Override public Vec3 getOrientationError() { return Vec3.ZERO; }
+
         private static List<Thruster> collect(ThrusterRegistry registry) {
             List<Thruster> result = new ArrayList<>();
             for (VectorDirection direction : VectorDirection.values()) {
