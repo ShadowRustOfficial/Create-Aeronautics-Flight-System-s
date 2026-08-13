@@ -2,7 +2,7 @@ package com.flightcomputer.control;
 
 /** Defensive PID with derivative filtering, output/integral clamps and anti-windup. */
 public final class PIDController {
-    private final double kp, ki, kd;
+    private double kp, ki, kd;
     private double outputMin = Double.NEGATIVE_INFINITY, outputMax = Double.POSITIVE_INFINITY;
     private double integralMin = Double.NEGATIVE_INFINITY, integralMax = Double.POSITIVE_INFINITY;
     private double derivativeFilterAlpha = 0.2;
@@ -14,10 +14,20 @@ public final class PIDController {
     public PIDController withIntegralClamp(double min, double max) { integralMin = min; integralMax = max; return this; }
     public PIDController withDerivativeFilter(double alpha) { derivativeFilterAlpha = clamp(alpha, 0, 1); return this; }
 
-    /**
-     * Updates the controller using the measured process variable. Derivative is deliberately
-     * taken from the measurement so setpoint changes do not create derivative kick.
-     */
+    public void setGains(double kp, double ki, double kd) {
+        if (!Double.isFinite(kp) || !Double.isFinite(ki) || !Double.isFinite(kd)) return;
+        this.kp = Math.max(0.0D, kp);
+        this.ki = Math.max(0.0D, ki);
+        this.kd = Math.max(0.0D, kd);
+        reset();
+    }
+
+    public double kp() { return kp; }
+    public double ki() { return ki; }
+    public double kd() { return kd; }
+
+    /** Updates the controller using the measured process variable. Derivative is deliberately
+     * taken from the measurement so setpoint changes do not create derivative kick. */
     public double update(double error, double measurement, double dt) {
         double safeDt = clamp(dt, 1.0 / 200.0, 0.5);
         if (!initialized) { lastMeasurement = measurement; initialized = true; }
