@@ -7,8 +7,6 @@ import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import org.joml.Matrix4d;
-import org.joml.Vector3d;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -24,8 +22,8 @@ import java.util.UUID;
  * Main-thread Sable acoustic snapshot cache.
  *
  * It deliberately performs all Sable/level access during the client tick and exposes only
- * primitive acoustic results to the Sound Physics mixin. This avoids touching Minecraft's
- * client world or Sable plot data from Sound Physics' audio-processing thread.
+ * prepared acoustic results to the optional Sound Physics mixin. This avoids touching
+ * Minecraft's client world or Sable plot data from Sound Physics' processing path.
  */
 public final class SableAcousticCache {
     private static final int MAX_SOURCES = 12;
@@ -87,7 +85,8 @@ public final class SableAcousticCache {
         for (SourceRegistration registration : SOURCES.values()) {
             try {
                 double occlusion = computeOcclusion(minecraft, registration.position, listener);
-                entries.add(new Entry(registration.position, Math.min(MAX_EXTRA_OCCLUSION, Math.max(0.0D, occlusion))));
+                entries.add(new Entry(registration.position,
+                        Math.min(MAX_EXTRA_OCCLUSION, Math.max(0.0D, occlusion))));
             } catch (Throwable ignored) {
                 // Acoustic compatibility is optional. Never allow an audio query to affect gameplay.
             }
@@ -170,7 +169,9 @@ public final class SableAcousticCache {
             if (hit.getType() != HitResult.Type.BLOCK) break;
             BlockPos pos = hit.getBlockPos();
             if (pos.equals(last)) {
-                start = hit.getLocation().add(to.subtract(from).normalize().scale(0.01D));
+                Vec3 direction = to.subtract(start).normalize();
+                if (!finite(direction)) break;
+                start = hit.getLocation().add(direction.scale(0.01D));
                 continue;
             }
             last = pos;
@@ -190,7 +191,13 @@ public final class SableAcousticCache {
         synchronized (SableAcousticCache.class) {
             if (sableInit) return;
             try {
-                if (!net.neoforged.fml.ModList.get().isLoaded("sable")) return;
+                if (!net.neoforged.fml.ModList.get().isLoaded("sable")) {
+                    // Mark the probe complete. The mod list is fixed for this runtime, so
+                    // retrying every client tick would provide no benefit.
+                    sableInit = true;
+                    return;
+                }
+
                 ClassLoader loader = SableAcousticCache.class.getClassLoader();
                 Class<?> sable = Class.forName("dev.ryanhcode.sable.Sable", false, loader);
                 Field helperField = sable.getField("HELPER");
@@ -198,17 +205,26 @@ public final class SableAcousticCache {
                 Class<?> helper = sableHelper.getClass();
                 containingPosition = helper.getMethod("getContaining", net.minecraft.world.level.Level.class, net.minecraft.core.Position.class);
                 containingEntity = helper.getMethod("getContaining", net.minecraft.world.entity.Entity.class);
+
                 Class<?> subLevelClass = Class.forName("dev.ryanhcode.sable.sublevel.SubLevel", false, loader);
                 logicalPose = subLevelClass.getMethod("logicalPose");
                 getPlot = subLevelClass.getMethod("getPlot");
+
                 Class<?> levelPlotClass = Class.forName("dev.ryanhcode.sable.sublevel.plot.LevelPlot", false, loader);
                 Class<?> accessorClass = Class.forName("dev.ryanhcode.sable.sublevel.plot.EmbeddedPlotLevelAccessor", false, loader);
                 embeddedAccessorConstructor = accessorClass.getConstructor(levelPlotClass);
+
                 Class<?> poseClass = Class.forName("dev.ryanhcode.sable.companion.math.Pose3d", false, loader);
                 transformInverse = poseClass.getMethod("transformPositionInverse", Vec3.class);
-                sableInit = true;
             } catch (Throwable ignored) {
                 sableHelper = null;
+                containingPosition = null;
+                containingEntity = null;
+                logicalPose = null;
+                getPlot = null;
+                embeddedAccessorConstructor = null;
+                transformInverse = null;
+            } finally {
                 sableInit = true;
             }
         }
@@ -235,6 +251,7 @@ public final class SableAcousticCache {
     private static final class SourceRegistration {
         private Vec3 position;
         private long lastSeenTick;
+
         private SourceRegistration(Vec3 position, long lastSeenTick) {
             this.position = position;
             this.lastSeenTick = lastSeenTick;
@@ -242,6 +259,7 @@ public final class SableAcousticCache {
     }
 
     private record Entry(Vec3 source, double occlusion) { }
+
     private record Snapshot(List<Entry> entries, Vec3 listener) {
         private static final Snapshot EMPTY = new Snapshot(List.of(), Vec3.ZERO);
     }
