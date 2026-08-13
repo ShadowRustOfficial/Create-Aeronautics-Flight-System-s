@@ -1,1 +1,0 @@
-Sound Physics Remastered and Sable are required runtime integrations for this branch.
