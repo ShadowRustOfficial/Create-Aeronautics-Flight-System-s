@@ -5,8 +5,7 @@
   "plugin": "com.flightcomputer.integration.soundphysics.SoundPhysicsMixinPlugin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
-    "SoundPhysicsOcclusionMixin",
-    "SoundPhysicsSourceRegistrationMixin"
+    "SoundPhysicsOcclusionMixin"
   ],
   "injectors": {
     "defaultRequire": 0
