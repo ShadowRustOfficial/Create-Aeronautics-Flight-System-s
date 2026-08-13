@@ -37,7 +37,7 @@ public final class FlightRouteTelemetryNetwork {
                     buf.writeLong(p.controllerId.getLeastSignificantBits());
                     buf.writeBoolean(p.engaged);
                     buf.writeBoolean(p.stabiliser);
-                    buf.writeVarInt(p.mode);
+                    ByteBufCodecs.VAR_INT.encode(buf, p.mode);
                     buf.writeBoolean(p.altitudeHold);
                     buf.writeBoolean(p.headingHold);
                     buf.writeBoolean(p.positionHold);
@@ -52,7 +52,7 @@ public final class FlightRouteTelemetryNetwork {
                 },
                 buf -> new RouteStatePayload(
                         new UUID(buf.readLong(), buf.readLong()),
-                        buf.readBoolean(), buf.readBoolean(), buf.readVarInt(),
+                        buf.readBoolean(), buf.readBoolean(), ByteBufCodecs.VAR_INT.decode(buf),
                         buf.readBoolean(), buf.readBoolean(), buf.readBoolean(), buf.readBoolean(),
                         buf.readBoolean(), buf.readBoolean(), buf.readBoolean(),
                         ByteBufCodecs.STRING_UTF8.decode(buf),
