@@ -6,6 +6,8 @@ public final class VehicleState {
     public double vx, vy, vz;
     public double pitch, roll, yaw;
     public double pitchRate, rollRate, yawRate;
+    /** Yaw offset from the Sable vessel +Z axis to the Flight Computer's BACK direction. */
+    public double bodyBackYawOffset;
     public double mass = 1.0;
     public double inertiaPitch = 1.0, inertiaRoll = 1.0, inertiaYaw = 1.0;
     public long timestampNanos;
@@ -17,15 +19,25 @@ public final class VehicleState {
         s.x=x; s.y=y; s.z=z; s.vx=vx; s.vy=vy; s.vz=vz;
         s.pitch=pitch; s.roll=roll; s.yaw=yaw;
         s.pitchRate=pitchRate; s.rollRate=rollRate; s.yawRate=yawRate;
+        s.bodyBackYawOffset=bodyBackYawOffset;
         s.mass=mass; s.inertiaPitch=inertiaPitch; s.inertiaRoll=inertiaRoll; s.inertiaYaw=inertiaYaw;
         s.timestampNanos=timestampNanos; s.boundingRadius=boundingRadius; s.boundingHalfHeight=boundingHalfHeight;
         return s;
     }
 
+    /** World yaw of the Flight Computer's physical BACK direction. */
+    public double bodyBackYaw() {
+        double value = yaw + bodyBackYawOffset;
+        value %= Math.PI * 2.0D;
+        if (value > Math.PI) value -= Math.PI * 2.0D;
+        if (value < -Math.PI) value += Math.PI * 2.0D;
+        return value;
+    }
+
     /**
      * Converts world horizontal velocity into the vessel body frame used by the six-axis PID.
-     * The controller's yaw convention defines forward as (sin(yaw), 0, cos(yaw)) and right as
-     * (cos(yaw), 0, -sin(yaw)).
+     * The controller's yaw convention defines vessel +Z as longitudinal forward and +X as right.
+     * The Flight Computer's physical BACK direction is exposed separately through bodyBackYaw().
      */
     public double[] bodyFrameVelocity() {
         double sinY = Math.sin(yaw);
