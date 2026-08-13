@@ -1,13 +1,17 @@
 {
   "ambient_ship": {
-    "sounds": [
-      {"name": "flightcomputer:ambient_ship", "stream": true, "attenuation_distance": 128}
-    ],
+    "sounds": ["flightcomputer:ambient_drone_quiet"],
     "replace": true
   },
   "ambient_drone_quiet": {
     "sounds": [
       {"name": "flightcomputer:ambient_drone_quiet", "stream": true, "attenuation_distance": 96}
+    ],
+    "replace": true
+  },
+  "ambient_flight": {
+    "sounds": [
+      {"name": "flightcomputer:ambient_flight", "stream": true, "attenuation_distance": 128}
     ],
     "replace": true
   },
@@ -29,6 +33,14 @@
   },
   "emergency_shutdown": {
     "sounds": ["flightcomputer:emergency_shutdown"],
+    "replace": true
+  },
+  "engine_powering_down": {
+    "sounds": ["flightcomputer:engine_powering_down"],
+    "replace": true
+  },
+  "flyby_aircraft": {
+    "sounds": ["flightcomputer:flyby_aircraft"],
     "replace": true
   }
 }
