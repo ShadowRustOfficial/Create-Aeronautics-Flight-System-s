@@ -8,6 +8,8 @@ public final class MPCNavigator {
     private static final double[] HEADING_OFFSETS_DEG = {-90, -60, -40, -25, -12, 0, 12, 25, 40, 60, 90};
     private static final double[] VERTICAL_OFFSET_FRACTIONS = {-1.0, -0.5, 0.0, 0.5, 1.0};
     private static final double ARRIVAL_RADIUS = 1.5;
+    private static final double ARRIVAL_HOLD_P = 0.55;
+    private static final double ARRIVAL_MAX_SPEED = 1.25;
     private static final double CLEARANCE_MARGIN = 1.0;
     private static final double HYSTERESIS_BONUS = 6.0;
     private static final double HEADING_PENALTY_WEIGHT = 1.0;
@@ -17,6 +19,7 @@ public final class MPCNavigator {
     private final ObstacleSensor obstacleSensor;
     private double targetX, targetY, targetZ;
     private boolean hasTarget;
+    private boolean arrivalLocked;
     private double lastChosenHeadingOffsetDeg;
     private boolean pathBlocked;
 
@@ -24,9 +27,9 @@ public final class MPCNavigator {
     public MPCNavigator() { this(null); }
     public void setTarget(double x, double y, double z) {
         if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) return;
-        targetX=x; targetY=y; targetZ=z; hasTarget=true; lastChosenHeadingOffsetDeg=0; pathBlocked=false;
+        targetX=x; targetY=y; targetZ=z; hasTarget=true; arrivalLocked=false; lastChosenHeadingOffsetDeg=0; pathBlocked=false;
     }
-    public void clearTarget() { hasTarget=false; pathBlocked=false; }
+    public void clearTarget() { hasTarget=false; arrivalLocked=false; pathBlocked=false; }
     public boolean hasTarget() { return hasTarget; }
     public boolean isPathBlocked() { return pathBlocked; }
     public double targetX() { return targetX; }
@@ -38,7 +41,6 @@ public final class MPCNavigator {
         return Math.sqrt(dx*dx+dy*dy+dz*dz);
     }
 
-    /** Returns the direct world-space bearing from the vessel to the active target. */
     public double targetBearing(VehicleState state) {
         if (!hasTarget || state == null) return state == null ? 0.0D : state.yaw;
         return Math.atan2(targetX - state.x, targetZ - state.z);
@@ -49,12 +51,23 @@ public final class MPCNavigator {
         if (!hasTarget || state == null) return sp;
         double dx=targetX-state.x, dy=targetY-state.y, dz=targetZ-state.z;
         double flatDist=Math.sqrt(dx*dx+dz*dz);
-        if (flatDist < ARRIVAL_RADIUS && Math.abs(dy) < ARRIVAL_RADIUS) {
-            pathBlocked=false;
+        double fullDistance=Math.sqrt(dx*dx+dy*dy+dz*dz);
+
+        if (arrivalLocked || (flatDist < ARRIVAL_RADIUS && Math.abs(dy) < ARRIVAL_RADIUS)) {
+            arrivalLocked = true;
+            pathBlocked = false;
             sp.desiredYaw=state.yaw;
             sp.yawIsRateNotHeading=false;
+            double sinYaw=Math.sin(state.yaw), cosYaw=Math.cos(state.yaw);
+            double worldCorrectionX=Math.max(-ARRIVAL_MAX_SPEED, Math.min(ARRIVAL_MAX_SPEED, dx * ARRIVAL_HOLD_P));
+            double worldCorrectionZ=Math.max(-ARRIVAL_MAX_SPEED, Math.min(ARRIVAL_MAX_SPEED, dz * ARRIVAL_HOLD_P));
+            double worldCorrectionY=Math.max(-ARRIVAL_MAX_SPEED, Math.min(ARRIVAL_MAX_SPEED, dy * ARRIVAL_HOLD_P));
+            sp.desiredLongitudinalVelocity=worldCorrectionX*sinYaw+worldCorrectionZ*cosYaw;
+            sp.desiredLateralVelocity=worldCorrectionX*cosYaw-worldCorrectionZ*sinYaw;
+            sp.desiredVerticalVelocity=worldCorrectionY;
             return sp;
         }
+        if (fullDistance > ARRIVAL_RADIUS * 4.0D) arrivalLocked = false;
 
         double bearing=Math.atan2(dx,dz);
         double radius=Math.max(0.5,state.boundingRadius), halfHeight=Math.max(0.5,state.boundingHalfHeight);
@@ -90,21 +103,11 @@ public final class MPCNavigator {
         pathBlocked=!accepted;
         if(!accepted){sp.desiredYaw=state.yaw;return sp;}
 
-        /*
-         * With no obstacle sensor the route must be followed directly. The sampled heading
-         * offsets are useful for obstacle avoidance, but there is no reason to let the outer
-         * loop choose a lateral heading when the route has no obstacle constraint. In particular,
-         * a destination west/east of the current course must produce an unambiguous yaw command.
-         */
         double guidanceHeading = obstacleSensor == null ? bearing : bestHeading;
         double guidanceSpeed = bestSpeed;
         lastChosenHeadingOffsetDeg=normalizeDegrees(Math.toDegrees(guidanceHeading-bearing));
         sp.yawIsRateNotHeading=false;
         sp.desiredYaw=guidanceHeading;
-
-        // The inner stabilizer consumes longitudinal/lateral velocities in the vessel's BODY
-        // frame. Convert the selected world velocity into the current body frame and provide
-        // both horizontal components so route guidance does not collapse into forward-only flight.
         double worldVx=Math.sin(guidanceHeading)*guidanceSpeed;
         double worldVz=Math.cos(guidanceHeading)*guidanceSpeed;
         double cosYaw=Math.cos(-state.yaw), sinYaw=Math.sin(-state.yaw);
