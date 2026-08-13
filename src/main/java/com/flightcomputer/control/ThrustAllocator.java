@@ -20,8 +20,6 @@ public final class ThrustAllocator {
         ControlWrench target = ControlWrench.fromAxes(stabiliser).add(ControlWrench.fromAxes(autopilot)).toWorld(vehicleRotation);
 
         Map<String, ThrusterLink> unique = collectActiveSources(registry, stabiliser, autopilot);
-        // Every tick owns the actuator outputs. Any source which was active on the previous tick
-        // but is no longer part of the active control layer is explicitly driven to zero.
         for (Map.Entry<String, PropulsionSource> previous : lastActiveSources.entrySet()) {
             if (!unique.containsKey(previous.getKey())) previous.getValue().applyThrust(0.0D);
         }
@@ -35,7 +33,7 @@ public final class ThrustAllocator {
         }
 
         List<ThrusterLink> sources = List.copyOf(unique.values());
-        double[] commands = new double[sources.size()];
+        double[] commands = seedVectorBanks(sources, target, vehicleRotation);
         for (int iteration = 0; iteration < ITERATIONS; iteration++) {
             double[] achieved = achieved(sources, commands, vehicleRotation);
             for (int i = 0; i < sources.size(); i++) {
@@ -49,7 +47,7 @@ public final class ThrustAllocator {
                     magnitude += contribution[k] * contribution[k];
                 }
                 if (magnitude <= 1.0e-9) continue;
-                commands[i] += clamp(dot / magnitude, -commands[i], 1.0D - commands[i]);
+                commands[i] = clamp(commands[i] + dot / magnitude, 0.0D, 1.0D);
                 achieved = achieved(sources, commands, vehicleRotation);
             }
         }
@@ -68,10 +66,38 @@ public final class ThrustAllocator {
         applyCombined(registry, new VehicleState(), mode == FlightMode.STABILIZE ? commands : Map.of(), mode == FlightMode.CRUISE ? commands : Map.of());
     }
 
-    /** Immediate zero of every actuator owned by the allocator. */
     public void hardStop() {
         for (PropulsionSource source : lastActiveSources.values()) source.applyThrust(0.0D);
         lastActiveSources.clear();
+    }
+
+    /** Seed same-vector thrusters from the combined vector authority before six-axis correction. */
+    private double[] seedVectorBanks(List<ThrusterLink> sources, ControlWrench target, Quaterniond rotation) {
+        double[] commands = new double[sources.size()];
+        for (VectorDirection direction : VectorDirection.values()) {
+            double authority = 0.0D;
+            Vector3d unitForce = null;
+            for (ThrusterLink link : sources) {
+                if (link.direction != direction) continue;
+                double available = Math.max(0.0D, link.source.getAvailableThrust());
+                if (available <= 0.0D) continue;
+                authority += available;
+                if (unitForce == null) {
+                    unitForce = new Vector3d(direction.x(), direction.y(), direction.z());
+                    rotation.transform(unitForce).mul(link.polarity);
+                    double length = unitForce.length();
+                    if (length > 1.0e-9) unitForce.div(length);
+                }
+            }
+            if (unitForce == null || authority <= 0.0D) continue;
+            double required = target.forceX * unitForce.x + target.forceY * unitForce.y + target.forceZ * unitForce.z;
+            double fraction = clamp(required / authority, 0.0D, 1.0D);
+            for (int i = 0; i < sources.size(); i++) {
+                ThrusterLink link = sources.get(i);
+                if (link.direction == direction && link.source.getAvailableThrust() > 0.0D) commands[i] = fraction;
+            }
+        }
+        return commands;
     }
 
     private Map<String, ThrusterLink> collectActiveSources(ThrusterRegistry registry, Map<ControlAxis, Double> stabiliser, Map<ControlAxis, Double> autopilot) {
@@ -81,8 +107,30 @@ public final class ThrustAllocator {
         return unique;
     }
 
-    private double[] achieved(List<ThrusterLink> links,double[] commands,Quaterniond rotation){double[] result=new double[6];for(int i=0;i<links.size();i++){double[] c=contribution(links.get(i),links.get(i).source.getAvailableThrust(),rotation);for(int k=0;k<6;k++)result[k]+=c[k]*commands[i];}return result;}
-    private double[] contribution(ThrusterLink link,double thrust,Quaterniond rotation){VectorDirection d=link.direction;Vector3d force=new Vector3d(d.x(),d.y(),d.z()).mul(thrust*link.polarity);Vector3d r=new Vector3d(link.source.getMountOffset());rotation.transform(force);rotation.transform(r);double fx=force.x,fy=force.y,fz=force.z;return new double[]{fx,fy,fz,r.y*fz-r.z*fy,r.z*fx-r.x*fz,r.x*fy-r.y*fx};}
-    private static Quaterniond vehicleRotation(VehicleState state){return new Quaterniond().rotationY(state.yaw).rotateX(state.pitch).rotateZ(state.roll);}
-    private static double clamp(double value,double min,double max){return Math.max(min,Math.min(max,value));}
+    private double[] achieved(List<ThrusterLink> links, double[] commands, Quaterniond rotation) {
+        double[] result = new double[6];
+        for (int i = 0; i < links.size(); i++) {
+            double[] c = contribution(links.get(i), links.get(i).source.getAvailableThrust(), rotation);
+            for (int k = 0; k < 6; k++) result[k] += c[k] * commands[i];
+        }
+        return result;
+    }
+
+    private double[] contribution(ThrusterLink link, double thrust, Quaterniond rotation) {
+        VectorDirection d = link.direction;
+        Vector3d force = new Vector3d(d.x(), d.y(), d.z()).mul(thrust * link.polarity);
+        Vector3d r = new Vector3d(link.source.getMountOffset());
+        rotation.transform(force);
+        rotation.transform(r);
+        double fx = force.x, fy = force.y, fz = force.z;
+        return new double[]{fx, fy, fz, r.y * fz - r.z * fy, r.z * fx - r.x * fz, r.x * fy - r.y * fx};
+    }
+
+    private static Quaterniond vehicleRotation(VehicleState state) {
+        return new Quaterniond().rotationY(state.yaw).rotateX(state.pitch).rotateZ(state.roll);
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
+    }
 }
