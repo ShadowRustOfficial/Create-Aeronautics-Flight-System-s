@@ -10,6 +10,7 @@ import com.flightcomputer.control.ThrusterRegistry;
 import com.flightcomputer.control.VectorDirection;
 import com.flightcomputer.control.VehicleState;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Vector3d;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -84,7 +85,6 @@ public final class AutoTuneRuntimeBridge {
             this.registry = registry;
             this.thrusters = collect(registry);
         }
-
         @Override public double getMass() { return Math.max(1.0e-3, state.mass); }
         @Override public Vec3 getCenterOfMass() { return Vec3.ZERO; }
         @Override public Vec3 getMaxLinearAcceleration() {
@@ -102,20 +102,18 @@ public final class AutoTuneRuntimeBridge {
                 ty += Math.abs(r.z * f.x - r.x * f.z);
                 tz += Math.abs(r.x * f.y - r.y * f.x);
             }
-            return new Vec3(tx / state.inertiaPitch, ty / state.inertiaYaw, tz / state.inertiaRoll);
+            return new Vec3(tx / Math.max(state.inertiaPitch, 1.0e-3), ty / Math.max(state.inertiaYaw, 1.0e-3), tz / Math.max(state.inertiaRoll, 1.0e-3));
         }
         @Override public InertiaTensor getInertiaTensor() { return new InertiaTensor(state.inertiaPitch, state.inertiaRoll, state.inertiaYaw); }
         @Override public List<Thruster> getThrusters() { return thrusters; }
         @Override public Vec3 getVelocity() { return new Vec3(state.vx, state.vy, state.vz); }
         @Override public Vec3 getAngularVelocity() { return new Vec3(state.pitchRate, state.yawRate, state.rollRate); }
         @Override public Vec3 getOrientationError() { return Vec3.ZERO; }
-
         private static List<Thruster> collect(ThrusterRegistry registry) {
             List<Thruster> result = new ArrayList<>();
             for (VectorDirection direction : VectorDirection.values()) {
                 for (ThrusterLink link : registry.getLinks(FlightMode.STABILIZE, direction)) {
-                    result.add(new Thruster(link.source.getId(), new Vector3d(direction.x(), direction.y(), direction.z()),
-                            new Vector3d(link.source.getMountOffset()), link.source.getMaxThrust()));
+                    result.add(new Thruster(link.source.getId(), new Vector3d(direction.x(), direction.y(), direction.z()), new Vector3d(link.source.getMountOffset()), link.source.getMaxThrust()));
                 }
             }
             return List.copyOf(result);
