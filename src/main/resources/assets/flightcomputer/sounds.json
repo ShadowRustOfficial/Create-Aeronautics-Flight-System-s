@@ -1,0 +1,24 @@
+{
+  "stabiliser_ambient": {
+    "sounds": [
+      {"name": "flightcomputer:stabiliser_ambient", "stream": true}
+    ],
+    "replace": true
+  },
+  "engine_heat_critical": {
+    "sounds": ["flightcomputer:engine_heat_critical"],
+    "replace": true
+  },
+  "engine_overheat": {
+    "sounds": ["flightcomputer:engine_overheat"],
+    "replace": true
+  },
+  "fire_systems_active": {
+    "sounds": ["flightcomputer:fire_systems_active"],
+    "replace": true
+  },
+  "emergency_shutdown": {
+    "sounds": ["flightcomputer:emergency_shutdown"],
+    "replace": true
+  }
+}
