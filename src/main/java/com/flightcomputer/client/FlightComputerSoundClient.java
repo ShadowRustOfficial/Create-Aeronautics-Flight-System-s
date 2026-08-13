@@ -15,19 +15,19 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/**
- * Client-side ship-wide stabiliser ambience and per-controller mute state.
- *
- * The source is deliberately a normal world-space BLOCKS sound. Its position is
- * driven by authoritative flight telemetry, while Route telemetry supplies the
- * authoritative Stabiliser state. This avoids assuming that a projected Sable
- * world position contains a normal world BlockEntity.
- */
+/** Client-side ship-wide flight ambience and per-controller mute state. */
 public final class FlightComputerSoundClient {
     private static final Map<UUID, Boolean> MUTED = new HashMap<>();
-    private static AmbientLoop activeLoop;
+    private static AmbientLoop activeDrone;
+    private static AmbientLoop activePropulsion;
     private static UUID activeController;
     private static String lastLoggedMode = "";
+
+    // Flight telemetry is expressed in blocks per tick in the current runtime.
+    private static final double PROPULSION_START_SPEED = 0.15D;
+    private static final double PROPULSION_FULL_SPEED = 1.60D;
+    private static final float DRONE_VOLUME = 0.17F;
+    private static final float PROPULSION_MAX_VOLUME = 0.40F;
 
     private FlightComputerSoundClient() { }
 
@@ -39,9 +39,7 @@ public final class FlightComputerSoundClient {
         }
 
         String mode = SoundPhysicsCompat.mode();
-        if (!mode.equals(lastLoggedMode)) {
-            lastLoggedMode = mode;
-        }
+        if (!mode.equals(lastLoggedMode)) lastLoggedMode = mode;
 
         LocalPlayer player = minecraft.player;
         FlightComputerNetwork.TelemetryPayload best = null;
@@ -64,13 +62,31 @@ public final class FlightComputerSoundClient {
         }
 
         UUID id = best.controllerId();
-        if (activeLoop == null || activeLoop.isStopped() || !id.equals(activeController)) {
+        if (activeController == null || !id.equals(activeController)) {
             stopAmbient();
             activeController = id;
-            activeLoop = new AmbientLoop(ModSounds.AMBIENT_SHIP.get(), best);
-            minecraft.getSoundManager().play(activeLoop);
+        }
+
+        if (activeDrone == null || activeDrone.isStopped()) {
+            activeDrone = new AmbientLoop(ModSounds.AMBIENT_DRONE.get(), best, DRONE_VOLUME, false);
+            minecraft.getSoundManager().play(activeDrone);
         } else {
-            activeLoop.setTelemetry(best);
+            activeDrone.setTelemetry(best);
+            activeDrone.setBaseVolume(DRONE_VOLUME);
+        }
+
+        double speed = safeSpeed(best.speed());
+        double intensity = smoothStep(PROPULSION_START_SPEED, PROPULSION_FULL_SPEED, speed);
+
+        if (intensity <= 0.001D) {
+            stopPropulsion();
+        } else if (activePropulsion == null || activePropulsion.isStopped()) {
+            activePropulsion = new AmbientLoop(ModSounds.AMBIENT_SHIP.get(), best, PROPULSION_MAX_VOLUME, true);
+            activePropulsion.setIntensity((float) intensity);
+            minecraft.getSoundManager().play(activePropulsion);
+        } else {
+            activePropulsion.setTelemetry(best);
+            activePropulsion.setIntensity((float) intensity);
         }
     }
 
@@ -87,20 +103,43 @@ public final class FlightComputerSoundClient {
     }
 
     private static void stopAmbient() {
-        if (activeLoop != null) activeLoop.stopNow();
-        activeLoop = null;
+        if (activeDrone != null) activeDrone.stopNow();
+        if (activePropulsion != null) activePropulsion.stopNow();
+        activeDrone = null;
+        activePropulsion = null;
         activeController = null;
+    }
+
+    private static void stopPropulsion() {
+        if (activePropulsion != null) activePropulsion.stopNow();
+        activePropulsion = null;
+    }
+
+    private static double safeSpeed(double value) {
+        return Double.isFinite(value) ? Math.max(0.0D, value) : 0.0D;
+    }
+
+    private static double smoothStep(double edge0, double edge1, double value) {
+        if (edge1 <= edge0) return value >= edge1 ? 1.0D : 0.0D;
+        double x = Math.max(0.0D, Math.min(1.0D, (value - edge0) / (edge1 - edge0)));
+        return x * x * (3.0D - 2.0D * x);
     }
 
     private static final class AmbientLoop extends AbstractTickableSoundInstance {
         private FlightComputerNetwork.TelemetryPayload telemetry;
+        private final float maxVolume;
+        private final boolean intensityScaled;
+        private float intensity = 1.0F;
 
-        private AmbientLoop(SoundEvent sound, FlightComputerNetwork.TelemetryPayload telemetry) {
+        private AmbientLoop(SoundEvent sound, FlightComputerNetwork.TelemetryPayload telemetry,
+                            float maxVolume, boolean intensityScaled) {
             super(sound, SoundSource.BLOCKS, RandomSource.create());
             this.telemetry = telemetry;
+            this.maxVolume = maxVolume;
+            this.intensityScaled = intensityScaled;
             this.looping = true;
             this.delay = 0;
-            this.volume = 0.35F;
+            this.volume = maxVolume;
             this.pitch = 1.0F;
             this.attenuation = SoundInstance.Attenuation.LINEAR;
             this.relative = false;
@@ -118,10 +157,22 @@ public final class FlightComputerSoundClient {
                 return;
             }
             updatePosition();
+            float targetVolume = intensityScaled
+                    ? maxVolume * Math.max(0.0F, Math.min(1.0F, intensity))
+                    : maxVolume;
+            this.volume += (targetVolume - this.volume) * 0.12F;
         }
 
         private void setTelemetry(FlightComputerNetwork.TelemetryPayload telemetry) {
             if (telemetry != null) this.telemetry = telemetry;
+        }
+
+        private void setBaseVolume(float volume) {
+            if (!intensityScaled) this.volume += (volume - this.volume) * 0.12F;
+        }
+
+        private void setIntensity(float intensity) {
+            this.intensity = intensity;
         }
 
         private void updatePosition() {
