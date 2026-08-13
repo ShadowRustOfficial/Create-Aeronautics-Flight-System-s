@@ -17,6 +17,24 @@
     ],
     "replace": true
   },
+  "takeoff_integrated": {
+    "sounds": [
+      {"name": "flightcomputer:takeoff_integrated", "stream": true, "attenuation_distance": 32}
+    ],
+    "replace": true
+  },
+  "flight_loop_integrated": {
+    "sounds": [
+      {"name": "flightcomputer:flight_loop_integrated", "stream": true, "attenuation_distance": 32}
+    ],
+    "replace": true
+  },
+  "ambient_flight_ghost_2": {
+    "sounds": [
+      {"name": "flightcomputer:ambient_flight_ghost_2", "stream": true, "attenuation_distance": 32}
+    ],
+    "replace": true
+  },
   "engine_heat_critical": {
     "sounds": ["flightcomputer:engine_heat_critical"],
     "replace": true
