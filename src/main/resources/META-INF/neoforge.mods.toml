@@ -10,6 +10,11 @@ displayName="${mod_name}"
 [[mixins]]
 config="flightcomputer.mixins.json"
 
+# Optional Sound Physics Remastered integration. The mixin config is soft-gated and
+# does not add a dependency, so Flight Computer remains functional without SPR.
+[[mixins]]
+config="flightcomputer.soundphysics.mixins.json"
+
 [[dependencies.'${mod_id}']]
     modId="neoforge"
     type="required"
