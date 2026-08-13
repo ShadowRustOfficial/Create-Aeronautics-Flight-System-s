@@ -11,12 +11,19 @@ public final class ModSounds {
     public static final DeferredRegister<SoundEvent> REGISTRY =
             DeferredRegister.create(BuiltInRegistries.SOUND_EVENT, FlightComputer.MOD_ID);
 
-    /** Quiet continuous ship drone while the stabiliser is active. */
+    /** Legacy quiet drone registration retained for resource compatibility. */
     public static final DeferredHolder<SoundEvent, SoundEvent> AMBIENT_DRONE = register("ambient_drone_quiet");
-    /** Deep propulsion ambience; intensity is scaled by current flight speed. */
+    /** Legacy deep propulsion registration retained for resource compatibility. */
     public static final DeferredHolder<SoundEvent, SoundEvent> AMBIENT_FLIGHT = register("ambient_flight");
-    /** Legacy alias retained for resource compatibility. */
+    /** Legacy ambient alias retained for resource compatibility. */
     public static final DeferredHolder<SoundEvent, SoundEvent> AMBIENT_SHIP = register("ambient_ship");
+
+    /** Primary supplied integrated takeoff recording. */
+    public static final DeferredHolder<SoundEvent, SoundEvent> TAKEOFF_INTEGRATED = register("takeoff_integrated");
+    /** Primary supplied integrated continuous flight recording. */
+    public static final DeferredHolder<SoundEvent, SoundEvent> FLIGHT_LOOP_INTEGRATED = register("flight_loop_integrated");
+    /** Additional supplied ambient flight layer (Ghost 2). */
+    public static final DeferredHolder<SoundEvent, SoundEvent> AMBIENT_FLIGHT_GHOST_2 = register("ambient_flight_ghost_2");
 
     public static final DeferredHolder<SoundEvent, SoundEvent> ENGINE_HEAT_CRITICAL = register("engine_heat_critical");
     public static final DeferredHolder<SoundEvent, SoundEvent> WARNING_ENGINE_OVERHEAT = register("warning_engine_overheat");
