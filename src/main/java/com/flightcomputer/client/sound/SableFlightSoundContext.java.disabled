@@ -1,0 +1,1 @@
+This file is intentionally disabled. The live Sable acoustic implementation is provided by com.flightcomputer.integration.soundphysics.SableAcousticCache. Kept as a reference during the dependency/API migration.
