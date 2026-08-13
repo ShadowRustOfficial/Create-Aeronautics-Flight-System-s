@@ -21,13 +21,13 @@ public record FlightControllerState(
                 FlightMode nextMode = flightMode == FlightMode.AUTOPILOT
                         ? FlightMode.AUTOPILOT
                         : enabled ? FlightMode.STABILIZED : FlightMode.MANUAL;
-                yield new FlightControllerState(true, enabled, nextMode,
+                yield new FlightControllerState(engaged, enabled, nextMode,
                         altitudeHold, headingHold, positionHold, velocityHold, navigationEnabled, routeActive);
             }
             case TOGGLE_AUTOPILOT -> {
                 boolean enabled = flightMode != FlightMode.AUTOPILOT;
                 FlightMode nextMode = enabled ? FlightMode.AUTOPILOT : (stabiliser ? FlightMode.STABILIZED : FlightMode.MANUAL);
-                yield new FlightControllerState(true, stabiliser, nextMode,
+                yield new FlightControllerState(engaged || enabled, stabiliser, nextMode,
                         altitudeHold, headingHold, positionHold, velocityHold, enabled || navigationEnabled, routeActive);
             }
             case CYCLE_MODE -> {
@@ -43,8 +43,15 @@ public record FlightControllerState(
             case TOGGLE_HEADING_HOLD -> toggleHold(1);
             case TOGGLE_POSITION_HOLD -> toggleHold(2);
             case TOGGLE_VELOCITY_HOLD -> toggleHold(3);
-            case TOGGLE_NAVIGATION -> new FlightControllerState(engaged, stabiliser, flightMode,
-                    altitudeHold, headingHold, positionHold, velocityHold, !navigationEnabled, routeActive);
+            case TOGGLE_NAVIGATION -> {
+                boolean enabled = !navigationEnabled;
+                if (!enabled && flightMode == FlightMode.AUTOPILOT)
+                    yield new FlightControllerState(engaged, stabiliser,
+                            stabiliser ? FlightMode.STABILIZED : FlightMode.MANUAL,
+                            altitudeHold, headingHold, positionHold, velocityHold, false, false);
+                yield new FlightControllerState(engaged, stabiliser, flightMode,
+                        altitudeHold, headingHold, positionHold, velocityHold, enabled, routeActive && enabled);
+            }
             case START_ROUTE -> new FlightControllerState(true, stabiliser, FlightMode.AUTOPILOT,
                     altitudeHold, headingHold, positionHold, velocityHold, true, true);
             case ABORT_ROUTE -> new FlightControllerState(engaged, stabiliser,
