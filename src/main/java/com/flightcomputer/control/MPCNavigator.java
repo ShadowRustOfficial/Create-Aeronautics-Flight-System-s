@@ -90,19 +90,26 @@ public final class MPCNavigator {
         pathBlocked=!accepted;
         if(!accepted){sp.desiredYaw=state.yaw;return sp;}
 
+        /*
+         * With no obstacle sensor the route must be followed directly. The sampled heading
+         * offsets are useful for obstacle avoidance, but there is no reason to let the outer
+         * loop choose a lateral heading when the route has no obstacle constraint. In particular,
+         * a destination west/east of the current course must produce an unambiguous yaw command.
+         */
         double guidanceHeading = obstacleSensor == null ? bearing : bestHeading;
         double guidanceSpeed = bestSpeed;
         lastChosenHeadingOffsetDeg=normalizeDegrees(Math.toDegrees(guidanceHeading-bearing));
         sp.yawIsRateNotHeading=false;
         sp.desiredYaw=guidanceHeading;
 
-        // Convert world velocity into the vessel body frame. This basis matches the controller's
-        // yaw convention: forward=(sin(yaw),0,cos(yaw)), right=(cos(yaw),0,-sin(yaw)).
+        // The inner stabilizer consumes longitudinal/lateral velocities in the vessel's BODY
+        // frame. Convert the selected world velocity into the current body frame and provide
+        // both horizontal components so route guidance does not collapse into forward-only flight.
         double worldVx=Math.sin(guidanceHeading)*guidanceSpeed;
         double worldVz=Math.cos(guidanceHeading)*guidanceSpeed;
-        double sinYaw=Math.sin(state.yaw), cosYaw=Math.cos(state.yaw);
-        sp.desiredLongitudinalVelocity=worldVx*sinYaw+worldVz*cosYaw;
-        sp.desiredLateralVelocity=worldVx*cosYaw-worldVz*sinYaw;
+        double cosYaw=Math.cos(-state.yaw), sinYaw=Math.sin(-state.yaw);
+        sp.desiredLongitudinalVelocity=worldVz*cosYaw-worldVx*sinYaw;
+        sp.desiredLateralVelocity=worldVz*sinYaw+worldVx*cosYaw;
         sp.desiredVerticalVelocity=bestVerticalSpeed;
         return sp;
     }
