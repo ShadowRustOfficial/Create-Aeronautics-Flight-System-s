@@ -3,6 +3,7 @@ package com.flightcomputer.control;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Map;
@@ -11,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /** Runtime adapter for propulsion mods that are intentionally not compile-time dependencies. */
 public final class ReflectivePropulsionSource implements PropulsionSource {
     private static final double SIMULATED_STANDARD_MAX_THRUST = 600.0D;
+    private static final double SIMULATED_CREATIVE_MAX_THRUST_FALLBACK = 10000.0D;
     private static final String SIMULATED_THRUSTER = "dev.propulsionteam.propulsionsimulated.content.thruster.ThrusterBlockEntity";
     private static final String SIMULATED_ABSTRACT_THRUSTER = "dev.propulsionteam.propulsionsimulated.content.thruster.AbstractThrusterBlockEntity";
     private static final Map<Class<?>, Accessor> ACCESSORS = new ConcurrentHashMap<>();
@@ -67,8 +69,11 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
     @Override public VectorDirection getDirection() { return direction; }
 
     @Override public double getMaxThrust() {
-        Object creative = invoke(accessor.creativeTargetThrust);
-        if (creative instanceof Number number && number.doubleValue() > 0.0D) return number.doubleValue();
+        if (accessor.creative(blockEntity)) {
+            double configuredMaximum = readCreativeMaximumThrust();
+            if (configuredMaximum > 0.0D) return configuredMaximum;
+            return SIMULATED_CREATIVE_MAX_THRUST_FALLBACK;
+        }
         Object max = invoke(accessor.maxThrust);
         if (max instanceof Number number && number.doubleValue() > 0.0D) return number.doubleValue();
         if (type == PropulsionType.CREATE_PROPULSION_SIMULATED) return SIMULATED_STANDARD_MAX_THRUST;
@@ -138,14 +143,51 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
         }
 
         double fraction = Math.max(0.0D, Math.min(1.0D, signedFraction));
-        // Create: Propulsion Simulated 1.1.5 exposes both NORMAL/redstone and PERIPHERAL/digital
-        // control. Writing both inputs is intentional: the thruster's configured ControlMode picks
-        // the correct one, so the flight computer does not silently fail when a player has changed
-        // the actuator's control mode.
+
+        // Creative Propulsion Simulated uses a separate 0..100 pN-step Power Behaviour as the
+        // configured thrust ceiling. The flight controller now drives that behaviour directly,
+        // then keeps the normal throttle fully open so the configured pN value is the actual force.
+        // This is deliberately limited to creative thrusters; every other propulsion source keeps
+        // the previous control path unchanged.
+        if (accessor.creative(blockEntity)) {
+            double targetThrust = fraction * getMaxThrust();
+            setCreativeTargetThrust(targetThrust);
+            invokeInt(accessor.redstonePower, fraction <= 0.0D ? 0 : 15);
+            invokeNumber(accessor.digitalInput, fraction <= 0.0D ? 0.0D : 1.0D);
+            return;
+        }
+
+        // Create: Propulsion Simulated standard thrusters expose both NORMAL/redstone and
+        // PERIPHERAL/digital control. Writing both inputs is intentional: the thruster's configured
+        // ControlMode picks the correct one, so the flight computer does not silently fail when a
+        // player has changed the actuator's control mode.
         if (accessor.redstonePower != null) invokeInt(accessor.redstonePower, (int) Math.round(fraction * 15.0D));
         if (accessor.digitalInput != null) invokeNumber(accessor.digitalInput, fraction);
         if (accessor.thrustSetter != null) invokeNumber(accessor.thrustSetter, fraction * getMaxThrust());
         else if (accessor.throttleSetter != null) invokeNumber(accessor.throttleSetter, fraction);
+    }
+
+    private double readCreativeMaximumThrust() {
+        Object behaviour = readField(accessor.creativePowerBehaviour, blockEntity);
+        if (behaviour == null) return SIMULATED_CREATIVE_MAX_THRUST_FALLBACK;
+        Object maximum = readField(accessor.behaviourMaxThrust, behaviour);
+        return maximum instanceof Number number ? Math.max(100.0D, number.doubleValue()) : SIMULATED_CREATIVE_MAX_THRUST_FALLBACK;
+    }
+
+    private void setCreativeTargetThrust(double targetThrust) {
+        Object behaviour = readField(accessor.creativePowerBehaviour, blockEntity);
+        if (behaviour == null || accessor.setTargetThrust == null) return;
+        int clamped = (int) Math.round(Math.max(0.0D, Math.min(readCreativeMaximumThrust(), targetThrust)));
+        if (clamped <= 0) return;
+        try {
+            accessor.setTargetThrust.invoke(behaviour, clamped);
+        } catch (ReflectiveOperationException | RuntimeException ignored) { }
+    }
+
+    private static Object readField(Field field, Object instance) {
+        if (field == null || instance == null) return null;
+        try { return field.get(instance); }
+        catch (ReflectiveOperationException | RuntimeException ignored) { return null; }
     }
 
     private Object invoke(Method method) {
@@ -185,10 +227,31 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
         return null;
     }
 
+    private static Field findField(Class<?> type, String name) {
+        Class<?> cursor = type;
+        while (cursor != null) {
+            try {
+                Field field = cursor.getDeclaredField(name);
+                field.setAccessible(true);
+                return field;
+            } catch (ReflectiveOperationException | RuntimeException ignored) { cursor = cursor.getSuperclass(); }
+        }
+        return null;
+    }
+
+    private static Method findMethodOnFieldType(Class<?> type, String fieldName, String methodName, Class<?> parameterType) {
+        Field field = findField(type, fieldName);
+        if (field == null) return null;
+        try {
+            Method method = field.getType().getMethod(methodName, parameterType);
+            method.setAccessible(true);
+            return method;
+        } catch (ReflectiveOperationException | RuntimeException ignored) { return null; }
+    }
+
     private static final class Accessor {
         final Method facing;
         final Method currentThrust;
-        final Method creativeTargetThrust;
         final Method maxThrust;
         final Method throttle;
         final Method fuelAmount;
@@ -201,12 +264,14 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
         final Method digitalInput;
         final Method thrustSetter;
         final Method throttleSetter;
+        final Field creativePowerBehaviour;
+        final Field behaviourMaxThrust;
+        final Method setTargetThrust;
         final boolean compatible;
 
         private Accessor(Class<?> type) {
             facing = findNoArg(type, "getFacing", "getDirection", "getPropulsionDirection");
             currentThrust = findNoArg(type, "getCurrentThrust", "getThrust", "getOutputThrust");
-            creativeTargetThrust = findNoArg(type, "getCreativeTargetThrust", "getTargetThrustNewtons");
             maxThrust = findNoArg(type, "getMaxThrust", "getMaximumThrust", "getThrustCapacity");
             throttle = findNoArg(type, "getThrottle", "getPower", "getOutputLevel");
             fuelAmount = findNoArg(type, "getFuelAmountMb", "getFuelAmount");
@@ -219,8 +284,11 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
             digitalInput = findSetter(type, "setDigitalInput");
             thrustSetter = findSetter(type, "setThrust", "setOutputThrust");
             throttleSetter = findSetter(type, "setThrottle", "setPower");
-            compatible = currentThrust != null || creativeTargetThrust != null || maxThrust != null
-                    || redstonePower != null || digitalInput != null || thrustSetter != null || throttleSetter != null;
+            creativePowerBehaviour = findField(type, "creativePowerBehaviour");
+            behaviourMaxThrust = creativePowerBehaviour == null ? null : findField(creativePowerBehaviour.getType(), "maxThrust");
+            setTargetThrust = findMethodOnFieldType(type, "creativePowerBehaviour", "setTargetThrust", int.class);
+            compatible = currentThrust != null || maxThrust != null || redstonePower != null || digitalInput != null
+                    || thrustSetter != null || throttleSetter != null;
         }
 
         boolean creative(BlockEntity blockEntity) {
