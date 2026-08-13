@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "description": "Flight Computer audio integration manifest derived from the supplied Cutlass audio package. Binary OGG assets are intentionally not included; place the supplied OGG files at the listed resource paths before packaging.",
+  "integrated_flight_audio": {
+    "takeoff": {
+      "resource": "flightcomputer:takeoff_integrated",
+      "source_file": "ship_cutlass/integrated/takeoff_integrated.ogg",
+      "role": "primary_takeoff",
+      "reason": "Primary integrated takeoff recording; replaces the previous takeoff/flight base audio path.",
+      "loop": false,
+      "handoff_seconds": 22.0,
+      "direction": "Play when stabiliser/autopilot control becomes active, cross-fade to the integrated flight loop at 22 seconds, then stop the takeoff layer."
+    },
+    "flight_loop": {
+      "resource": "flightcomputer:flight_loop_integrated",
+      "source_file": "ship_cutlass/integrated/flight_loop_integrated.ogg",
+      "role": "primary_flight_loop",
+      "reason": "Primary supplied continuous flight recording.",
+      "loop": true,
+      "direction": "Use as the main continuous flight layer after the 22 second takeoff handoff; do not retain the old continuous engine loop beneath it."
+    }
+  },
+  "ambient_flight_layers": {
+    "ghost_2": {
+      "resource": "flightcomputer:ambient_flight_ghost_2",
+      "source_file": "Ghost 2.ogg",
+      "role": "secondary_ambient_flight",
+      "reason": "Additional ambient flight layer requested to remain active during stabiliser or autopilot control.",
+      "loop": true,
+      "direction": "Play alongside the primary flight audio whenever either stabiliser OR autopilot is active; fade out when neither control mode is active."
+    }
+  },
+  "engine_secondary_effects": {
+    "directory": "ship_cutlass/engine",
+    "reason": "Secondary effects/reactions from the supplied manifest.",
+    "direction": "Layer only when the corresponding flight condition occurs; never use as the continuous base flight loop."
+  },
+  "cockpit_ui": {
+    "directory": "ship_cutlass/cockpit",
+    "reason": "Short cockpit/UI feedback effects with restrained volume.",
+    "direction": "Remain independent of continuous flight ambience."
+  },
+  "attenuation": {
+    "ambient_max_distance_blocks": 32,
+    "reason": "Preserve the established practical Flight Computer ambient radius."
+  }
+}
