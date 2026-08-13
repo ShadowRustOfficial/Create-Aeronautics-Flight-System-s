@@ -58,7 +58,13 @@ public final class PIDAutoTuner {
         double scale = boundedScale(acceleration, Math.max(0.5, expectedSpeed * p));
         return new TuningResult.Gains(p * scale, i, d * scale, max);
     }
-    private static double boundedScale(double capability, double baseline) { return clamp(Math.sqrt(Math.max(0.05, Math.abs(capability) / Math.max(0.05, Math.abs(baseline))), 0.75, 1.25); }
+    private static double boundedScale(double capability, double baseline) {
+        return clamp(
+                Math.sqrt(Math.max(0.05, Math.abs(capability) / Math.max(0.05, Math.abs(baseline)))),
+                0.75,
+                1.25
+        );
+    }
 
     private static long fingerprint(ShipDynamicsProvider p) {
         long h = 1469598103934665603L;
