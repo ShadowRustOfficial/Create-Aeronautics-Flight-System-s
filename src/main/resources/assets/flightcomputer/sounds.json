@@ -1,7 +1,7 @@
 {
   "ambient_ship": {
     "sounds": [
-      {"name": "flightcomputer:ambient_ship", "stream": true}
+      {"name": "flightcomputer:ambient_ship", "stream": true, "attenuation_distance": 128}
     ],
     "replace": true
   },
