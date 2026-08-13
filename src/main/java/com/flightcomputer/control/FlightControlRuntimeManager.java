@@ -1,9 +1,11 @@
 package com.flightcomputer.control;
 
 import com.flightcomputer.avionics.FlightControllerState;
+import com.flightcomputer.block.FlightControllerBlock;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.network.FlightComputerNetwork;
 import com.flightcomputer.network.FlightSetupTelemetryNetwork;
+import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
@@ -80,7 +82,7 @@ public final class FlightControlRuntimeManager {
         Vec3 current = new Vec3(state.x, state.y, state.z);
         Vec3 target = runtime.targetActive ? runtime.target : null;
         double distance = target == null ? -1.0D : target.distanceTo(current);
-        double heading = normalizeDegrees(Math.toDegrees(state.yaw));
+        double heading = normalizeDegrees(Math.toDegrees(state.bodyBackYaw()));
         double speed = safeSpeed(state.vx, state.vy, state.vz);
 
         ThrusterRegistry registry = runtime.computer == null ? null : runtime.computer.getRegistry();
@@ -156,6 +158,7 @@ public final class FlightControlRuntimeManager {
             Vec3 world = project(subLevel, level, local);
             VehicleState state = snapshot == null ? new VehicleState() : snapshot;
             state.x = world.x; state.y = world.y; state.z = world.z;
+            state.bodyBackYawOffset = controllerBackYawOffset(controller);
 
             boolean physicalVelocity = false;
             boolean physicalInertia = false;
@@ -223,6 +226,16 @@ public final class FlightControlRuntimeManager {
                 FlightSetupTelemetryNetwork.send(controller, snapshot, registry);
             }
             if(powered)controller.addControlThermalLoad(computer.getAllocator().getLastThermalLoad());
+        }
+
+        private static double controllerBackYawOffset(FlightControllerBlockEntity controller){
+            try {
+                Direction facing = controller.getBlockState().getValue(FlightControllerBlock.FACING);
+                Direction back = facing.getOpposite();
+                return Math.atan2(back.getStepX(), back.getStepZ());
+            } catch (RuntimeException ignored) {
+                return Math.PI;
+            }
         }
 
         private static double[] readInertia(Object target){if(target==null)return null;for(String n:new String[]{"getMomentOfInertia","getInertia","momentOfInertia","inertia"}){double[] p=parseVector(invokeNoArg(target,n));if(p!=null)return p;}return null;}
