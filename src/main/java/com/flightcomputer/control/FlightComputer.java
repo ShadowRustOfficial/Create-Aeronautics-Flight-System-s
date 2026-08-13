@@ -30,6 +30,16 @@ public final class FlightComputer {
     private double lastAppliedTargetX, lastAppliedTargetY, lastAppliedTargetZ;
     private boolean lastAppliedTargetValid;
 
+    // External-physics disturbance recovery. Sable/Physics Staff can change a sublevel's pose and
+    // velocity independently of this controller; never feed that discontinuity directly into PID.
+    private VehicleState previousControlState;
+    private int disturbanceRecoveryTicks;
+    private static final int DISTURBANCE_RECOVERY_TICKS = 10;
+    private static final double DISTURBANCE_POSITION_DELTA = 4.0;
+    private static final double DISTURBANCE_SPEED_DELTA = 12.0;
+    private static final double DISTURBANCE_ANGULAR_RATE_DELTA = 2.5;
+    private static final double DISTURBANCE_ANGLE_DELTA = Math.toRadians(35.0);
+
     public FlightComputer(VehicleStateProvider stateProvider, ObstacleSensor obstacleSensor) { this.stateProvider = stateProvider; this.navigator = new MPCNavigator(obstacleSensor); }
     public FlightComputer(VehicleStateProvider stateProvider) { this(stateProvider, null); }
     public ThrusterRegistry getRegistry() { return registry; }
@@ -66,8 +76,10 @@ public final class FlightComputer {
     private void synchronizeExternalTarget() {
         if (!navigator.hasTarget()) {
             if (lastAppliedTargetValid) {
+                // Runtime target is still authoritative. Re-arm the navigator if it was cleared by
+                // arrival handling, a transient controller reset, or another control-layer event.
+                navigator.setTarget(lastAppliedTargetX,lastAppliedTargetY,lastAppliedTargetZ);
                 resetCruiseGuidance();
-                lastAppliedTargetValid=false;
             }
             return;
         }
@@ -99,6 +111,9 @@ public final class FlightComputer {
     /** Runs the active control layers once. Stabilisation and autopilot share the actuator allocator without disabling one another. */
     public void tick(double dt,boolean stabiliserEnabled,boolean autopilotEnabled){
         VehicleState state=stateProvider.getState(); if(state==null)return;
+        if (detectPhysicsDisturbance(state)) {
+            recoverFromPhysicsDisturbance();
+        }
         synchronizeExternalTarget();
         Map<ControlAxis,Double> stabiliseCommands=Map.of();
         if(stabiliserEnabled){
@@ -124,19 +139,75 @@ public final class FlightComputer {
             mode=FlightMode.CRUISE;
             if(navigator.distanceToTarget(state)<1.0)disengageCruise();
         }else{cruiseStabilizer.resetAll();ticksSinceReplan=0;lastCruiseLongitudinalVelocity=0;}
+
+        double recoveryScale = disturbanceRecoveryTicks > 0
+                ? 1.0 - (0.65 * disturbanceRecoveryTicks / (double) DISTURBANCE_RECOVERY_TICKS)
+                : 1.0;
+        if (disturbanceRecoveryTicks > 0) disturbanceRecoveryTicks--;
+        if (recoveryScale < 0.35) recoveryScale = 0.35;
+        if (recoveryScale < 0.999) {
+            stabiliseCommands = scaleCommands(stabiliseCommands, recoveryScale);
+            autopilotCommands = scaleCommands(autopilotCommands, recoveryScale);
+        }
         allocator.applyCombined(registry,state,stabiliseCommands,autopilotCommands);
+        previousControlState = state.copy();
     }
     /** Smooths forward acceleration only after the vessel is pointed toward the MPC-selected heading. */
     private double smoothCruiseVelocity(VehicleState state,double desiredYaw,double desiredVelocity,double dt){
         double headingError=Math.abs(normalizeRadians(desiredYaw-state.yaw));
         double alignment=clamp(Math.cos(headingError),0.0,1.0);
         double alignedTarget=desiredVelocity*alignment;
+        // Never allow a route to remain indefinitely at zero forward demand simply because the
+        // ship is temporarily turning. A small forward crawl lets heading authority recover while
+        // preserving the previous acceleration ramp.
+        if (navigator.hasTarget() && navigator.distanceToTarget(state) > 3.0 && alignedTarget < 0.5)
+            alignedTarget = Math.min(Math.max(1.25, desiredVelocity * 0.12), Math.max(0.0, cruiseMaxSpeed));
         double maxDelta=Math.max(0.25,4.0*Math.max(dt,0.0));
         double delta=clamp(alignedTarget-lastCruiseLongitudinalVelocity,-maxDelta,maxDelta);
         lastCruiseLongitudinalVelocity+=delta;
         return lastCruiseLongitudinalVelocity;
     }
     private static double normalizeRadians(double radians){double r=radians%(Math.PI*2.0);if(r>Math.PI)r-=Math.PI*2.0;if(r<-Math.PI)r+=Math.PI*2.0;return r;}
+    /** Detects abrupt Sable pose/velocity changes such as Physics Staff manipulation or collisions. */
+    private boolean detectPhysicsDisturbance(VehicleState state) {
+        if (previousControlState == null) return false;
+        double dp = Math.sqrt(
+                sq(state.x - previousControlState.x)
+                        + sq(state.y - previousControlState.y)
+                        + sq(state.z - previousControlState.z));
+        double dv = Math.sqrt(
+                sq(state.vx - previousControlState.vx)
+                        + sq(state.vy - previousControlState.vy)
+                        + sq(state.vz - previousControlState.vz));
+        double da = Math.sqrt(
+                sq(state.pitchRate - previousControlState.pitchRate)
+                        + sq(state.yawRate - previousControlState.yawRate)
+                        + sq(state.rollRate - previousControlState.rollRate));
+        double dang = Math.sqrt(
+                sq(normalizeRadians(state.pitch - previousControlState.pitch))
+                        + sq(normalizeRadians(state.yaw - previousControlState.yaw))
+                        + sq(normalizeRadians(state.roll - previousControlState.roll)));
+        return dp > DISTURBANCE_POSITION_DELTA
+                || dv > DISTURBANCE_SPEED_DELTA
+                || da > DISTURBANCE_ANGULAR_RATE_DELTA
+                || dang > DISTURBANCE_ANGLE_DELTA;
+    }
+    private void recoverFromPhysicsDisturbance() {
+        stabilizeStabilizer.resetAll();
+        cruiseStabilizer.resetAll();
+        allocator.hardStop();
+        ticksSinceReplan = 0;
+        lastCruiseLongitudinalVelocity = 0.0D;
+        latestCruiseSetpoint = StabilizationSetpoint.hover();
+        disturbanceRecoveryTicks = DISTURBANCE_RECOVERY_TICKS;
+    }
+    private static double sq(double value) { return value * value; }
+    private static Map<ControlAxis,Double> scaleCommands(Map<ControlAxis,Double> source, double scale) {
+        if(source==null||source.isEmpty())return Map.of();
+        Map<ControlAxis,Double> result=new EnumMap<>(ControlAxis.class);
+        for(Map.Entry<ControlAxis,Double> entry:source.entrySet()) result.put(entry.getKey(), entry.getValue() * scale);
+        return result;
+    }
     /** When both systems are active, the stabiliser keeps the vessel level while autopilot owns navigation yaw. */
     private static Map<ControlAxis,Double> filterStabilizerAxes(Map<ControlAxis,Double> source){
         if(source==null||source.isEmpty())return Map.of();
