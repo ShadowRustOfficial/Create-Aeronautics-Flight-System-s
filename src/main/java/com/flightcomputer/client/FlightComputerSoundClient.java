@@ -1,6 +1,5 @@
 package com.flightcomputer.client;
 
-import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.integration.SoundPhysicsCompat;
 import com.flightcomputer.network.FlightComputerNetwork;
 import com.flightcomputer.registry.ModSounds;
@@ -8,11 +7,9 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.resources.sounds.AbstractTickableSoundInstance;
 import net.minecraft.client.resources.sounds.SoundInstance;
-import net.minecraft.core.BlockPos;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.RandomSource;
-import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -21,10 +18,10 @@ import java.util.UUID;
 /**
  * Client-side ship-wide stabiliser ambience and per-controller mute state.
  *
- * The sound is intentionally a normal, positional BLOCKS source rather than a
- * player-relative UI sound. This lets vanilla provide the fallback attenuation
- * and allows Sound Physics Remastered / Sound Physics: Aeronautics to perform
- * occlusion, absorption, reverberation and supported Doppler processing.
+ * The source is deliberately a normal world-space BLOCKS sound. Its position is
+ * driven by authoritative flight telemetry, while Route telemetry supplies the
+ * authoritative Stabiliser state. This avoids assuming that a projected Sable
+ * world position contains a normal world BlockEntity.
  */
 public final class FlightComputerSoundClient {
     private static final Map<UUID, Boolean> MUTED = new HashMap<>();
@@ -41,13 +38,9 @@ public final class FlightComputerSoundClient {
             return;
         }
 
-        if (SoundPhysicsCompat.isLoaded()) {
-            String mode = SoundPhysicsCompat.mode();
-            if (!mode.equals(lastLoggedMode)) {
-                lastLoggedMode = mode;
-            }
-        } else {
-            lastLoggedMode = "VANILLA_POSITIONAL";
+        String mode = SoundPhysicsCompat.mode();
+        if (!mode.equals(lastLoggedMode)) {
+            lastLoggedMode = mode;
         }
 
         LocalPlayer player = minecraft.player;
@@ -55,11 +48,8 @@ public final class FlightComputerSoundClient {
         double bestDistance = Double.MAX_VALUE;
 
         for (FlightComputerNetwork.TelemetryPayload payload : FlightComputerTelemetryClient.snapshots()) {
-            BlockPos pos = BlockPos.containing(payload.x(), payload.y(), payload.z());
-            BlockEntity be = minecraft.level.getBlockEntity(pos);
-            if (!(be instanceof FlightControllerBlockEntity controller)) continue;
-            if (!controller.getControllerState().stabiliser()) continue;
-            if (isMuted(controller.getControllerId())) continue;
+            if (!FlightRouteTelemetryClient.isStabiliserActive(payload.controllerId())) continue;
+            if (isMuted(payload.controllerId())) continue;
 
             double distance = player.distanceToSqr(payload.x(), payload.y(), payload.z());
             if (distance < bestDistance && distance <= 128.0D * 128.0D) {
@@ -118,7 +108,12 @@ public final class FlightComputerSoundClient {
         }
 
         @Override public void tick() {
-            if (Minecraft.getInstance().player == null || Minecraft.getInstance().player.isRemoved()) {
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft.player == null || minecraft.player.isRemoved()) {
+                stop();
+                return;
+            }
+            if (!FlightRouteTelemetryClient.isStabiliserActive(activeController)) {
                 stop();
                 return;
             }
