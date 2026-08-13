@@ -31,23 +31,32 @@ public final class FlightRouteTelemetryNetwork {
                                     boolean altitudeHold, boolean headingHold, boolean positionHold,
                                     boolean velocityHold, boolean navigationEnabled, boolean routeActive,
                                     boolean targetPresent, String targetName, double targetX, double targetY, double targetZ) implements CustomPacketPayload {
-        public static final StreamCodec<ByteBuf, RouteStatePayload> STREAM_CODEC = StreamCodec.composite(
-                ByteBufCodecs.UUID, RouteStatePayload::controllerId,
-                ByteBufCodecs.BOOL, RouteStatePayload::engaged,
-                ByteBufCodecs.BOOL, RouteStatePayload::stabiliser,
-                ByteBufCodecs.VAR_INT, RouteStatePayload::mode,
-                ByteBufCodecs.BOOL, RouteStatePayload::altitudeHold,
-                ByteBufCodecs.BOOL, RouteStatePayload::headingHold,
-                ByteBufCodecs.BOOL, RouteStatePayload::positionHold,
-                ByteBufCodecs.BOOL, RouteStatePayload::velocityHold,
-                ByteBufCodecs.BOOL, RouteStatePayload::navigationEnabled,
-                ByteBufCodecs.BOOL, RouteStatePayload::routeActive,
-                ByteBufCodecs.BOOL, RouteStatePayload::targetPresent,
-                ByteBufCodecs.STRING_UTF8, RouteStatePayload::targetName,
-                ByteBufCodecs.DOUBLE, RouteStatePayload::targetX,
-                ByteBufCodecs.DOUBLE, RouteStatePayload::targetY,
-                ByteBufCodecs.DOUBLE, RouteStatePayload::targetZ,
-                RouteStatePayload::new);
+        public static final StreamCodec<ByteBuf, RouteStatePayload> STREAM_CODEC = StreamCodec.of(
+                (buf, p) -> {
+                    buf.writeLong(p.controllerId.getMostSignificantBits());
+                    buf.writeLong(p.controllerId.getLeastSignificantBits());
+                    buf.writeBoolean(p.engaged);
+                    buf.writeBoolean(p.stabiliser);
+                    buf.writeVarInt(p.mode);
+                    buf.writeBoolean(p.altitudeHold);
+                    buf.writeBoolean(p.headingHold);
+                    buf.writeBoolean(p.positionHold);
+                    buf.writeBoolean(p.velocityHold);
+                    buf.writeBoolean(p.navigationEnabled);
+                    buf.writeBoolean(p.routeActive);
+                    buf.writeBoolean(p.targetPresent);
+                    ByteBufCodecs.STRING_UTF8.encode(buf, p.targetName == null ? "" : p.targetName);
+                    buf.writeDouble(p.targetX);
+                    buf.writeDouble(p.targetY);
+                    buf.writeDouble(p.targetZ);
+                },
+                buf -> new RouteStatePayload(
+                        new UUID(buf.readLong(), buf.readLong()),
+                        buf.readBoolean(), buf.readBoolean(), buf.readVarInt(),
+                        buf.readBoolean(), buf.readBoolean(), buf.readBoolean(), buf.readBoolean(),
+                        buf.readBoolean(), buf.readBoolean(), buf.readBoolean(),
+                        ByteBufCodecs.STRING_UTF8.decode(buf),
+                        buf.readDouble(), buf.readDouble(), buf.readDouble()));
 
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
