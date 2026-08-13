@@ -1,6 +1,5 @@
 package com.flightcomputer.client;
 
-import com.flightcomputer.integration.SoundPhysicsCompat;
 import com.flightcomputer.integration.soundphysics.SableAcousticCache;
 import com.flightcomputer.network.FlightComputerNetwork;
 import com.flightcomputer.registry.ModSounds;
@@ -16,198 +15,51 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/** Client-side ship-wide flight ambience and per-controller mute state. */
 public final class FlightComputerSoundClient {
     private static final Map<UUID, Boolean> MUTED = new HashMap<>();
-    private static AmbientLoop activeDrone;
-    private static AmbientLoop activePropulsion;
+    private static AmbientLoop activeFlightLoop, activeGhostAmbient;
+    private static OneShotLoop activeTakeoff;
     private static UUID activeController;
-    private static String lastLoggedMode = "";
-
-    private static final double MAX_AMBIENT_SOURCE_DISTANCE = 32.0D;
-    private static final double PROPULSION_START_SPEED = 0.15D;
-    private static final double PROPULSION_FULL_SPEED = 1.60D;
-    private static final float DRONE_VOLUME = 0.17F;
-    private static final float PROPULSION_MAX_VOLUME = 0.40F;
-    private static final int SABLE_REFRESH_INTERVAL_TICKS = 5;
+    private static int activeTicks;
+    private static final double MAX_AMBIENT_SOURCE_DISTANCE=32.0D;
+    private static final int TAKEOFF_HANDOFF_TICKS=440;
+    private static final int TAKEOFF_CROSSFADE_TICKS=20;
+    private static final float FLIGHT_LOOP_VOLUME=0.32F, GHOST_AMBIENT_VOLUME=0.11F;
+    private static final int SABLE_REFRESH_INTERVAL_TICKS=5;
     private static int sableRefreshCooldown;
-
     private FlightComputerSoundClient() { }
-
-    public static void tick() {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft == null || minecraft.level == null || minecraft.player == null) {
-            stopAmbient();
-            sableRefreshCooldown = 0;
-            SableAcousticCache.tick(null);
-            return;
+    public static void tick(){
+        Minecraft mc=Minecraft.getInstance();
+        if(mc==null||mc.level==null||mc.player==null){stopAmbient();sableRefreshCooldown=0;SableAcousticCache.tick(null);return;}
+        LocalPlayer player=mc.player; FlightComputerNetwork.TelemetryPayload best=null; double bestDistance=Double.MAX_VALUE;
+        for(FlightComputerNetwork.TelemetryPayload payload:FlightComputerTelemetryClient.snapshots()){
+            if(!FlightRouteTelemetryClient.isFlightControlActive(payload.controllerId())||isMuted(payload.controllerId()))continue;
+            double d=player.distanceToSqr(payload.x(),payload.y(),payload.z());
+            if(d<bestDistance&&d<=MAX_AMBIENT_SOURCE_DISTANCE*MAX_AMBIENT_SOURCE_DISTANCE){bestDistance=d;best=payload;}
         }
-
-        String mode = SoundPhysicsCompat.mode();
-        if (!mode.equals(lastLoggedMode)) lastLoggedMode = mode;
-
-        LocalPlayer player = minecraft.player;
-        FlightComputerNetwork.TelemetryPayload best = null;
-        double bestDistance = Double.MAX_VALUE;
-
-        for (FlightComputerNetwork.TelemetryPayload payload : FlightComputerTelemetryClient.snapshots()) {
-            if (!FlightRouteTelemetryClient.isStabiliserActive(payload.controllerId())) continue;
-            if (isMuted(payload.controllerId())) continue;
-
-            double distance = player.distanceToSqr(payload.x(), payload.y(), payload.z());
-            if (distance < bestDistance && distance <= MAX_AMBIENT_SOURCE_DISTANCE * MAX_AMBIENT_SOURCE_DISTANCE) {
-                bestDistance = distance;
-                best = payload;
-            }
-        }
-
-        if (best == null) {
-            stopAmbient();
-            sableRefreshCooldown = 0;
-            SableAcousticCache.tick(null);
-            return;
-        }
-
-        UUID id = best.controllerId();
-        if (activeController == null || !id.equals(activeController)) {
-            stopAmbient();
-            activeController = id;
-            sableRefreshCooldown = 0;
-        }
-
-        SableAcousticCache.registerSource(new net.minecraft.world.phys.Vec3(best.x(), best.y(), best.z()));
-
-        if (activeDrone == null || activeDrone.isStopped()) {
-            activeDrone = new AmbientLoop(ModSounds.AMBIENT_DRONE.get(), best, DRONE_VOLUME, false);
-            minecraft.getSoundManager().play(activeDrone);
-        } else {
-            activeDrone.setTelemetry(best);
-            activeDrone.setBaseVolume(DRONE_VOLUME);
-        }
-
-        double speed = safeSpeed(best.speed());
-        double intensity = smoothStep(PROPULSION_START_SPEED, PROPULSION_FULL_SPEED, speed);
-
-        if (intensity <= 0.001D) {
-            stopPropulsion();
-        } else if (activePropulsion == null || activePropulsion.isStopped()) {
-            activePropulsion = new AmbientLoop(ModSounds.AMBIENT_FLIGHT.get(), best, PROPULSION_MAX_VOLUME, true);
-            activePropulsion.setIntensity((float) intensity);
-            minecraft.getSoundManager().play(activePropulsion);
-        } else {
-            activePropulsion.setTelemetry(best);
-            activePropulsion.setIntensity((float) intensity);
-        }
-
-        // Sound Physics: Aeronautics prepares Sable acoustic snapshots on the client side.
-        // Do the same work here only while a Flight Computer sound is active, and at a bounded
-        // cadence so a sound start cannot force a synchronous raycast burst every tick.
-        if (sableRefreshCooldown <= 0) {
-            SableAcousticCache.tick(minecraft);
-            sableRefreshCooldown = SABLE_REFRESH_INTERVAL_TICKS;
-        } else {
-            sableRefreshCooldown--;
-        }
+        if(best==null){stopAmbient();sableRefreshCooldown=0;SableAcousticCache.tick(null);return;}
+        UUID id=best.controllerId();
+        if(activeController==null||!id.equals(activeController)){stopAmbient();activeController=id;activeTicks=0;sableRefreshCooldown=0;}
+        activeTicks++; SableAcousticCache.registerSource(new net.minecraft.world.phys.Vec3(best.x(),best.y(),best.z()));
+        if(activeTakeoff==null||activeTakeoff.isStopped()){activeTakeoff=new OneShotLoop(ModSounds.TAKEOFF_INTEGRATED.get(),best,FLIGHT_LOOP_VOLUME);mc.getSoundManager().play(activeTakeoff);}else activeTakeoff.setTelemetry(best);
+        if(activeTicks>=TAKEOFF_HANDOFF_TICKS){float f=(float)Math.max(0.0D,Math.min(1.0D,(activeTicks-TAKEOFF_HANDOFF_TICKS)/(double)TAKEOFF_CROSSFADE_TICKS));
+            if(activeFlightLoop==null||activeFlightLoop.isStopped()){activeFlightLoop=new AmbientLoop(ModSounds.FLIGHT_LOOP_INTEGRATED.get(),best,FLIGHT_LOOP_VOLUME);activeFlightLoop.setFade(f);mc.getSoundManager().play(activeFlightLoop);}else{activeFlightLoop.setTelemetry(best);activeFlightLoop.setFade(f);}
+            if(activeTakeoff!=null&&!activeTakeoff.isStopped()){activeTakeoff.setFade(1.0F-f);if(f>=1.0F)activeTakeoff.stopNow();}}
+        if(activeGhostAmbient==null||activeGhostAmbient.isStopped()){activeGhostAmbient=new AmbientLoop(ModSounds.AMBIENT_FLIGHT_GHOST_2.get(),best,GHOST_AMBIENT_VOLUME);mc.getSoundManager().play(activeGhostAmbient);}else{activeGhostAmbient.setTelemetry(best);activeGhostAmbient.setFade(1.0F);}
+        if(sableRefreshCooldown<=0){SableAcousticCache.tick(mc);sableRefreshCooldown=SABLE_REFRESH_INTERVAL_TICKS;}else sableRefreshCooldown--;
     }
-
-    public static boolean isMuted(UUID controllerId) {
-        return controllerId != null && MUTED.getOrDefault(controllerId, false);
+    public static boolean isMuted(UUID id){return id!=null&&MUTED.getOrDefault(id,false);}
+    public static boolean toggleMuted(UUID id){if(id==null)return false;boolean muted=!isMuted(id);MUTED.put(id,muted);if(muted&&id.equals(activeController))stopAmbient();return muted;}
+    private static void stopAmbient(){if(activeTakeoff!=null)activeTakeoff.stopNow();if(activeFlightLoop!=null)activeFlightLoop.stopNow();if(activeGhostAmbient!=null)activeGhostAmbient.stopNow();activeTakeoff=null;activeFlightLoop=null;activeGhostAmbient=null;activeController=null;activeTicks=0;}
+    private static abstract class PositionalLoop extends AbstractTickableSoundInstance{
+        private FlightComputerNetwork.TelemetryPayload telemetry; private final float maxVolume; private float fade=1.0F;
+        private PositionalLoop(SoundEvent sound,FlightComputerNetwork.TelemetryPayload telemetry,float maxVolume,boolean looping){super(sound,SoundSource.BLOCKS,RandomSource.create());this.telemetry=telemetry;this.maxVolume=maxVolume;this.looping=looping;this.delay=0;this.volume=maxVolume;this.pitch=1.0F;this.attenuation=SoundInstance.Attenuation.LINEAR;this.relative=false;updatePosition();}
+        @Override public void tick(){Minecraft mc=Minecraft.getInstance();if(mc.player==null||mc.player.isRemoved()){stop();return;}if(!FlightRouteTelemetryClient.isFlightControlActive(activeController)){stop();return;}updatePosition();this.volume+=((maxVolume*fade)-this.volume)*0.12F;}
+        private void setTelemetry(FlightComputerNetwork.TelemetryPayload telemetry){if(telemetry!=null)this.telemetry=telemetry;}
+        private void setFade(float fade){this.fade=Math.max(0.0F,Math.min(1.0F,fade));}
+        private void updatePosition(){if(telemetry==null){stop();return;}this.x=telemetry.x();this.y=telemetry.y();this.z=telemetry.z();}
+        private void stopNow(){stop();}
     }
-
-    public static boolean toggleMuted(UUID controllerId) {
-        if (controllerId == null) return false;
-        boolean muted = !isMuted(controllerId);
-        MUTED.put(controllerId, muted);
-        if (muted && controllerId.equals(activeController)) stopAmbient();
-        return muted;
-    }
-
-    private static void stopAmbient() {
-        if (activeDrone != null) activeDrone.stopNow();
-        if (activePropulsion != null) activePropulsion.stopNow();
-        activeDrone = null;
-        activePropulsion = null;
-        activeController = null;
-    }
-
-    private static void stopPropulsion() {
-        if (activePropulsion != null) activePropulsion.stopNow();
-        activePropulsion = null;
-    }
-
-    private static double safeSpeed(double value) {
-        return Double.isFinite(value) ? Math.max(0.0D, value) : 0.0D;
-    }
-
-    private static double smoothStep(double edge0, double edge1, double value) {
-        if (edge1 <= edge0) return value >= edge1 ? 1.0D : 0.0D;
-        double x = Math.max(0.0D, Math.min(1.0D, (value - edge0) / (edge1 - edge0)));
-        return x * x * (3.0D - 2.0D * x);
-    }
-
-    private static final class AmbientLoop extends AbstractTickableSoundInstance {
-        private FlightComputerNetwork.TelemetryPayload telemetry;
-        private final float maxVolume;
-        private final boolean intensityScaled;
-        private float intensity = 1.0F;
-
-        private AmbientLoop(SoundEvent sound, FlightComputerNetwork.TelemetryPayload telemetry,
-                            float maxVolume, boolean intensityScaled) {
-            super(sound, SoundSource.BLOCKS, RandomSource.create());
-            this.telemetry = telemetry;
-            this.maxVolume = maxVolume;
-            this.intensityScaled = intensityScaled;
-            this.looping = true;
-            this.delay = 0;
-            this.volume = maxVolume;
-            this.pitch = 1.0F;
-            this.attenuation = SoundInstance.Attenuation.LINEAR;
-            this.relative = false;
-            updatePosition();
-        }
-
-        @Override public void tick() {
-            Minecraft minecraft = Minecraft.getInstance();
-            if (minecraft.player == null || minecraft.player.isRemoved()) {
-                stop();
-                return;
-            }
-            if (!FlightRouteTelemetryClient.isStabiliserActive(activeController)) {
-                stop();
-                return;
-            }
-            updatePosition();
-            float targetVolume = intensityScaled
-                    ? maxVolume * Math.max(0.0F, Math.min(1.0F, intensity))
-                    : maxVolume;
-            this.volume += (targetVolume - this.volume) * 0.12F;
-            if (intensityScaled) {
-                this.pitch = 0.92F + 0.16F * Math.max(0.0F, Math.min(1.0F, intensity));
-            }
-        }
-
-        private void setTelemetry(FlightComputerNetwork.TelemetryPayload telemetry) {
-            if (telemetry != null) this.telemetry = telemetry;
-        }
-
-        private void setBaseVolume(float volume) {
-            if (!intensityScaled) this.volume += (volume - this.volume) * 0.12F;
-        }
-
-        private void setIntensity(float intensity) {
-            this.intensity = intensity;
-        }
-
-        private void updatePosition() {
-            if (telemetry == null) {
-                stop();
-                return;
-            }
-            this.x = telemetry.x();
-            this.y = telemetry.y();
-            this.z = telemetry.z();
-        }
-
-        private void stopNow() { stop(); }
-    }
+    private static final class AmbientLoop extends PositionalLoop{private AmbientLoop(SoundEvent s,FlightComputerNetwork.TelemetryPayload t,float v){super(s,t,v,true);}}
+    private static final class OneShotLoop extends PositionalLoop{private OneShotLoop(SoundEvent s,FlightComputerNetwork.TelemetryPayload t,float v){super(s,t,v,false);}}
 }
