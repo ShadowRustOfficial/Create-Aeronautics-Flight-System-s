@@ -3,15 +3,14 @@ package com.flightcomputer.client;
 import com.flightcomputer.map.FlightContact;
 import com.flightcomputer.map.FlightContactRegistry;
 import com.flightcomputer.network.FlightComputerNetwork;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Client cache for authoritative flight-controller telemetry.
- *
- * The data is deliberately not rendered as a global HUD. Navigation telemetry belongs to the
- * Navigation Console, while object-specific diagnostics are exposed through Create goggles.
- */
+/** Client cache for authoritative flight-controller telemetry. */
 public final class FlightComputerTelemetryClient {
     private static final Map<UUID, FlightComputerNetwork.TelemetryPayload> SNAPSHOTS = new ConcurrentHashMap<>();
 
@@ -28,5 +27,9 @@ public final class FlightComputerTelemetryClient {
 
     public static FlightComputerNetwork.TelemetryPayload get(UUID id) {
         return id == null ? null : SNAPSHOTS.get(id);
+    }
+
+    public static List<FlightComputerNetwork.TelemetryPayload> snapshots() {
+        return new ArrayList<>(SNAPSHOTS.values());
     }
 }
