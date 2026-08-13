@@ -4,6 +4,7 @@ import com.flightcomputer.registry.ModBlockEntities;
 import com.flightcomputer.registry.ModBlocks;
 import com.flightcomputer.registry.ModItems;
 import com.flightcomputer.registry.ModCreativeTabs;
+import com.flightcomputer.registry.ModSounds;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -19,6 +20,7 @@ public final class FlightComputer {
         ModItems.REGISTRY.register(modBus);
         ModBlockEntities.REGISTRY.register(modBus);
         ModCreativeTabs.REGISTRY.register(modBus);
+        ModSounds.REGISTRY.register(modBus);
 
         modBus.addListener(FlightComputerCapabilities::register);
         modContainer.registerConfig(ModConfig.Type.COMMON, FlightComputerConfig.SPEC);
