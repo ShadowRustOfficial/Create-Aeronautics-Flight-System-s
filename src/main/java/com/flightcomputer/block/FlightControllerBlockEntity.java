@@ -89,6 +89,8 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     private int thermalHistoryCursor;
     private final double[] thermalHistory = new double[180];
     private int syncCooldown;
+    /** Controller-local emergency audio cooldown; 200 ticks = 10 seconds. */
+    private int emergencySoundCooldownTicks;
 
     private Boolean renderedEngaged;
     private Boolean renderedStabiliser;
@@ -188,8 +190,10 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
 
         if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) {
             energyStorage.extractEnergy(energyStorage.getEnergyStored(), false);
-            if (level != null && !level.isClientSide) {
+            if (level != null && !level.isClientSide && emergencySoundCooldownTicks <= 0) {
                 level.playSound(null, worldPosition, ModSounds.EMERGENCY_SHUTDOWN.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+                level.playSound(null, worldPosition, ModSounds.ENGINE_POWERING_DOWN.get(), SoundSource.BLOCKS, 0.9F, 1.0F);
+                emergencySoundCooldownTicks = 200;
             }
         }
 
@@ -208,6 +212,7 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
     public void serverTick() {
         if (level == null || level.isClientSide) return;
         if (thermalCooldownTicks > 0) thermalCooldownTicks--;
+        if (emergencySoundCooldownTicks > 0) emergencySoundCooldownTicks--;
 
         updatePowerState();
         CoolingUpgradeItem.Tier cooling = getCoolingTierInternal();
