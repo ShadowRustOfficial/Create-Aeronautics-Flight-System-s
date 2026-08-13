@@ -1,7 +1,6 @@
 package com.flightcomputer.control;
 
 import net.minecraft.world.phys.Vec3;
-import java.util.ArrayList;
 import java.util.List;
 
 /** Receding-horizon route planner used by the autopilot and the map route preview. */
@@ -89,7 +88,6 @@ public final class MPCNavigator {
         if(distanceForSpeed>6.0) desiredSpeed=Math.max(desiredSpeed,Math.min(maxSpeed,6.0));
 
         double headingOffset=Math.toDegrees(normalizeRadians(bearing-targetBearing(state)));
-        double hysteresis=Math.abs(headingOffset-lastChosenHeadingOffsetDeg)<1.0e-6?-HYSTERESIS_BONUS:0.0;
         lastChosenHeadingOffsetDeg=headingOffset;
 
         double horizontalSpeed=segFlat<1.0e-6?0.0:Math.min(desiredSpeed,Math.max(0.0,segFlat*1.5));
@@ -127,7 +125,9 @@ public final class MPCNavigator {
             for(double vy:vertical){
                 Vec3 candidate=new Vec3(state.x+Math.sin(h)*lookahead,state.y+vy,state.z+Math.cos(h)*lookahead);
                 if(!segmentClear(state,candidate,Math.max(.5,state.boundingRadius),Math.max(.5,state.boundingHalfHeight))) continue;
-                if(!segmentClear(new VehicleState(){ {x=candidate.x;y=candidate.y;z=candidate.z;} },target,Math.max(.5,state.boundingRadius),Math.max(.5,state.boundingHalfHeight))) continue;
+                VehicleState candidateState = new VehicleState();
+                candidateState.x = candidate.x; candidateState.y = candidate.y; candidateState.z = candidate.z;
+                if(!segmentClear(candidateState,target,Math.max(.5,state.boundingRadius),Math.max(.5,state.boundingHalfHeight))) continue;
                 double score=candidate.distanceTo(target)+candidate.distanceTo(new Vec3(state.x,state.y,state.z))*0.15+Math.abs(offset)*0.12+Math.abs(vy)*0.6;
                 if(score<bestScore){bestScore=score;best=candidate;}
             }
