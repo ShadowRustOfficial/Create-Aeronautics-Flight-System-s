@@ -81,13 +81,16 @@ public final class AutoTuneRuntimeBridge {
         @Override public Vec3 getMaxAngularAcceleration() {
             double tx = 0, ty = 0, tz = 0;
             for (Thruster t : thrusters) {
-                Vec3 r = t.mountOffset();
-                Vec3 f = t.direction().mul(t.maxThrust());
+                Vector3d r = t.mountOffset();
+                Vector3d f = new Vector3d(t.direction()).mul(t.maxThrust());
                 tx += Math.abs(r.y * f.z - r.z * f.y);
                 ty += Math.abs(r.z * f.x - r.x * f.z);
                 tz += Math.abs(r.x * f.y - r.y * f.x);
             }
-            return new Vec3(tx / Math.max(state.inertiaPitch, 1.0e-3), ty / Math.max(state.inertiaYaw, 1.0e-3), tz / Math.max(state.inertiaRoll, 1.0e-3));
+            return new Vec3(
+                    tx / Math.max(state.inertiaPitch, 1.0e-3),
+                    ty / Math.max(state.inertiaYaw, 1.0e-3),
+                    tz / Math.max(state.inertiaRoll, 1.0e-3));
         }
         @Override public InertiaTensor getInertiaTensor() { return new InertiaTensor(state.inertiaPitch, state.inertiaRoll, state.inertiaYaw); }
         @Override public List<Thruster> getThrusters() { return thrusters; }
