@@ -2,6 +2,7 @@ package com.flightcomputer.integration.soundphysics;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.BlockHitResult;
@@ -80,7 +81,7 @@ public final class SableAcousticCache {
             return;
         }
 
-        Vec3 listener = minecraft.gameRenderer.mainCamera().position();
+        Vec3 listener = minecraft.player.getEyePosition();
         List<Entry> entries = new ArrayList<>();
         for (SourceRegistration registration : SOURCES.values()) {
             try {
@@ -162,7 +163,7 @@ public final class SableAcousticCache {
                 hit = getter.clip(new ClipContext(start, to,
                         ClipContext.Block.COLLIDER,
                         ClipContext.Fluid.NONE,
-                        null));
+                        (Entity) null));
             } catch (Throwable ignored) {
                 break;
             }
@@ -192,8 +193,6 @@ public final class SableAcousticCache {
             if (sableInit) return;
             try {
                 if (!net.neoforged.fml.ModList.get().isLoaded("sable")) {
-                    // Mark the probe complete. The mod list is fixed for this runtime, so
-                    // retrying every client tick would provide no benefit.
                     sableInit = true;
                     return;
                 }
