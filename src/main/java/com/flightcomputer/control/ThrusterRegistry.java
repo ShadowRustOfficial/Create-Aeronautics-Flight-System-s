@@ -28,10 +28,6 @@ public final class ThrusterRegistry {
         lastRefreshTick = gameTime;
         refreshBank(level, controllerPos, FlightMode.STABILIZE, stabiliserLinks);
 
-        // Autopilot does not require a second physical set of thrusters. If a direction has not
-        // explicitly been assigned to the CRUISE bank, inherit that direction from the existing
-        // stabiliser bank. This preserves explicit CRUISE assignments while allowing a vessel
-        // linked once through the Flight Link Tool to be controlled by both systems.
         Map<VectorDirection, BlockPos> effectiveAutopilotLinks = new EnumMap<>(VectorDirection.class);
         if (stabiliserLinks != null) effectiveAutopilotLinks.putAll(stabiliserLinks);
         if (autopilotLinks != null) effectiveAutopilotLinks.putAll(autopilotLinks);
@@ -42,10 +38,12 @@ public final class ThrusterRegistry {
                              Map<VectorDirection, BlockPos> assignments) {
         Map<VectorDirection, List<ThrusterLink>> bank = links.get(mode);
         for (List<ThrusterLink> value : bank.values()) value.clear();
-        if (assignments == null || assignments.isEmpty()) return;
 
-        for (Map.Entry<VectorDirection, BlockPos> entry : assignments.entrySet())
-            addExplicit(level, controllerPos, mode, entry.getKey(), entry.getValue(), bank);
+        boolean explicitLinks = assignments != null && !assignments.isEmpty();
+        if (explicitLinks) {
+            for (Map.Entry<VectorDirection, BlockPos> entry : assignments.entrySet())
+                addExplicit(level, controllerPos, mode, entry.getKey(), entry.getValue(), bank);
+        }
 
         BlockPos min = controllerPos.offset(-DISCOVERY_RADIUS, -DISCOVERY_RADIUS, -DISCOVERY_RADIUS);
         BlockPos max = controllerPos.offset(DISCOVERY_RADIUS, DISCOVERY_RADIUS, DISCOVERY_RADIUS);
@@ -54,14 +52,23 @@ public final class ThrusterRegistry {
             BlockEntity blockEntity = level.getBlockEntity(scanPos);
             if (blockEntity == null) continue;
             double[] offset = mountOffset(controllerPos, scanPos);
-            for (VectorDirection direction : VectorDirection.values()) {
-                if (!assignments.containsKey(direction)) continue;
-                PropulsionSource source = ReflectivePropulsionSource.tryCreate(blockEntity, direction, offset);
-                if (!(source instanceof ReflectivePropulsionSource reflective)) continue;
-                // The direction is the thruster's local vehicle direction. ThrustAllocator applies
-                // the Sable vehicle rotation once, so we must not pre-rotate it here.
-                if (reflective.getPhysicalDirection() != direction) continue;
-                addIfUnique(bank.get(direction), new ThrusterLink(source, direction, mode));
+            if (explicitLinks) {
+                for (VectorDirection direction : VectorDirection.values()) {
+                    if (!assignments.containsKey(direction)) continue;
+                    PropulsionSource source = ReflectivePropulsionSource.tryCreate(blockEntity, direction, offset);
+                    if (!(source instanceof ReflectivePropulsionSource reflective)) continue;
+                    if (reflective.getPhysicalDirection() != direction) continue;
+                    addIfUnique(bank.get(direction), new ThrusterLink(source, direction, mode));
+                }
+            } else {
+                // No links configured: compatible propulsion blocks inside the controller's
+                // discovery envelope become the automatic actuator banks for this sublevel.
+                for (VectorDirection direction : VectorDirection.values()) {
+                    PropulsionSource source = ReflectivePropulsionSource.tryCreate(blockEntity, direction, offset);
+                    if (!(source instanceof ReflectivePropulsionSource reflective)) continue;
+                    if (reflective.getPhysicalDirection() != direction) continue;
+                    addIfUnique(bank.get(direction), new ThrusterLink(source, direction, mode));
+                }
             }
         }
     }
@@ -70,10 +77,6 @@ public final class ThrusterRegistry {
                              VectorDirection direction, BlockPos storedTarget,
                              Map<VectorDirection, List<ThrusterLink>> bank) {
         if (storedTarget == null || direction == null) return;
-
-        // The link tool currently sends/stores the actual clicked BlockPos, while older patches
-        // described the value as a controller-local offset. Resolve both forms so existing saved
-        // controllers keep working and newly linked thrusters are not double-offset into nowhere.
         BlockPos absoluteTarget = storedTarget;
         BlockEntity direct = level.getBlockEntity(absoluteTarget);
         PropulsionSource directSource = direct == null ? null
@@ -107,14 +110,12 @@ public final class ThrusterRegistry {
 
     public void link(ThrusterLink link) { if (link != null) addIfUnique(links.get(link.mode).get(link.direction), link); }
     public List<ThrusterLink> getLinks(FlightMode mode, VectorDirection direction) { return Collections.unmodifiableList(links.get(mode).get(direction)); }
-
     public List<ThrusterLink> getAllLinks(FlightMode mode) {
         LinkedHashMap<String, ThrusterLink> unique = new LinkedHashMap<>();
         for (VectorDirection direction : VectorDirection.values())
             for (ThrusterLink link : links.get(mode).get(direction)) unique.putIfAbsent(link.source.getId(), link);
         return List.copyOf(unique.values());
     }
-
     public List<ThrusterLink> getLinks(FlightMode mode, ControlAxis axis) {
         List<ThrusterLink> result = new ArrayList<>();
         for (VectorDirection direction : VectorDirection.values()) {
@@ -125,7 +126,6 @@ public final class ThrusterRegistry {
         }
         return Collections.unmodifiableList(result);
     }
-
     public List<ThrusterLink> getAllLinks() {
         LinkedHashMap<String, ThrusterLink> unique = new LinkedHashMap<>();
         for (FlightMode mode : FlightMode.values())
@@ -133,7 +133,6 @@ public final class ThrusterRegistry {
                 for (ThrusterLink link : links.get(mode).get(direction)) unique.putIfAbsent(link.source.getId(), link);
         return List.copyOf(unique.values());
     }
-
     public double getVectorAuthority(FlightMode mode, VectorDirection direction) {
         double total = 0;
         for (ThrusterLink link : links.get(mode).get(direction)) total += Math.max(0, link.source.getAvailableThrust());
