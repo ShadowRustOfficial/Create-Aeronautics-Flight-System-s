@@ -23,7 +23,7 @@ public final class FlightComputerSoundClient {
     private static UUID activeController;
     private static String lastLoggedMode = "";
 
-    // Flight telemetry is expressed in blocks per tick in the current runtime.
+    // Flight telemetry is expressed in the runtime's current speed units.
     private static final double PROPULSION_START_SPEED = 0.15D;
     private static final double PROPULSION_FULL_SPEED = 1.60D;
     private static final float DRONE_VOLUME = 0.17F;
@@ -67,6 +67,7 @@ public final class FlightComputerSoundClient {
             activeController = id;
         }
 
+        // Quiet continuous drone while Stabiliser is active.
         if (activeDrone == null || activeDrone.isStopped()) {
             activeDrone = new AmbientLoop(ModSounds.AMBIENT_DRONE.get(), best, DRONE_VOLUME, false);
             minecraft.getSoundManager().play(activeDrone);
@@ -75,13 +76,15 @@ public final class FlightComputerSoundClient {
             activeDrone.setBaseVolume(DRONE_VOLUME);
         }
 
+        // Deep flight ambience is a separate loop whose intensity follows speed.
+        // It fades out and stops when the aircraft settles rather than behaving like a flyby.
         double speed = safeSpeed(best.speed());
         double intensity = smoothStep(PROPULSION_START_SPEED, PROPULSION_FULL_SPEED, speed);
 
         if (intensity <= 0.001D) {
             stopPropulsion();
         } else if (activePropulsion == null || activePropulsion.isStopped()) {
-            activePropulsion = new AmbientLoop(ModSounds.AMBIENT_SHIP.get(), best, PROPULSION_MAX_VOLUME, true);
+            activePropulsion = new AmbientLoop(ModSounds.AMBIENT_FLIGHT.get(), best, PROPULSION_MAX_VOLUME, true);
             activePropulsion.setIntensity((float) intensity);
             minecraft.getSoundManager().play(activePropulsion);
         } else {
@@ -161,6 +164,11 @@ public final class FlightComputerSoundClient {
                     ? maxVolume * Math.max(0.0F, Math.min(1.0F, intensity))
                     : maxVolume;
             this.volume += (targetVolume - this.volume) * 0.12F;
+
+            // A small pitch lift reinforces acceleration without trying to synthesize Doppler.
+            if (intensityScaled) {
+                this.pitch = 0.92F + 0.16F * Math.max(0.0F, Math.min(1.0F, intensity));
+            }
         }
 
         private void setTelemetry(FlightComputerNetwork.TelemetryPayload telemetry) {
