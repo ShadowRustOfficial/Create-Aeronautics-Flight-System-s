@@ -1,5 +1,6 @@
 package com.flightcomputer.client;
 
+import com.flightcomputer.avionics.FlightMode;
 import com.flightcomputer.network.FlightRouteTelemetryNetwork;
 
 import java.util.Map;
@@ -34,5 +35,15 @@ public final class FlightRouteTelemetryClient {
     public static boolean isStabiliserActive(UUID controllerId) {
         FlightRouteTelemetryNetwork.RouteStatePayload payload = get(controllerId);
         return payload != null && payload.stabiliser();
+    }
+
+    public static boolean isAutopilotActive(UUID controllerId) {
+        FlightRouteTelemetryNetwork.RouteStatePayload payload = get(controllerId);
+        return payload != null && payload.engaged() && payload.mode() == FlightMode.AUTOPILOT.ordinal();
+    }
+
+    /** True when either stabilisation or autopilot is actively controlling the vessel. */
+    public static boolean isFlightControlActive(UUID controllerId) {
+        return isStabiliserActive(controllerId) || isAutopilotActive(controllerId);
     }
 }
