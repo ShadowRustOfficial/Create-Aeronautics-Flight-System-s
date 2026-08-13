@@ -1,7 +1,7 @@
 {
-  "stabiliser_ambient": {
+  "ambient_ship": {
     "sounds": [
-      {"name": "flightcomputer:stabiliser_ambient", "stream": true}
+      {"name": "flightcomputer:ambient_ship", "stream": true}
     ],
     "replace": true
   },
@@ -9,12 +9,16 @@
     "sounds": ["flightcomputer:engine_heat_critical"],
     "replace": true
   },
-  "engine_overheat": {
-    "sounds": ["flightcomputer:engine_overheat"],
+  "warning_engine_overheat": {
+    "sounds": ["flightcomputer:warning_engine_overheat"],
     "replace": true
   },
   "fire_systems_active": {
     "sounds": ["flightcomputer:fire_systems_active"],
+    "replace": true
+  },
+  "fire_neutralised": {
+    "sounds": ["flightcomputer:fire_neutralised"],
     "replace": true
   },
   "emergency_shutdown": {
