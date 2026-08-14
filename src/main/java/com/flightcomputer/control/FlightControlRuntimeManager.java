@@ -215,9 +215,12 @@ public final class FlightControlRuntimeManager {
             // previous controller-applied wrench so the remainder represents Gravity, Drag, Lift,
             // Levitation, Balloon Lift, Magnetic, Impact/Recoil and other non-controller forces.
             if (previousSnapshot != null) {
-                state.ax = finite((state.vx - previousSnapshot.vx) * 20.0D) ? (state.vx - previousSnapshot.vx) * 20.0D : 0.0D;
-                state.ay = finite((state.vy - previousSnapshot.vy) * 20.0D) ? (state.vy - previousSnapshot.vy) * 20.0D : 0.0D;
-                state.az = finite((state.vz - previousSnapshot.vz) * 20.0D) ? (state.vz - previousSnapshot.vz) * 20.0D : 0.0D;
+                double deltaVx = (state.vx - previousSnapshot.vx) * 20.0D;
+                double deltaVy = (state.vy - previousSnapshot.vy) * 20.0D;
+                double deltaVz = (state.vz - previousSnapshot.vz) * 20.0D;
+                state.ax = Double.isFinite(deltaVx) ? deltaVx : 0.0D;
+                state.ay = Double.isFinite(deltaVy) ? deltaVy : 0.0D;
+                state.az = Double.isFinite(deltaVz) ? deltaVz : 0.0D;
 
                 double commandedFx = computer == null ? 0.0D : computer.getAllocator().getLastWorldForceX();
                 double commandedFy = computer == null ? 0.0D : computer.getAllocator().getLastWorldForceY();
