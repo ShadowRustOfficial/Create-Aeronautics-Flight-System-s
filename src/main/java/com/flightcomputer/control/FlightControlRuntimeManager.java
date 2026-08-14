@@ -128,6 +128,7 @@ public final class FlightControlRuntimeManager {
     }
 
     private static boolean finite(Vec3 v) { return Double.isFinite(v.x) && Double.isFinite(v.y) && Double.isFinite(v.z); }
+    private static boolean finite(double value) { return Double.isFinite(value); }
     private static double safeSpeed(double x, double y, double z) {
         double speed = Math.sqrt(x * x + y * y + z * z);
         return Double.isFinite(speed) ? speed : 0.0D;
