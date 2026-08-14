@@ -86,19 +86,10 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
     @Override public double getAvailableThrust() {
         if (!isEnabled() || !isOperational()) return 0.0D;
 
-        // Create Propulsion: Simulated exposes the actual control state through getThrottle().
-        // A thruster with zero redstone/control input is not available to the flight allocator.
-        Object throttleValue = invoke(accessor.throttle);
-        if (throttleValue instanceof Number number && number.doubleValue() <= 0.0D) return 0.0D;
-
-        if (!accessor.creative(blockEntity)) {
-            if (accessor.fuelAmount != null) {
-                Object amount = invoke(accessor.fuelAmount);
-                if (amount instanceof Number a && a.doubleValue() <= 0.0D && accessor.requiresFuel(blockEntity)) return 0.0D;
-            } else if (!hasPower()) {
-                return 0.0D;
-            }
-        }
+        // IMPORTANT: redstone/control input is the command we are trying to generate, not a
+        // prerequisite for actuator discovery. Treating getThrottle()==0 as unavailable creates
+        // a deadlock where the allocator can never command a newly discovered thruster.
+        if (!accessor.creative(blockEntity) && accessor.requiresFuel(blockEntity) && !hasPower()) return 0.0D;
         return Math.max(0.0D, getMaxThrust());
     }
 
@@ -172,7 +163,6 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
         // configured pN value is held by CreativeThrusterPowerScrollValueBehaviour.
         if (accessor.creative(blockEntity)) {
             setCreativeTargetThrust(fraction * getMaxThrust());
-            // The creative thruster still requires a positive throttle/redstone signal to run.
             if (accessor.redstonePower != null) {
                 invokeInt(accessor.redstonePower, fraction <= 0.0D ? 0 : 15);
             }
@@ -316,9 +306,6 @@ public final class ReflectivePropulsionSource implements PropulsionSource {
         }
 
         boolean requiresFuel(BlockEntity blockEntity) {
-            // Create Propulsion: Simulated's standard thruster uses a fuel tank; Creative overrides
-            // usesFuelTank() to false. We use the concrete override when it is exposed, otherwise
-            // the presence of a fuel amount/capacity pair is the safe fallback.
             if (creative(blockEntity)) return false;
             return fuelAmount != null && fuelCapacity != null;
         }
