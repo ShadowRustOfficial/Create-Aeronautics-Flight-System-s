@@ -35,6 +35,30 @@
     ],
     "replace": true
   },
+  "ui_toggle_on": {
+    "sounds": ["flightcomputer:ui_toggle_on"],
+    "replace": true
+  },
+  "ui_toggle_off": {
+    "sounds": ["flightcomputer:ui_toggle_off"],
+    "replace": true
+  },
+  "ui_open": {
+    "sounds": ["flightcomputer:ui_open"],
+    "replace": true
+  },
+  "ui_interact": {
+    "sounds": ["flightcomputer:ui_interact"],
+    "replace": true
+  },
+  "ui_discover": {
+    "sounds": ["flightcomputer:ui_open"],
+    "replace": true
+  },
+  "tilt_warning": {
+    "sounds": ["flightcomputer:tilt_warning"],
+    "replace": true
+  },
   "engine_heat_critical": {
     "sounds": ["flightcomputer:engine_heat_critical"],
     "replace": true
