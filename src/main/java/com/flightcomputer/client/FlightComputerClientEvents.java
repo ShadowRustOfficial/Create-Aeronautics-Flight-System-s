@@ -20,6 +20,7 @@ public final class FlightComputerClientEvents {
     @SubscribeEvent
     public static void clientTick(ClientTickEvent.Post event) {
         FlightComputerSoundClient.tick();
+        FlightComputerTiltWarningClient.tick();
     }
 
     @SubscribeEvent
@@ -28,6 +29,7 @@ public final class FlightComputerClientEvents {
         if (!(screen instanceof NavigationConsoleScreen console)) return;
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null) return;
+
         var be = minecraft.level.getBlockEntity(console.controllerPos());
         if (!(be instanceof FlightControllerBlockEntity controller)) return;
 
