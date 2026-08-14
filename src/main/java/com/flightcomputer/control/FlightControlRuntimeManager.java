@@ -138,6 +138,9 @@ public final class FlightControlRuntimeManager {
         private VehicleState snapshot;
         private Vec3 previousPosition;
         private double previousYaw, previousPitch, previousRoll;
+        private double filteredExternalForceX, filteredExternalForceY, filteredExternalForceZ;
+        private double filteredExternalTorqueX, filteredExternalTorqueY, filteredExternalTorqueZ;
+        private boolean externalForceInitialised;
         private Vec3 target;
         private String targetName = "";
         private boolean targetActive;
@@ -154,9 +157,11 @@ public final class FlightControlRuntimeManager {
             Level level = controller.getLevel();
             Vec3 local = Vec3.atCenterOf(controller.getBlockPos());
 
+            VehicleState previousSnapshot = snapshot == null ? null : snapshot.copy();
+            VehicleState state = snapshot == null ? new VehicleState() : snapshot.copy();
+
             Object subLevel = containing(level, controller, local);
             Vec3 world = project(subLevel, level, local);
-            VehicleState state = snapshot == null ? new VehicleState() : snapshot;
             state.x = world.x; state.y = world.y; state.z = world.z;
             state.bodyBackYawOffset = controllerBackYawOffset(controller);
 
@@ -191,6 +196,12 @@ public final class FlightControlRuntimeManager {
                 double halfHeight=readDouble(subLevel,"getBoundingHalfHeight","boundingHalfHeight","getHalfHeight"); if(halfHeight>0)state.boundingHalfHeight=Math.max(1,halfHeight);
             } catch (ReflectiveOperationException|RuntimeException ignored) { }
 
+            // Sable's actual MassData is authoritative. This provides the merged mass, COM and
+            // full inertia tensor, including merged/kinematic masses, without compile-time Sable imports.
+            if (subLevel != null && SableDynamicsReader.readMassData(subLevel, state, local)) {
+                physicalInertia = true;
+            }
+
             if(!physicalVelocity&&previousPosition!=null){
                 state.vx=(world.x-previousPosition.x)*20;
                 state.vy=(world.y-previousPosition.y)*20;
@@ -202,6 +213,52 @@ public final class FlightControlRuntimeManager {
                 state.pitchRate=angleDelta(state.pitch,previousPitch)*20;
                 state.rollRate=angleDelta(state.roll,previousRoll)*20;
             }
+
+            // Derive acceleration from the authoritative Sable velocity stream. Subtract the
+            // previous controller-applied wrench so the remainder represents Gravity, Drag, Lift,
+            // Levitation, Balloon Lift, Magnetic, Impact/Recoil and other non-controller forces.
+            if (previousSnapshot != null) {
+                state.ax = finite((state.vx - previousSnapshot.vx) * 20.0D) ? (state.vx - previousSnapshot.vx) * 20.0D : 0.0D;
+                state.ay = finite((state.vy - previousSnapshot.vy) * 20.0D) ? (state.vy - previousSnapshot.vy) * 20.0D : 0.0D;
+                state.az = finite((state.vz - previousSnapshot.vz) * 20.0D) ? (state.vz - previousSnapshot.vz) * 20.0D : 0.0D;
+
+                double commandedFx = computer == null ? 0.0D : computer.getAllocator().getLastWorldForceX();
+                double commandedFy = computer == null ? 0.0D : computer.getAllocator().getLastWorldForceY();
+                double commandedFz = computer == null ? 0.0D : computer.getAllocator().getLastWorldForceZ();
+                double commandedTx = computer == null ? 0.0D : computer.getAllocator().getLastWorldTorqueX();
+                double commandedTy = computer == null ? 0.0D : computer.getAllocator().getLastWorldTorqueY();
+                double commandedTz = computer == null ? 0.0D : computer.getAllocator().getLastWorldTorqueZ();
+
+                double externalFx = state.mass * state.ax - commandedFx;
+                double externalFy = state.mass * state.ay - commandedFy;
+                double externalFz = state.mass * state.az - commandedFz;
+
+                double alphaX = (state.pitchRate - previousSnapshot.pitchRate) * 20.0D;
+                double alphaY = (state.yawRate - previousSnapshot.yawRate) * 20.0D;
+                double alphaZ = (state.rollRate - previousSnapshot.rollRate) * 20.0D;
+                Vector3d totalBodyTorque = state.bodyTorqueForAngularAcceleration(alphaX, alphaY, alphaZ);
+                Vector3d commandedBodyTorque = new Vector3d(commandedTx, commandedTy, commandedTz);
+                new org.joml.Quaterniond().rotationY(state.yaw).rotateX(state.pitch).rotateZ(state.roll).conjugate().transform(commandedBodyTorque);
+                Vector3d externalBodyTorque = totalBodyTorque.sub(commandedBodyTorque);
+                Vector3d externalWorldTorque = new org.joml.Quaterniond().rotationY(state.yaw).rotateX(state.pitch).rotateZ(state.roll).transform(externalBodyTorque);
+
+                final double alpha = 0.18D;
+                if (!externalForceInitialised) {
+                    filteredExternalForceX=externalFx; filteredExternalForceY=externalFy; filteredExternalForceZ=externalFz;
+                    filteredExternalTorqueX=externalWorldTorque.x; filteredExternalTorqueY=externalWorldTorque.y; filteredExternalTorqueZ=externalWorldTorque.z;
+                    externalForceInitialised=true;
+                } else {
+                    filteredExternalForceX += alpha * (externalFx - filteredExternalForceX);
+                    filteredExternalForceY += alpha * (externalFy - filteredExternalForceY);
+                    filteredExternalForceZ += alpha * (externalFz - filteredExternalForceZ);
+                    filteredExternalTorqueX += alpha * (externalWorldTorque.x - filteredExternalTorqueX);
+                    filteredExternalTorqueY += alpha * (externalWorldTorque.y - filteredExternalTorqueY);
+                    filteredExternalTorqueZ += alpha * (externalWorldTorque.z - filteredExternalTorqueZ);
+                }
+                state.externalForceX=filteredExternalForceX; state.externalForceY=filteredExternalForceY; state.externalForceZ=filteredExternalForceZ;
+                state.externalTorqueX=filteredExternalTorqueX; state.externalTorqueY=filteredExternalTorqueY; state.externalTorqueZ=filteredExternalTorqueZ;
+            }
+
             state.timestampNanos=System.nanoTime();
             previousPosition=world; previousYaw=state.yaw; previousPitch=state.pitch; previousRoll=state.roll;
             snapshot=state.copy();
