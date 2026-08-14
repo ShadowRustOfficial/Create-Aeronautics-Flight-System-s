@@ -1,11 +1,14 @@
 package com.flightcomputer.control;
 
+import com.flightcomputer.block.FlightControllerBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.phys.Vec3;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.*;
 
@@ -44,6 +47,7 @@ public final class ThrusterRegistry {
                         long gameTime,
                         Object subLevel) {
         if (level == null || controllerPos == null || gameTime == lastRefreshTick && Objects.equals(subLevel, lastSubLevel)) return;
+        if (subLevel == null) subLevel = resolveSubLevel(level, controllerPos);
         lastRefreshTick = gameTime;
         lastSubLevel = subLevel;
         refreshBank(level, controllerPos, FlightMode.STABILIZE, stabiliserLinks, subLevel);
@@ -69,10 +73,6 @@ public final class ThrusterRegistry {
         scanOrdinaryLevel(level, controllerPos, mode, bank);
     }
 
-    /**
-     * Scan the authoritative Sable embedded plot when it is available. The accessor is a BlockGetter,
-     * so the existing propulsion adapter can keep working entirely on block entities/block positions.
-     */
     private boolean scanSablePlot(Level level, BlockPos controllerPos, FlightMode mode,
                                   Map<VectorDirection, List<ThrusterLink>> bank, Object subLevel) {
         try {
@@ -178,6 +178,27 @@ public final class ThrusterRegistry {
         BlockEntity local = level.getBlockEntity(localTarget);
         PropulsionSource localSource = ReflectivePropulsionSource.tryCreate(local, direction, mountOffset(controllerPos, localTarget));
         if (localSource != null) addIfUnique(bank.get(direction), new ThrusterLink(localSource, direction, mode));
+    }
+
+    private static Object resolveSubLevel(Level level, BlockPos controllerPos) {
+        try {
+            BlockEntity be = level.getBlockEntity(controllerPos);
+            if (!(be instanceof FlightControllerBlockEntity controller)) return null;
+            ClassLoader loader = ThrusterRegistry.class.getClassLoader();
+            Class<?> sable = Class.forName("dev.ryanhcode.sable.companion.SableCompanion", false, loader);
+            Field instanceField = sable.getField("INSTANCE");
+            Object instance = instanceField.get(null);
+            if (instance == null) return null;
+            try {
+                Method method = instance.getClass().getMethod("getContaining", BlockEntity.class);
+                return method.invoke(instance, controller);
+            } catch (NoSuchMethodException ignored) { }
+            try {
+                Method method = instance.getClass().getMethod("getContainingPosition", Level.class, Vec3.class);
+                return method.invoke(instance, level, Vec3.atCenterOf(controllerPos));
+            } catch (NoSuchMethodException ignored) { }
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) { }
+        return null;
     }
 
     private static BlockEntity getSubLevelBlockEntity(Object subLevel, BlockPos pos) {
