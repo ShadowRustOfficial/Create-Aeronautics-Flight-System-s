@@ -1,90 +1,21 @@
 {
-  "ambient_ship": {
-    "sounds": [
-      {"name": "flightcomputer:ambient_ship", "stream": true, "attenuation_distance": 32}
-    ],
-    "replace": true
-  },
-  "ambient_drone_quiet": {
-    "sounds": [
-      {"name": "flightcomputer:ambient_drone_quiet", "stream": true, "attenuation_distance": 32}
-    ],
-    "replace": true
-  },
-  "ambient_flight": {
-    "sounds": [
-      {"name": "flightcomputer:ambient_flight", "stream": true, "attenuation_distance": 32}
-    ],
-    "replace": true
-  },
-  "takeoff_integrated": {
-    "sounds": [
-      {"name": "flightcomputer:takeoff_integrated", "stream": true, "attenuation_distance": 32}
-    ],
-    "replace": true
-  },
-  "flight_loop_integrated": {
-    "sounds": [
-      {"name": "flightcomputer:flight_loop_integrated", "stream": true, "attenuation_distance": 32}
-    ],
-    "replace": true
-  },
-  "ambient_flight_ghost_2": {
-    "sounds": [
-      {"name": "flightcomputer:ambient_flight_ghost_2", "stream": true, "attenuation_distance": 32}
-    ],
-    "replace": true
-  },
-  "ui_toggle_on": {
-    "sounds": ["flightcomputer:ui_toggle_on"],
-    "replace": true
-  },
-  "ui_toggle_off": {
-    "sounds": ["flightcomputer:ui_toggle_off"],
-    "replace": true
-  },
-  "ui_open": {
-    "sounds": ["flightcomputer:ui_open"],
-    "replace": true
-  },
-  "ui_interact": {
-    "sounds": ["flightcomputer:ui_interact"],
-    "replace": true
-  },
-  "ui_discover": {
-    "sounds": ["flightcomputer:ui_open"],
-    "replace": true
-  },
-  "tilt_warning": {
-    "sounds": ["flightcomputer:tilt_warning"],
-    "replace": true
-  },
-  "engine_heat_critical": {
-    "sounds": ["flightcomputer:engine_heat_critical"],
-    "replace": true
-  },
-  "warning_engine_overheat": {
-    "sounds": ["flightcomputer:warning_engine_overheat"],
-    "replace": true
-  },
-  "fire_systems_active": {
-    "sounds": ["flightcomputer:fire_systems_active"],
-    "replace": true
-  },
-  "fire_neutralised": {
-    "sounds": ["flightcomputer:fire_neutralised"],
-    "replace": true
-  },
-  "emergency_shutdown": {
-    "sounds": ["flightcomputer:emergency_shutdown"],
-    "replace": true
-  },
-  "engine_powering_down": {
-    "sounds": ["flightcomputer:engine_powering_down"],
-    "replace": true
-  },
-  "flyby_aircraft": {
-    "sounds": ["flightcomputer:flyby_aircraft"],
-    "replace": true
-  }
+  "ambient_ship": {"sounds": [{"name": "flightcomputer:ambient_ship", "stream": true, "attenuation_distance": 32}], "replace": true},
+  "ambient_drone_quiet": {"sounds": [{"name": "flightcomputer:ambient_drone_quiet", "stream": true, "attenuation_distance": 32}], "replace": true},
+  "ambient_flight": {"sounds": [{"name": "flightcomputer:ambient_flight", "stream": true, "attenuation_distance": 32}], "replace": true},
+  "takeoff_integrated": {"sounds": [{"name": "flightcomputer:takeoff_integrated", "stream": true, "attenuation_distance": 32}], "replace": true},
+  "flight_loop_integrated": {"sounds": [{"name": "flightcomputer:flight_loop_integrated", "stream": true, "attenuation_distance": 32}], "replace": true},
+  "ambient_flight_ghost_2": {"sounds": [{"name": "flightcomputer:ambient_flight_ghost_2", "stream": true, "attenuation_distance": 32}], "replace": true},
+  "ui_toggle_on": {"sounds": ["flightcomputer:ui_toggle_on"], "replace": true},
+  "ui_toggle_off": {"sounds": ["flightcomputer:ui_toggle_off"], "replace": true},
+  "ui_open": {"sounds": ["flightcomputer:ui_open"], "replace": true},
+  "ui_interact": {"sounds": ["flightcomputer:ui_interact"], "replace": true},
+  "ui_discover": {"sounds": ["flightcomputer:ui_discover"], "replace": true},
+  "tilt_warning": {"sounds": ["flightcomputer:tilt_warning"], "replace": true},
+  "engine_heat_critical": {"sounds": ["flightcomputer:engine_heat_critical"], "replace": true},
+  "warning_engine_overheat": {"sounds": ["flightcomputer:warning_engine_overheat"], "replace": true},
+  "fire_systems_active": {"sounds": ["flightcomputer:fire_systems_active"], "replace": true},
+  "fire_neutralised": {"sounds": ["flightcomputer:fire_neutralised"], "replace": true},
+  "emergency_shutdown": {"sounds": ["flightcomputer:emergency_shutdown"], "replace": true},
+  "engine_powering_down": {"sounds": ["flightcomputer:engine_powering_down"], "replace": true},
+  "flyby_aircraft": {"sounds": ["flightcomputer:flyby_aircraft"], "replace": true}
 }
