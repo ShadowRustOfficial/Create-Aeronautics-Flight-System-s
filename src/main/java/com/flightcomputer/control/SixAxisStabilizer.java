@@ -1,6 +1,7 @@
 package com.flightcomputer.control;
 
 import com.flightcomputer.control.autotune.TuningResult;
+import org.joml.Vector3d;
 import java.util.EnumMap;
 import java.util.Map;
 
@@ -13,6 +14,7 @@ public final class SixAxisStabilizer {
     private final AxisPID longitudinalPID;
     private final AxisPID lateralPID;
     private final boolean legacyStableProfile;
+    /** Retained for configuration compatibility; gravity is supplied by the live Sable force observer now. */
     public double gravity = 11.0;
 
     public SixAxisStabilizer() { this(false); }
@@ -56,25 +58,34 @@ public final class SixAxisStabilizer {
         double pitchError = wrapAngle(sp.desiredPitch - state.pitch);
         double rollError = wrapAngle(sp.desiredRoll - state.roll);
         double yawError = sp.yawIsRateNotHeading ? sp.desiredYawRate - state.yawRate : wrapAngle(sp.desiredYaw - state.yaw);
-        if (!legacyStableProfile) {
-            double inertiaPitch = Math.max(state.inertiaPitch, 1.0e-3), inertiaRoll = Math.max(state.inertiaRoll, 1.0e-3);
-            double pitchRateDamping = clamp(-3.0 * state.pitchRate * inertiaPitch, -8.0, 8.0);
-            double rollRateDamping = clamp(-3.0 * state.rollRate * inertiaRoll, -8.0, 8.0);
-            out.put(ControlAxis.PITCH, pitchPID.update(pitchError, state.pitch, dt, inertiaPitch) + pitchRateDamping);
-            out.put(ControlAxis.ROLL, rollPID.update(rollError, state.roll, dt, inertiaRoll) + rollRateDamping);
-        } else {
-            out.put(ControlAxis.PITCH, pitchPID.update(pitchError, state.pitch, dt, Math.max(state.inertiaPitch, 1.0e-3)));
-            out.put(ControlAxis.ROLL, rollPID.update(rollError, state.roll, dt, Math.max(state.inertiaRoll, 1.0e-3)));
-        }
-        out.put(ControlAxis.YAW, yawPID.update(yawError, sp.yawIsRateNotHeading ? state.yawRate : state.yaw, dt, Math.max(state.inertiaYaw, 1.0e-3)));
+
+        // AxisPID returns acceleration/angular-acceleration when called with unit scale. The live
+        // inertia tensor is then applied once, avoiding the previous double rate-damping path.
+        double pitchAcceleration = pitchPID.update(pitchError, state.pitch, dt, 1.0D);
+        double rollAcceleration = rollPID.update(rollError, state.roll, dt, 1.0D);
+        double yawAcceleration = yawPID.update(yawError, sp.yawIsRateNotHeading ? state.yawRate : state.yaw, dt, 1.0D);
+        Vector3d requestedTorque = state.bodyTorqueForAngularAcceleration(pitchAcceleration, yawAcceleration, rollAcceleration);
+        Vector3d externalTorque = state.externalTorqueBody();
+        requestedTorque.sub(externalTorque);
+        out.put(ControlAxis.PITCH, requestedTorque.x);
+        out.put(ControlAxis.YAW, requestedTorque.y);
+        out.put(ControlAxis.ROLL, requestedTorque.z);
+
         double mass = Math.max(state.mass, 1.0e-3);
-        out.put(ControlAxis.VERTICAL, verticalPID.update(sp.desiredVerticalVelocity - state.vy, state.vy, dt, mass) + mass * gravity);
+        Vector3d externalForce = state.externalForceBody();
+        double verticalAcceleration = verticalPID.update(sp.desiredVerticalVelocity - state.vy, state.vy, dt, 1.0D);
         double[] bodyVel = state.bodyFrameVelocity();
-        out.put(ControlAxis.LONGITUDINAL, longitudinalPID.update(sp.desiredLongitudinalVelocity - bodyVel[0], bodyVel[0], dt, mass));
-        out.put(ControlAxis.LATERAL, lateralPID.update(sp.desiredLateralVelocity - bodyVel[1], bodyVel[1], dt, mass));
+        double longitudinalAcceleration = longitudinalPID.update(sp.desiredLongitudinalVelocity - bodyVel[0], bodyVel[0], dt, 1.0D);
+        double lateralAcceleration = lateralPID.update(sp.desiredLateralVelocity - bodyVel[1], bodyVel[1], dt, 1.0D);
+
+        // Sable already accounts for Gravity, Drag, Lift, Levitation, Balloon Lift, Magnetic and
+        // other force groups. The controller therefore asks only for the residual force required
+        // to reach the target acceleration instead of adding a second mass*gravity term.
+        out.put(ControlAxis.VERTICAL, verticalAcceleration * mass - externalForce.y);
+        out.put(ControlAxis.LONGITUDINAL, longitudinalAcceleration * mass - externalForce.z);
+        out.put(ControlAxis.LATERAL, lateralAcceleration * mass - externalForce.x);
         return out;
     }
     public void resetAll() { pitchPID.reset(); rollPID.reset(); yawPID.reset(); verticalPID.reset(); longitudinalPID.reset(); lateralPID.reset(); }
     private static double wrapAngle(double radians) { double a = radians % (2 * Math.PI); if (a > Math.PI) a -= 2 * Math.PI; if (a < -Math.PI) a += 2 * Math.PI; return a; }
-    private static double clamp(double value, double min, double max) { return Math.max(min, Math.min(max, value)); }
 }

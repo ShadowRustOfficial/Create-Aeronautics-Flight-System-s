@@ -8,14 +8,23 @@ import java.util.Map;
 
 /** Final allocator: combined controller output is converted into one physical actuator command per thruster. */
 public final class ThrustAllocator {
-    private static final int ITERATIONS = 8;
+    private static final int ITERATIONS = 10;
     private final Map<String, PropulsionSource> lastActiveSources = new LinkedHashMap<>();
     private double lastThermalLoad;
+    private double lastWorldForceX, lastWorldForceY, lastWorldForceZ;
+    private double lastWorldTorqueX, lastWorldTorqueY, lastWorldTorqueZ;
+
     public double getLastThermalLoad() { return lastThermalLoad; }
+    public double getLastWorldForceX() { return lastWorldForceX; }
+    public double getLastWorldForceY() { return lastWorldForceY; }
+    public double getLastWorldForceZ() { return lastWorldForceZ; }
+    public double getLastWorldTorqueX() { return lastWorldTorqueX; }
+    public double getLastWorldTorqueY() { return lastWorldTorqueY; }
+    public double getLastWorldTorqueZ() { return lastWorldTorqueZ; }
 
     public void applyCombined(ThrusterRegistry registry, VehicleState state,
                               Map<ControlAxis, Double> stabiliser, Map<ControlAxis, Double> autopilot) {
-        if (state == null) { hardStop(); lastThermalLoad = 0.0D; return; }
+        if (state == null) { hardStop(); lastThermalLoad = 0.0D; resetLastWrench(); return; }
         Quaterniond vehicleRotation = vehicleRotation(state);
         ControlWrench target = ControlWrench.fromAxes(stabiliser).add(ControlWrench.fromAxes(autopilot)).toWorld(vehicleRotation);
 
@@ -29,26 +38,31 @@ public final class ThrustAllocator {
         if (target.normSquared() <= 1.0e-12 || unique.isEmpty()) {
             hardStop();
             lastThermalLoad = 0.0D;
+            resetLastWrench();
             return;
         }
 
         List<ThrusterLink> sources = List.copyOf(unique.values());
         double[] commands = seedVectorBanks(sources, target, vehicleRotation);
+        double forceScale = Math.max(1.0D, totalAuthority(sources));
+        double torqueScale = Math.max(1.0D, totalTorqueAuthority(sources, state, vehicleRotation));
+
         for (int iteration = 0; iteration < ITERATIONS; iteration++) {
-            double[] achieved = achieved(sources, commands, vehicleRotation);
+            double[] achieved = achieved(sources, commands, vehicleRotation, state);
             for (int i = 0; i < sources.size(); i++) {
                 double available = sources.get(i).source.getAvailableThrust();
                 if (available <= 0.0D) { commands[i] = 0.0D; continue; }
-                double[] contribution = contribution(sources.get(i), available, vehicleRotation);
+                double[] contribution = contribution(sources.get(i), available, state, vehicleRotation);
                 double dot = 0.0D, magnitude = 0.0D;
                 for (int k = 0; k < 6; k++) {
-                    double residual = target.component(k) - achieved[k];
-                    dot += residual * contribution[k];
-                    magnitude += contribution[k] * contribution[k];
+                    double scale = k < 3 ? forceScale : torqueScale;
+                    double residual = (target.component(k) - achieved[k]) / scale;
+                    double weightedContribution = contribution[k] / scale;
+                    dot += residual * weightedContribution;
+                    magnitude += weightedContribution * weightedContribution;
                 }
-                if (magnitude <= 1.0e-9) continue;
+                if (magnitude <= 1.0e-12) continue;
                 commands[i] = clamp(commands[i] + dot / magnitude, 0.0D, 1.0D);
-                achieved = achieved(sources, commands, vehicleRotation);
             }
         }
 
@@ -59,6 +73,10 @@ public final class ThrustAllocator {
             authority += max;
             sources.get(i).source.applyThrust(commands[i] * sources.get(i).polarity);
         }
+
+        double[] finalAchieved = achieved(sources, commands, vehicleRotation, state);
+        lastWorldForceX = finalAchieved[0]; lastWorldForceY = finalAchieved[1]; lastWorldForceZ = finalAchieved[2];
+        lastWorldTorqueX = finalAchieved[3]; lastWorldTorqueY = finalAchieved[4]; lastWorldTorqueZ = finalAchieved[5];
         lastThermalLoad = authority <= 0.0D ? 0.0D : Math.min(1.0D, load / authority);
     }
 
@@ -69,6 +87,7 @@ public final class ThrustAllocator {
     public void hardStop() {
         for (PropulsionSource source : lastActiveSources.values()) source.applyThrust(0.0D);
         lastActiveSources.clear();
+        resetLastWrench();
     }
 
     /** Seed same-vector thrusters from the combined vector authority before six-axis correction. */
@@ -107,23 +126,48 @@ public final class ThrustAllocator {
         return unique;
     }
 
-    private double[] achieved(List<ThrusterLink> links, double[] commands, Quaterniond rotation) {
+    private double[] achieved(List<ThrusterLink> links, double[] commands, Quaterniond rotation, VehicleState state) {
         double[] result = new double[6];
         for (int i = 0; i < links.size(); i++) {
-            double[] c = contribution(links.get(i), links.get(i).source.getAvailableThrust(), rotation);
+            double[] c = contribution(links.get(i), links.get(i).source.getAvailableThrust(), state, rotation);
             for (int k = 0; k < 6; k++) result[k] += c[k] * commands[i];
         }
         return result;
     }
 
-    private double[] contribution(ThrusterLink link, double thrust, Quaterniond rotation) {
+    private double[] contribution(ThrusterLink link, double thrust, VehicleState state, Quaterniond rotation) {
         VectorDirection d = link.direction;
         Vector3d force = new Vector3d(d.x(), d.y(), d.z()).mul(thrust * link.polarity);
-        Vector3d r = new Vector3d(link.source.getMountOffset());
+        Vector3d r = new Vector3d(link.source.getMountOffset())
+                .sub(state.comX, state.comY, state.comZ);
         rotation.transform(force);
         rotation.transform(r);
         double fx = force.x, fy = force.y, fz = force.z;
         return new double[]{fx, fy, fz, r.y * fz - r.z * fy, r.z * fx - r.x * fz, r.x * fy - r.y * fx};
+    }
+
+    private static double totalAuthority(List<ThrusterLink> sources) {
+        double total = 0.0D;
+        for (ThrusterLink link : sources) total += Math.max(0.0D, link.source.getAvailableThrust());
+        return total;
+    }
+
+    private static double totalTorqueAuthority(List<ThrusterLink> sources, VehicleState state, Quaterniond rotation) {
+        double total = 0.0D;
+        for (ThrusterLink link : sources) {
+            double thrust = Math.max(0.0D, link.source.getAvailableThrust());
+            if (thrust <= 0.0D) continue;
+            Vector3d force = new Vector3d(link.direction.x(), link.direction.y(), link.direction.z()).mul(thrust * link.polarity);
+            Vector3d r = new Vector3d(link.source.getMountOffset()).sub(state.comX, state.comY, state.comZ);
+            rotation.transform(force); rotation.transform(r);
+            total += r.cross(force, new Vector3d()).length();
+        }
+        return total;
+    }
+
+    private void resetLastWrench() {
+        lastWorldForceX = lastWorldForceY = lastWorldForceZ = 0.0D;
+        lastWorldTorqueX = lastWorldTorqueY = lastWorldTorqueZ = 0.0D;
     }
 
     private static Quaterniond vehicleRotation(VehicleState state) {
