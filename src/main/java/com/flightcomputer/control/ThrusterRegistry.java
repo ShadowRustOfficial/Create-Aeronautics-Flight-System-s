@@ -12,14 +12,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.*;
 
-/**
- * Runtime actuator registry. Links may be persisted as controller-local offsets or legacy absolute positions.
- *
- * <p>On Sable vessels the physical actuator scan is performed against the vessel's embedded plot rather
- * than the ordinary Minecraft level. This is important for large sub-levels: the controller and its
- * thrusters may be many blocks apart in the vessel coordinate space while still belonging to the same
- * physical vehicle.</p>
- */
+/** Runtime actuator registry. */
 public final class ThrusterRegistry {
     private static final int DISCOVERY_RADIUS = 24;
     private final Map<FlightMode, Map<VectorDirection, List<ThrusterLink>>> links = new EnumMap<>(FlightMode.class);
@@ -63,58 +56,48 @@ public final class ThrusterRegistry {
         Map<VectorDirection, List<ThrusterLink>> bank = links.get(mode);
         for (List<ThrusterLink> value : bank.values()) value.clear();
 
-        boolean explicitLinks = assignments != null && !assignments.isEmpty();
-        if (explicitLinks) {
+        if (assignments != null && !assignments.isEmpty()) {
             for (Map.Entry<VectorDirection, BlockPos> entry : assignments.entrySet())
                 addExplicit(level, controllerPos, mode, entry.getKey(), entry.getValue(), bank, subLevel);
         }
 
-        if (subLevel != null && scanSablePlot(level, controllerPos, mode, bank, subLevel)) return;
+        if (subLevel != null && scanSablePlot(controllerPos, mode, bank, subLevel)) return;
         scanOrdinaryLevel(level, controllerPos, mode, bank);
     }
 
-    private boolean scanSablePlot(Level level, BlockPos controllerPos, FlightMode mode,
+    /** Scan the Sable vessel's actual local plot bounds. LevelPlot.getBoundingBox() is the authoritative
+     * local block envelope; getMin/getMax were never valid Sable APIs and caused the previous fallback
+     * to scan around the controller in world coordinates. */
+    private boolean scanSablePlot(BlockPos controllerPos, FlightMode mode,
                                   Map<VectorDirection, List<ThrusterLink>> bank, Object subLevel) {
         try {
             Method getPlot = findNoArg(subLevel.getClass(), "getPlot");
             if (getPlot == null) return false;
-
             Object plot = getPlot.invoke(subLevel);
             if (plot == null) return false;
-            ClassLoader loader = getClass().getClassLoader();
-            Class<?> levelPlotClass = Class.forName("dev.ryanhcode.sable.sublevel.plot.LevelPlot", false, loader);
-            Class<?> accessorClass = Class.forName("dev.ryanhcode.sable.sublevel.plot.EmbeddedPlotLevelAccessor", false, loader);
-            Constructor<?> ctor = accessorClass.getConstructor(levelPlotClass);
-            Object accessor = ctor.newInstance(plot);
-            if (!(accessor instanceof BlockGetter getter)) return false;
 
-            BlockPos min = null;
-            BlockPos max = null;
-            for (String[] pair : new String[][]{
-                    {"getMinPos", "getMaxPos"},
-                    {"minBlock", "maxBlock"},
-                    {"getMin", "getMax"}
-            }) {
-                Object minObj = invokeNoArg(plot, pair[0]);
-                Object maxObj = invokeNoArg(plot, pair[1]);
-                if (minObj instanceof BlockPos a && maxObj instanceof BlockPos b) {
-                    min = a;
-                    max = b;
-                    break;
-                }
+            Method getAccessor = findNoArg(plot.getClass(), "getEmbeddedLevelAccessor");
+            Object accessor = getAccessor == null ? null : getAccessor.invoke(plot);
+            if (!(accessor instanceof BlockGetter getter)) {
+                ClassLoader loader = getClass().getClassLoader();
+                Class<?> levelPlotClass = Class.forName("dev.ryanhcode.sable.sublevel.plot.LevelPlot", false, loader);
+                Class<?> accessorClass = Class.forName("dev.ryanhcode.sable.sublevel.plot.EmbeddedPlotLevelAccessor", false, loader);
+                Constructor<?> ctor = accessorClass.getConstructor(levelPlotClass);
+                accessor = ctor.newInstance(plot);
+                if (!(accessor instanceof BlockGetter fallbackGetter)) return false;
+                getter = fallbackGetter;
             }
 
-            if (min == null || max == null) {
-                min = controllerPos.offset(-DISCOVERY_RADIUS, -DISCOVERY_RADIUS, -DISCOVERY_RADIUS);
-                max = controllerPos.offset(DISCOVERY_RADIUS, DISCOVERY_RADIUS, DISCOVERY_RADIUS);
-            }
+            Object bounds = invokeNoArg(plot, "getBoundingBox");
+            Integer minX = invokeInt(bounds, "minX"), minY = invokeInt(bounds, "minY"), minZ = invokeInt(bounds, "minZ");
+            Integer maxX = invokeInt(bounds, "maxX"), maxY = invokeInt(bounds, "maxY"), maxZ = invokeInt(bounds, "maxZ");
+            if (minX == null || minY == null || minZ == null || maxX == null || maxY == null || maxZ == null) return false;
+            if (minX > maxX || minY > maxY || minZ > maxZ) return true;
 
-            long volume = ((long) max.getX() - min.getX() + 1L)
-                    * ((long) max.getY() - min.getY() + 1L)
-                    * ((long) max.getZ() - min.getZ() + 1L);
-            if (volume <= 0L || volume > 2_000_000L) return false;
+            long volume = ((long) maxX - minX + 1L) * ((long) maxY - minY + 1L) * ((long) maxZ - minZ + 1L);
+            if (volume <= 0L || volume > 8_000_000L) return false;
 
-            for (BlockPos scanPos : BlockPos.betweenClosed(min, max)) {
+            for (BlockPos scanPos : BlockPos.betweenClosed(minX, minY, minZ, maxX, maxY, maxZ)) {
                 BlockEntity blockEntity = getBlockEntity(getter, scanPos);
                 if (blockEntity == null) continue;
                 double[] offset = mountOffset(controllerPos, scanPos);
@@ -194,7 +177,7 @@ public final class ThrusterRegistry {
                 return method.invoke(instance, controller);
             } catch (NoSuchMethodException ignored) { }
             try {
-                Method method = instance.getClass().getMethod("getContainingPosition", Level.class, Vec3.class);
+                Method method = instance.getClass().getMethod("getContaining", Level.class, Vec3.class);
                 return method.invoke(instance, level, Vec3.atCenterOf(controllerPos));
             } catch (NoSuchMethodException ignored) { }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) { }
@@ -207,12 +190,10 @@ public final class ThrusterRegistry {
             if (getPlot == null) return null;
             Object plot = getPlot.invoke(subLevel);
             if (plot == null) return null;
-            ClassLoader loader = ThrusterRegistry.class.getClassLoader();
-            Class<?> levelPlotClass = Class.forName("dev.ryanhcode.sable.sublevel.plot.LevelPlot", false, loader);
-            Class<?> accessorClass = Class.forName("dev.ryanhcode.sable.sublevel.plot.EmbeddedPlotLevelAccessor", false, loader);
-            Constructor<?> ctor = accessorClass.getConstructor(levelPlotClass);
-            Object accessor = ctor.newInstance(plot);
-            return accessor instanceof BlockGetter getter ? getBlockEntity(getter, pos) : null;
+            Method getAccessor = findNoArg(plot.getClass(), "getEmbeddedLevelAccessor");
+            Object accessor = getAccessor == null ? null : getAccessor.invoke(plot);
+            if (!(accessor instanceof BlockGetter getter)) return null;
+            return getBlockEntity(getter, pos);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
             return null;
         }
@@ -243,6 +224,11 @@ public final class ThrusterRegistry {
         if (method == null) return null;
         try { return method.invoke(target); }
         catch (ReflectiveOperationException | RuntimeException ignored) { return null; }
+    }
+
+    private static Integer invokeInt(Object target, String name) {
+        Object value = invokeNoArg(target, name);
+        return value instanceof Number n ? n.intValue() : null;
     }
 
     private static double[] mountOffset(BlockPos controllerPos, BlockPos target) {
