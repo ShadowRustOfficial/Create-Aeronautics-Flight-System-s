@@ -137,11 +137,9 @@ public final class FlightControlRuntimeManager {
 
     public static final class Runtime {
         private VehicleState snapshot;
+        private VehicleState previousSnapshot;
         private Vec3 previousPosition;
         private double previousYaw, previousPitch, previousRoll;
-        private double filteredExternalForceX, filteredExternalForceY, filteredExternalForceZ;
-        private double filteredExternalTorqueX, filteredExternalTorqueY, filteredExternalTorqueZ;
-        private boolean externalForceInitialised;
         private Vec3 target;
         private String targetName = "";
         private boolean targetActive;
@@ -158,11 +156,9 @@ public final class FlightControlRuntimeManager {
             Level level = controller.getLevel();
             Vec3 local = Vec3.atCenterOf(controller.getBlockPos());
 
-            VehicleState previousSnapshot = snapshot == null ? null : snapshot.copy();
-            VehicleState state = snapshot == null ? new VehicleState() : snapshot.copy();
-
             Object subLevel = containing(level, controller, local);
             Vec3 world = project(subLevel, level, local);
+            VehicleState state = snapshot == null ? new VehicleState() : snapshot;
             state.x = world.x; state.y = world.y; state.z = world.z;
             state.bodyBackYawOffset = controllerBackYawOffset(controller);
 
@@ -244,24 +240,17 @@ public final class FlightControlRuntimeManager {
                 Vector3d externalWorldTorque = new org.joml.Quaterniond().rotationY(state.yaw).rotateX(state.pitch).rotateZ(state.roll).transform(externalBodyTorque);
 
                 final double alpha = 0.18D;
-                if (!externalForceInitialised) {
-                    filteredExternalForceX=externalFx; filteredExternalForceY=externalFy; filteredExternalForceZ=externalFz;
-                    filteredExternalTorqueX=externalWorldTorque.x; filteredExternalTorqueY=externalWorldTorque.y; filteredExternalTorqueZ=externalWorldTorque.z;
-                    externalForceInitialised=true;
-                } else {
-                    filteredExternalForceX += alpha * (externalFx - filteredExternalForceX);
-                    filteredExternalForceY += alpha * (externalFy - filteredExternalForceY);
-                    filteredExternalForceZ += alpha * (externalFz - filteredExternalForceZ);
-                    filteredExternalTorqueX += alpha * (externalWorldTorque.x - filteredExternalTorqueX);
-                    filteredExternalTorqueY += alpha * (externalWorldTorque.y - filteredExternalTorqueY);
-                    filteredExternalTorqueZ += alpha * (externalWorldTorque.z - filteredExternalTorqueZ);
-                }
-                state.externalForceX=filteredExternalForceX; state.externalForceY=filteredExternalForceY; state.externalForceZ=filteredExternalForceZ;
-                state.externalTorqueX=filteredExternalTorqueX; state.externalTorqueY=filteredExternalTorqueY; state.externalTorqueZ=filteredExternalTorqueZ;
+                state.externalForceX = state.externalForceX * (1.0D - alpha) + externalFx * alpha;
+                state.externalForceY = state.externalForceY * (1.0D - alpha) + externalFy * alpha;
+                state.externalForceZ = state.externalForceZ * (1.0D - alpha) + externalFz * alpha;
+                state.externalTorqueX = state.externalTorqueX * (1.0D - alpha) + externalWorldTorque.x * alpha;
+                state.externalTorqueY = state.externalTorqueY * (1.0D - alpha) + externalWorldTorque.y * alpha;
+                state.externalTorqueZ = state.externalTorqueZ * (1.0D - alpha) + externalWorldTorque.z * alpha;
             }
 
             state.timestampNanos=System.nanoTime();
             previousPosition=world; previousYaw=state.yaw; previousPitch=state.pitch; previousRoll=state.roll;
+            previousSnapshot = state.copy();
             snapshot=state.copy();
         }
 
