@@ -1,12 +1,13 @@
 Canonical Flight Computer sound assets:
 
-ambient_ship.ogg          <- Ambient Ship.mp3 (supplied and converted)
-engine_heat_critical.ogg  <- Engine Heat Critical.mp3 (supplied and converted)
-warning_engine_overheat.ogg <- Warning Engine Overheat.mp3 (supplied and converted)
-fire_systems_active.ogg   <- Fire Systems active.mp3 (supplied and converted)
+ui_open.ogg         <- UI Open.ogg
+ui_interact.ogg     <- UI Interact.ogg
+ui_discover.ogg     <- UI DISCOVER.ogg
+ui_toggle_on.ogg    <- UI TOGGLE ON.ogg
+ui_toggle_off.ogg   <- UI TOGGLE OFF.ogg
+tilt_warning.ogg    <- TILT WARNING.ogg
 
-Referenced by the code but not present in the supplied attachments:
-emergency_shutdown.ogg
-fire_neutralised.ogg
+Existing flight audio:
+ambient_flight_ghost_2.ogg <- Ghost ambient flight layer (currently referenced by the client but the binary asset is not present in this branch)
 
-Do not rename the supplied OGG files. The resource IDs in Java and sounds.json are deliberately matched to these filenames.
+The resource IDs in Java and sounds.json are deliberately matched to these filenames. Number suffixes/brackets from upload names are intentionally excluded from the canonical resource filenames.
