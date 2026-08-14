@@ -18,14 +18,13 @@ public final class ClientControllerInteractions {
     public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
         if (!(event.getLevel().getBlockState(event.getPos()).getBlock() instanceof FlightControllerBlock)
                 || event.getEntity().isShiftKeyDown()
-                || Minecraft.getInstance().screen != null) {
-            return;
-        }
+                || Minecraft.getInstance().screen != null) return;
 
         if (event.getLevel().getBlockEntity(event.getPos()) instanceof FlightControllerBlockEntity controller
                 && controller.getEnergyStorage().getEnergyStored() > 0
                 && controller.getPowerState() != PowerState.NO_POWER) {
             Minecraft.getInstance().setScreen(new NavigationConsoleScreen(event.getPos()));
+            AudioUiSoundBridge.play(AudioUiSoundBridge.Kind.DISCOVER);
         }
     }
 
