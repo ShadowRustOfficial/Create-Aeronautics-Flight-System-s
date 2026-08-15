@@ -17,8 +17,7 @@
     "client.FlightControllerGoggleMixin",
     "client.NavigationConsoleMapTrackingMixin",
     "client.NavigationConsoleTelemetryOverlayMixin",
-    "client.NavigationConsoleButtonSoundMixin",
-    "client.NavigationConsoleDiagnosticsLayoutMixin"
+    "client.NavigationConsoleButtonSoundMixin"
   ],
   "injectors": {
     "defaultRequire": 1
