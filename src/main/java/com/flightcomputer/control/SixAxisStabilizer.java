@@ -22,10 +22,10 @@ public final class SixAxisStabilizer {
     public SixAxisStabilizer(boolean legacyStableProfile) {
         this.legacyStableProfile = legacyStableProfile;
         if (legacyStableProfile) {
-            // Stabilisation is deliberately less aggressive than the cruise/autopilot profile.
-            // Large Sable vessels have substantially larger inertia and actuator time constants;
-            // the old gains caused repeated torque saturation and visible hunting.
-            pitchPID = new AxisPID(5.0, 0.12, 5.0, 22.0);
+            // Large Sable vessels were still hunting on the pitch axis while roll was stable.
+            // Reduce pitch proportional/integral authority and increase rate damping only on that
+            // axis. The other five axes retain the already-tested large-vessel profile.
+            pitchPID = new AxisPID(3.4, 0.08, 7.0, 18.0);
             rollPID = new AxisPID(5.0, 0.12, 5.0, 22.0);
             yawPID = new AxisPID(3.0, 0.05, 3.5, 14.0);
             verticalPID = new AxisPID(2.2, 0.20, 1.5, 28.0);
@@ -145,8 +145,6 @@ public final class SixAxisStabilizer {
     private double responseScale(double authority, double reference) {
         if (!Double.isFinite(authority) || authority <= 0.0D) return legacyStableProfile ? 0.30D : 0.35D;
         double ratio = Math.max(0.0D, authority) / Math.max(reference, 1.0e-3D);
-        // Stabilisation is capped at unity so a large craft cannot turn a high actuator count into
-        // an unnecessarily aggressive response. Cruise/autopilot keeps the existing upper margin.
         double maxScale = legacyStableProfile ? 1.0D : 1.25D;
         return clamp(Math.sqrt(ratio), legacyStableProfile ? 0.30D : 0.35D, maxScale);
     }
