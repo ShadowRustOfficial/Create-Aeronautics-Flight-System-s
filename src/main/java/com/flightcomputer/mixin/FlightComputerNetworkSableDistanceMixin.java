@@ -58,7 +58,7 @@ public abstract class FlightComputerNetworkSableDistanceMixin {
             }
             if (name.equals("__HOME__")) {
                 Vec3 home = identity.flightcomputer$getHome(player.getUUID());
-                if (home != null) FlightControlRuntimeManager.setTarget(controller, home, "HOME: " + player.getGameProfile().name());
+                if (home != null) FlightControlRuntimeManager.setTarget(controller, home, "HOME: " + player.getGameProfile().getName());
                 return;
             }
             if (name.startsWith("__PLAYER__:")) {
@@ -66,7 +66,7 @@ public abstract class FlightComputerNetworkSableDistanceMixin {
                 if (targetName.isEmpty()) return;
                 ServerPlayer target = player.server.getPlayerList().getPlayerByName(targetName);
                 if (target == null || !target.level().dimension().equals(player.level().dimension())) return;
-                FlightControlRuntimeManager.setTarget(controller, target.position(), "PLAYER: " + target.getGameProfile().name());
+                FlightControlRuntimeManager.setTarget(controller, target.position(), "PLAYER: " + target.getGameProfile().getName());
             }
         });
         ci.cancel();
