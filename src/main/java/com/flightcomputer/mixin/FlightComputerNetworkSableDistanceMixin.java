@@ -1,31 +1,63 @@
 package com.flightcomputer.mixin;
 
+import com.flightcomputer.control.FlightControlRuntimeManager;
+import com.flightcomputer.identity.FlightIdentityAccess;
+import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.lang.reflect.Method;
 
-/** Optional Sable compatibility for Flight Computer packet distance checks. */
+/** Optional Sable compatibility plus server-authoritative player/home target selection. */
 @Mixin(targets = "com.flightcomputer.network.FlightComputerNetwork")
 public abstract class FlightComputerNetworkSableDistanceMixin {
-    /**
-     * The base network check remains authoritative unless Sable is actually present and can
-     * project the controller position. This avoids replacing the entire security helper with an
-     * @Overwrite, while still allowing packets addressed to moving sub-level controllers.
-     */
     @Inject(method = "near", at = @At("HEAD"), cancellable = true)
     private static void flightcomputer$projectSableDistance(ServerPlayer player, BlockPos pos, double distance,
                                                             CallbackInfoReturnable<Boolean> cir) {
         if (player == null || pos == null) return;
         Vec3 target = project(player, Vec3.atCenterOf(pos));
-        if (target != null) {
-            cir.setReturnValue(player.position().distanceToSqr(target) <= distance * distance);
-        }
+        if (target != null) cir.setReturnValue(player.position().distanceToSqr(target) <= distance * distance);
+    }
+
+    @Inject(method = "handleSetTarget", at = @At("HEAD"), cancellable = true)
+    private static void flightcomputer$specialTargets(FlightComputerNetwork.SetTargetPayload payload,
+                                                      IPayloadContext context, CallbackInfo ci) {
+        String name = payload.name() == null ? "" : payload.name();
+        if (!name.startsWith("__")) return;
+
+        context.enqueueWork(() -> {
+            if (!(context.player() instanceof ServerPlayer player)) return;
+            BlockEntity blockEntity = player.level().getBlockEntity(payload.controllerPos());
+            if (!(blockEntity instanceof com.flightcomputer.block.FlightControllerBlockEntity controller)) return;
+            if (!Double.isFinite(payload.x()) || !Double.isFinite(payload.y()) || !Double.isFinite(payload.z())) return;
+
+            FlightIdentityAccess identity = (FlightIdentityAccess)(Object)controller;
+            if (name.equals("__SET_HOME__")) {
+                identity.flightcomputer$setHome(player.getUUID(), new Vec3(payload.x(), payload.y(), payload.z()));
+                return;
+            }
+            if (name.equals("__HOME__")) {
+                Vec3 home = identity.flightcomputer$getHome(player.getUUID());
+                if (home != null) FlightControlRuntimeManager.setTarget(controller, home, "HOME: " + player.getGameProfile().name());
+                return;
+            }
+            if (name.startsWith("__PLAYER__:")) {
+                String targetName = name.substring("__PLAYER__:".length()).trim();
+                if (targetName.isEmpty()) return;
+                ServerPlayer target = player.server.getPlayerList().getPlayerByName(targetName);
+                if (target == null || !target.level().dimension().equals(player.level().dimension())) return;
+                FlightControlRuntimeManager.setTarget(controller, target.position(), "PLAYER: " + target.getGameProfile().name());
+            }
+        });
+        ci.cancel();
     }
 
     /** Returns null when Sable compatibility is unavailable so vanilla Flight Computer checks run unchanged. */
