@@ -103,7 +103,7 @@ public final class NavigationConsoleScreen extends Screen {
         int pushW=Math.max(70,(half-40)/6);
         String[] pushNames={"F","B","U","D","L","R"};
         FlightControllerAction[] pushActions={FlightControllerAction.PUSH_FORWARD,FlightControllerAction.PUSH_BACKWARD,FlightControllerAction.PUSH_UP,FlightControllerAction.PUSH_DOWN,FlightControllerAction.PUSH_LEFT,FlightControllerAction.PUSH_RIGHT};
-        for(int i=0;i<6;i++) addRenderableWidget(Button.builder(Component.literal(pushNames[i]),b->send(pushActions[i])).bounds(l+i*(pushW+6),pushY,pushW,24).build());
+        for(int i=0;i<6;i++){ final int index=i; addRenderableWidget(Button.builder(Component.literal(pushNames[index]),b->send(pushActions[index])).bounds(l+index*(pushW+6),pushY,pushW,24).build()); }
 
         int targetLeft=l+half+8, targetWidth=w-half-8;
         targetPlayerButton=Button.builder(Component.literal("PLAYER"),b->{targetMode=TargetMode.PLAYER;refreshTargetLabels();}).bounds(targetLeft,pushY,targetWidth/2-4,24).build();
