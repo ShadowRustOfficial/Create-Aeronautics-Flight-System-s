@@ -62,7 +62,6 @@ public final class FlightComputerUiSoundNetwork {
     private static void handle(UiSoundPayload payload, IPayloadContext context) {
         context.enqueueWork(() -> {
             if (!(context.player() instanceof ServerPlayer player)) return;
-            if (!near(player, payload.controllerPos(), MAX_DISTANCE)) return;
 
             BlockEntity blockEntity = player.level().getBlockEntity(payload.controllerPos());
             if (!(blockEntity instanceof FlightControllerBlockEntity)) return;
@@ -71,6 +70,8 @@ public final class FlightComputerUiSoundNetwork {
             if (sound == null) return;
 
             Vec3 soundPosition = resolvePhysicalPosition(player.level(), payload.controllerPos());
+            if (player.distanceToSqr(soundPosition.x, soundPosition.y, soundPosition.z) > MAX_DISTANCE * MAX_DISTANCE) return;
+
             player.level().playSound(
                     null,
                     soundPosition.x,
@@ -93,10 +94,6 @@ public final class FlightComputerUiSoundNetwork {
             case 4 -> ModSounds.UI_DISCOVER.get();
             default -> null;
         };
-    }
-
-    private static boolean near(ServerPlayer player, BlockPos pos, double radius) {
-        return pos != null && player.distanceToSqr(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D) <= radius * radius;
     }
 
     /**
