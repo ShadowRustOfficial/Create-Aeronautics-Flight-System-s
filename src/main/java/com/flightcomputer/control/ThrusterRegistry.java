@@ -7,7 +7,6 @@ import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
 
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.*;
 
@@ -59,12 +58,20 @@ public final class ThrusterRegistry {
             }
         }
 
-        // A Sable vessel stores its blocks in the plot grid. The entire local plot bounding box
-        // must be searched; a normal-world radius scan cannot see thrusters on a large vessel.
         if (subLevel != null && scanSablePlot(controllerPos, mode, bank, subLevel)) return;
         scanOrdinaryLevel(level, controllerPos, mode, bank);
     }
 
+    /**
+     * Sable's EmbeddedPlotLevelAccessor is NOT addressed with the plot's raw
+     * bounding-box coordinates. Sable explicitly defines the embedded accessor
+     * so that (0, 0, 0) is the plot center, while LevelPlot#getBoundingBox()
+     * stores block coordinates in the plot's global chunk grid.
+     *
+     * Therefore the bounds must be translated into the accessor's centered
+     * coordinate space before calling getBlockEntity(). The controller position
+     * must be translated into the same space before calculating mount offsets.
+     */
     private boolean scanSablePlot(BlockPos controllerPos, FlightMode mode,
                                    Map<VectorDirection, List<ThrusterLink>> bank, Object subLevel) {
         try {
@@ -73,6 +80,9 @@ public final class ThrusterRegistry {
 
             Object accessor = invokeNoArg(plot, "getEmbeddedLevelAccessor");
             if (!(accessor instanceof LevelAccessor levelAccessor)) return false;
+
+            Object centerObject = invokeNoArg(plot, "getCenterBlock");
+            if (!(centerObject instanceof BlockPos center)) return false;
 
             Object bounds = invokeNoArg(plot, "getBoundingBox");
             Integer minX = invokeInt(bounds, "minX"), minY = invokeInt(bounds, "minY"), minZ = invokeInt(bounds, "minZ");
@@ -83,15 +93,29 @@ public final class ThrusterRegistry {
             long volume = ((long) maxX - minX + 1L) * ((long) maxY - minY + 1L) * ((long) maxZ - minZ + 1L);
             if (volume <= 0L || volume > MAX_SABLE_SCAN_VOLUME) return false;
 
-            for (BlockPos scanPos : BlockPos.betweenClosed(minX, minY, minZ, maxX, maxY, maxZ)) {
+            // LevelPlot#getBoundingBox() is in the plot's raw block coordinate
+            // space. EmbeddedPlotLevelAccessor#getBlockEntity() expects local
+            // coordinates centered around getCenterBlock().
+            int localMinX = minX - center.getX();
+            int localMinY = minY - center.getY();
+            int localMinZ = minZ - center.getZ();
+            int localMaxX = maxX - center.getX();
+            int localMaxY = maxY - center.getY();
+            int localMaxZ = maxZ - center.getZ();
+
+            BlockPos controllerLocal = controllerPos.subtract(center);
+
+            for (BlockPos scanPos : BlockPos.betweenClosed(
+                    localMinX, localMinY, localMinZ,
+                    localMaxX, localMaxY, localMaxZ)) {
                 BlockEntity blockEntity = levelAccessor.getBlockEntity(scanPos);
                 if (blockEntity == null) continue;
 
-                double[] offset = mountOffset(controllerPos, scanPos);
+                double[] offset = mountOffset(controllerLocal, scanPos);
                 discoverCompatible(blockEntity, offset, mode, bank);
             }
             return true;
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+        } catch (RuntimeException | LinkageError ignored) {
             return false;
         }
     }
