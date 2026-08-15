@@ -22,14 +22,12 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-/** Server-authoritative UI audio. Sounds are emitted from the Flight Computer block so nearby players hear them. */
+/** Server-authoritative UI audio. Sounds are emitted using the same block sound path as Emergency Shutdown. */
 @EventBusSubscriber(modid = FlightComputer.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
 public final class FlightComputerUiSoundNetwork {
     private static final String VERSION = "1";
-    private static final double MAX_DISTANCE = 96.0D;
     private static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "ui_block_sound");
     public static final CustomPacketPayload.Type<UiSoundPayload> TYPE = new CustomPacketPayload.Type<>(ID);
 
@@ -54,7 +52,7 @@ public final class FlightComputerUiSoundNetwork {
                 .playToServer(TYPE, UiSoundPayload.STREAM_CODEC, FlightComputerUiSoundNetwork::handle);
     }
 
-    /** Client-side entry point. The actual sound is never played locally. */
+    /** Client-side entry point. Vanilla button audio remains muted; the server emits the block sound. */
     public static void request(BlockPos controllerPos, int soundId) {
         if (controllerPos == null || soundId < 0 || soundId > 4) return;
         PacketDistributor.sendToServer(new UiSoundPayload(controllerPos, soundId));
@@ -65,19 +63,17 @@ public final class FlightComputerUiSoundNetwork {
             if (!(context.player() instanceof ServerPlayer player)) return;
 
             FlightControllerBlockEntity controller = resolveController(player, payload.controllerPos());
-            if (controller == null) return;
+            if (controller == null || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
 
             SoundEvent sound = soundFor(payload.soundId());
             if (sound == null) return;
 
-            Vec3 soundPosition = resolvePhysicalPosition(player, controller, payload.controllerPos());
-            if (player.distanceToSqr(soundPosition.x, soundPosition.y, soundPosition.z) > MAX_DISTANCE * MAX_DISTANCE) return;
-
-            player.level().playSound(
+            // Deliberately use the exact same server-side block sound mechanism as
+            // FlightControllerBlockEntity.applyAction(EMERGENCY_SHUTDOWN). This means the
+            // client never plays a local UI sound and all nearby players hear the same sound.
+            controller.getLevel().playSound(
                     null,
-                    soundPosition.x,
-                    soundPosition.y,
-                    soundPosition.z,
+                    controller.getBlockPos(),
                     sound,
                     SoundSource.BLOCKS,
                     1.0F,
@@ -146,34 +142,6 @@ public final class FlightComputerUiSoundNetwork {
             case 4 -> ModSounds.UI_DISCOVER.get();
             default -> null;
         };
-    }
-
-    /** Resolve the sound to the physical Sable pose when available; otherwise use the actual block position. */
-    private static Vec3 resolvePhysicalPosition(ServerPlayer player, FlightControllerBlockEntity controller, BlockPos pos) {
-        Vec3 fallback = Vec3.atCenterOf(controller.getBlockPos());
-        try {
-            Class<?> companionType = Class.forName(
-                    "dev.ryanhcode.sable.companion.SableCompanion",
-                    false,
-                    FlightComputerUiSoundNetwork.class.getClassLoader()
-            );
-            Object companion = companionType.getField("INSTANCE").get(null);
-            if (companion == null) return fallback;
-
-            Method tracking = findMethod(companion.getClass(), "getTrackingSubLevel", Entity.class);
-            Object subLevel = tracking == null ? null : tracking.invoke(companion, player);
-            if (subLevel == null) return fallback;
-
-            Method poseMethod = findMethod(subLevel.getClass(), "logicalPose");
-            if (poseMethod == null) return fallback;
-            Object pose = poseMethod.invoke(subLevel);
-            Method transform = findMethod(pose.getClass(), "transformPosition", Vec3.class);
-            if (transform == null) return fallback;
-            Object result = transform.invoke(pose, Vec3.atCenterOf(pos));
-            return result instanceof Vec3 vec ? vec : fallback;
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
-            return fallback;
-        }
     }
 
     private static Method findMethod(Class<?> type, String name, Class<?>... parameterTypes) {
