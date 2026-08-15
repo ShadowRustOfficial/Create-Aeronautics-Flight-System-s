@@ -10,7 +10,8 @@
     "FlightControllerPidProfileMixin",
     "FlightRouteTelemetryMixin",
     "FlightControllerRouteActionMixin",
-    "FlightControllerAudioMixin"
+    "FlightControllerAudioMixin",
+    "FlightControllerTiltWarningMixin"
   ],
   "client": [
     "client.FlightControllerGoggleMixin",
