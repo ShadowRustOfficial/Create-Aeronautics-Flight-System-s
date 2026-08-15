@@ -17,15 +17,12 @@ public abstract class NavigationConsoleDiagnosticsLayoutMixin {
     @Shadow private EditBox nameInput;
     @Shadow private EditBox flightIdInput;
     @Shadow private int width;
-    @Shadow private int top;
-    @Shadow private int panelWidth;
     @Shadow public abstract List<? extends GuiEventListener> children();
 
     @Inject(method = "init", at = @At("TAIL"))
     private void flightcomputer$layoutIdentityFields(CallbackInfo ci) {
         if (nameInput == null || flightIdInput == null) return;
 
-        // Match NavigationConsoleScreen's panel geometry without duplicating its widget widths.
         int panel = Math.min(Math.max(760, width - 32), 1240);
         int left = (width - panel) / 2 + 18;
         int contentWidth = panel - 36;
