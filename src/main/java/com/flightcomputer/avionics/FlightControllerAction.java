@@ -17,7 +17,13 @@ public enum FlightControllerAction {
     ABORT_ROUTE(10),
     TOGGLE_TERRAIN(11),
     EMERGENCY_SHUTDOWN(12),
-    TOGGLE_AUTOPILOT(13);
+    TOGGLE_AUTOPILOT(13),
+    PUSH_FORWARD(14),
+    PUSH_BACKWARD(15),
+    PUSH_UP(16),
+    PUSH_DOWN(17),
+    PUSH_LEFT(18),
+    PUSH_RIGHT(19);
 
     private final int networkId;
     FlightControllerAction(int networkId) { this.networkId = networkId; }
@@ -26,5 +32,12 @@ public enum FlightControllerAction {
     public static Optional<FlightControllerAction> fromNetworkId(int id) {
         for (FlightControllerAction action : values()) if (action.networkId == id) return Optional.of(action);
         return Optional.empty();
+    }
+
+    public boolean isIndependentPush() {
+        return switch (this) {
+            case PUSH_FORWARD, PUSH_BACKWARD, PUSH_UP, PUSH_DOWN, PUSH_LEFT, PUSH_RIGHT -> true;
+            default -> false;
+        };
     }
 }
