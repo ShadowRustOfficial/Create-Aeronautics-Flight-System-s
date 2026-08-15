@@ -16,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.lang.reflect.Method;
 
-/** Optional Sable compatibility plus server-authoritative player/home target selection. */
+/** Optional Sable compatibility plus server-authoritative flight identity and target selection. */
 @Mixin(targets = "com.flightcomputer.network.FlightComputerNetwork")
 public abstract class FlightComputerNetworkSableDistanceMixin {
     @Inject(method = "near", at = @At("HEAD"), cancellable = true)
@@ -40,6 +40,14 @@ public abstract class FlightComputerNetworkSableDistanceMixin {
             if (!Double.isFinite(payload.x()) || !Double.isFinite(payload.y()) || !Double.isFinite(payload.z())) return;
 
             FlightIdentityAccess identity = (FlightIdentityAccess)(Object)controller;
+            if (name.startsWith("__SET_NAME__:")) {
+                identity.flightcomputer$setSubLevelName(name.substring("__SET_NAME__:".length()));
+                return;
+            }
+            if (name.startsWith("__SET_ID__:")) {
+                identity.flightcomputer$setFlightId(name.substring("__SET_ID__:".length()));
+                return;
+            }
             if (name.equals("__SET_HOME__")) {
                 identity.flightcomputer$setHome(player.getUUID(), new Vec3(payload.x(), payload.y(), payload.z()));
                 return;
