@@ -106,10 +106,10 @@ public final class NavigationConsoleScreen extends Screen {
         for(int i=0;i<6;i++) addRenderableWidget(Button.builder(Component.literal(pushNames[i]),b->send(pushActions[i])).bounds(l+i*(pushW+6),pushY,pushW,24).build());
 
         int targetLeft=l+half+8, targetWidth=w-half-8;
-        targetPlayerButton=Button.builder(Component.literal("PLAYER"),b->{targetMode=TargetMode.PLAYER;refreshTargetLabels();}).bounds(targetLeft,targetWidth>300?pushY:pushY,targetWidth/2-4,24).build();
+        targetPlayerButton=Button.builder(Component.literal("PLAYER"),b->{targetMode=TargetMode.PLAYER;refreshTargetLabels();}).bounds(targetLeft,pushY,targetWidth/2-4,24).build();
         targetHomeButton=Button.builder(Component.literal("HOME"),b->{targetMode=TargetMode.HOME;refreshTargetLabels();}).bounds(targetLeft+targetWidth/2+4,pushY,targetWidth/2-4,24).build();
         addRenderableWidget(targetPlayerButton); addRenderableWidget(targetHomeButton);
-        targetPlayerInput=new EditBox(font,targetLeft,pushY+30,targetWidth-118,20,Component.literal("Player name")); targetPlayerInput.setValue(minecraft!=null&&minecraft.player!=null?minecraft.player.getGameProfile().name():""); targetPlayerInput.setHint(Component.literal("Player name")); targetPlayerInput.setMaxLength(32); addRenderableWidget(targetPlayerInput);
+        targetPlayerInput=new EditBox(font,targetLeft,pushY+30,targetWidth-118,20,Component.literal("Player name")); targetPlayerInput.setValue(minecraft!=null&&minecraft.player!=null?minecraft.player.getGameProfile().getName():""); targetPlayerInput.setHint(Component.literal("Player name")); targetPlayerInput.setMaxLength(32); addRenderableWidget(targetPlayerInput);
         addRenderableWidget(Button.builder(Component.literal("SET TARGET"),b->sendSelectedTarget()).bounds(targetLeft+targetWidth-110,pushY+30,110,20).build());
         homeInput=new EditBox(font,targetLeft,pushY+56,targetWidth-110,20,Component.literal("Home X Y Z")); homeInput.setHint(Component.literal("Home X Y Z")); homeInput.setMaxLength(64); loadHomeInput(); addRenderableWidget(homeInput);
         addRenderableWidget(Button.builder(Component.literal("SET HOME"),b->sendHome()).bounds(targetLeft+targetWidth-110,pushY+56,110,20).build());
