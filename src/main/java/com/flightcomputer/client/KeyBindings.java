@@ -9,7 +9,7 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
 
-@EventBusSubscriber(modid = FlightComputer.MOD_ID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.MOD)
+@EventBusSubscriber(modid = FlightComputer.MOD_ID, value = Dist.CLIENT)
 public final class KeyBindings {
     public static final KeyMapping OPEN_MAP = new KeyMapping(
             "key.flightcomputer.open_map", InputConstants.Type.KEYSYM, InputConstants.KEY_M, "key.categories.flightcomputer");
