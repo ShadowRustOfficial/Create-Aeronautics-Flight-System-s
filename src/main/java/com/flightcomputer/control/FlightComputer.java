@@ -27,17 +27,13 @@ public final class FlightComputer {
     private double[] smoothCruiseVelocity(double desiredLongitudinal,double desiredLateral,double dt){
         VehicleState state=stateProvider.getState();
         double mass=state==null?1.0:Math.max(1.0e-3,state.mass);
-        double horizontalAuthority=Math.max(
-                registry.getAxisAuthority(FlightMode.CRUISE,ControlAxis.LONGITUDINAL),
-                registry.getAxisAuthority(FlightMode.CRUISE,ControlAxis.LATERAL));
+        double horizontalAuthority=Math.max(registry.getAxisAuthority(FlightMode.CRUISE,ControlAxis.LONGITUDINAL),registry.getAxisAuthority(FlightMode.CRUISE,ControlAxis.LATERAL));
         double maxAcceleration=horizontalAuthority/mass;
         if(!Double.isFinite(maxAcceleration)||maxAcceleration<=0.0)maxAcceleration=1.0;
-        // Use a conservative fraction of available acceleration so a large ship does not receive
-        // a velocity target that it cannot physically track without saturating its thrusters.
         double maxDelta=Math.max(.025,Math.min(1.0,0.55*maxAcceleration)*Math.max(dt,0));
         lastCruiseLongitudinalVelocity+=clamp(desiredLongitudinal-lastCruiseLongitudinalVelocity,-maxDelta,maxDelta);
         lastCruiseLateralVelocity+=clamp(desiredLateral-lastCruiseLateralVelocity,-maxDelta,maxDelta);
-        return new double[]{lastCruiseLongitudinalVelocity,lastCruiseLateralVelocity);
+        return new double[]{lastCruiseLongitudinalVelocity,lastCruiseLateralVelocity};
     }
     private static double normalizeRadians(double a){double r=a%(Math.PI*2);if(r>Math.PI)r-=Math.PI*2;if(r<-Math.PI)r+=Math.PI*2;return r;} private boolean detectPhysicsDisturbance(VehicleState s){if(previousControlState==null)return false;double dp=Math.sqrt(sq(s.x-previousControlState.x)+sq(s.y-previousControlState.y)+sq(s.z-previousControlState.z));double dv=Math.sqrt(sq(s.vx-previousControlState.vx)+sq(s.vy-previousControlState.vy)+sq(s.vz-previousControlState.vz));double da=Math.sqrt(sq(s.pitchRate-previousControlState.pitchRate)+sq(s.yawRate-previousControlState.yawRate)+sq(s.rollRate-previousControlState.rollRate));double dang=Math.sqrt(sq(normalizeRadians(s.pitch-previousControlState.pitch))+sq(normalizeRadians(s.yaw-previousControlState.yaw))+sq(normalizeRadians(s.roll-previousControlState.roll)));return dp>DISTURBANCE_POSITION_DELTA||dv>DISTURBANCE_SPEED_DELTA||da>DISTURBANCE_ANGULAR_RATE_DELTA||dang>DISTURBANCE_ANGLE_DELTA;}
     private void recoverFromPhysicsDisturbance(){stabilizeStabilizer.resetAll();cruiseStabilizer.resetAll();allocator.hardStop();ticksSinceReplan=0;lastCruiseLongitudinalVelocity=0;lastCruiseLateralVelocity=0;latestCruiseSetpoint=StabilizationSetpoint.hover();disturbanceRecoveryTicks=DISTURBANCE_RECOVERY_TICKS;} private static double sq(double v){return v*v;}
