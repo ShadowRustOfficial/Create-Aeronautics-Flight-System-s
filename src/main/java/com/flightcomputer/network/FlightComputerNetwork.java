@@ -45,107 +45,33 @@ public final class FlightComputerNetwork {
     public static final CustomPacketPayload.Type<RequestWaystoneSnapshotPayload> REQUEST_WAYSTONES_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "request_waystones"));
     public static final CustomPacketPayload.Type<WaystoneSyncPayload> WAYSTONE_SYNC_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "waystone_sync"));
 
-    public record ControllerActionPayload(BlockPos pos, int actionId) implements CustomPacketPayload {
-        public static final StreamCodec<ByteBuf, ControllerActionPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, ControllerActionPayload::pos, ByteBufCodecs.VAR_INT, ControllerActionPayload::actionId, ControllerActionPayload::new);
-        @Override public Type<? extends CustomPacketPayload> type() { return CONTROLLER_ACTION_TYPE; }
-    }
-    public record OperationsActionPayload(BlockPos pos, int actionId) implements CustomPacketPayload {
-        public static final StreamCodec<ByteBuf, OperationsActionPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, OperationsActionPayload::pos, ByteBufCodecs.VAR_INT, OperationsActionPayload::actionId, OperationsActionPayload::new);
-        @Override public Type<? extends CustomPacketPayload> type() { return OPERATIONS_ACTION_TYPE; }
-    }
-    public record LinkVectorPayload(BlockPos controllerPos, BlockPos targetPos, int modeId, int directionId) implements CustomPacketPayload {
-        public static final StreamCodec<ByteBuf, LinkVectorPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, LinkVectorPayload::controllerPos, BlockPos.STREAM_CODEC, LinkVectorPayload::targetPos, ByteBufCodecs.VAR_INT, LinkVectorPayload::modeId, ByteBufCodecs.VAR_INT, LinkVectorPayload::directionId, LinkVectorPayload::new);
-        @Override public Type<? extends CustomPacketPayload> type() { return LINK_VECTOR_TYPE; }
-    }
-    public record ToolConfigPayload(int modeId, int directionId) implements CustomPacketPayload {
-        public static final StreamCodec<ByteBuf, ToolConfigPayload> STREAM_CODEC = StreamCodec.composite(ByteBufCodecs.VAR_INT, ToolConfigPayload::modeId, ByteBufCodecs.VAR_INT, ToolConfigPayload::directionId, ToolConfigPayload::new);
-        @Override public Type<? extends CustomPacketPayload> type() { return TOOL_CONFIG_TYPE; }
-    }
-    public record CoolingSlotPayload(BlockPos controllerPos, int slot, int action) implements CustomPacketPayload {
-        public static final StreamCodec<ByteBuf, CoolingSlotPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, CoolingSlotPayload::controllerPos, ByteBufCodecs.VAR_INT, CoolingSlotPayload::slot, ByteBufCodecs.VAR_INT, CoolingSlotPayload::action, CoolingSlotPayload::new);
-        @Override public Type<? extends CustomPacketPayload> type() { return COOLING_SLOT_TYPE; }
-    }
-    public record SetTargetPayload(BlockPos controllerPos, double x, double y, double z, String name) implements CustomPacketPayload {
-        public static final StreamCodec<ByteBuf, SetTargetPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, SetTargetPayload::controllerPos, ByteBufCodecs.DOUBLE, SetTargetPayload::x, ByteBufCodecs.DOUBLE, SetTargetPayload::y, ByteBufCodecs.DOUBLE, SetTargetPayload::z, ByteBufCodecs.STRING_UTF8, SetTargetPayload::name, SetTargetPayload::new);
-        @Override public Type<? extends CustomPacketPayload> type() { return SET_TARGET_TYPE; }
-    }
-    public record ClearTargetPayload(BlockPos controllerPos) implements CustomPacketPayload {
-        public static final StreamCodec<ByteBuf, ClearTargetPayload> STREAM_CODEC = BlockPos.STREAM_CODEC.map(ClearTargetPayload::new, ClearTargetPayload::controllerPos);
-        @Override public Type<? extends CustomPacketPayload> type() { return CLEAR_TARGET_TYPE; }
-    }
-    public record SetAltitudeHoldTargetPayload(BlockPos controllerPos, double y) implements CustomPacketPayload {
-        public static final StreamCodec<ByteBuf, SetAltitudeHoldTargetPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, SetAltitudeHoldTargetPayload::controllerPos, ByteBufCodecs.DOUBLE, SetAltitudeHoldTargetPayload::y, SetAltitudeHoldTargetPayload::new);
-        @Override public Type<? extends CustomPacketPayload> type() { return SET_ALTITUDE_HOLD_TARGET_TYPE; }
-    }
-    public record RequestWaystoneSnapshotPayload() implements CustomPacketPayload {
-        public static final StreamCodec<ByteBuf, RequestWaystoneSnapshotPayload> STREAM_CODEC = StreamCodec.unit(new RequestWaystoneSnapshotPayload());
-        @Override public Type<? extends CustomPacketPayload> type() { return REQUEST_WAYSTONES_TYPE; }
-    }
+    public record ControllerActionPayload(BlockPos pos, int actionId) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, ControllerActionPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, ControllerActionPayload::pos, ByteBufCodecs.VAR_INT, ControllerActionPayload::actionId, ControllerActionPayload::new); @Override public Type<? extends CustomPacketPayload> type() { return CONTROLLER_ACTION_TYPE; } }
+    public record OperationsActionPayload(BlockPos pos, int actionId) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, OperationsActionPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, OperationsActionPayload::pos, ByteBufCodecs.VAR_INT, OperationsActionPayload::actionId, OperationsActionPayload::new); @Override public Type<? extends CustomPacketPayload> type() { return OPERATIONS_ACTION_TYPE; } }
+    public record LinkVectorPayload(BlockPos controllerPos, BlockPos targetPos, int modeId, int directionId) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, LinkVectorPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, LinkVectorPayload::controllerPos, BlockPos.STREAM_CODEC, LinkVectorPayload::targetPos, ByteBufCodecs.VAR_INT, LinkVectorPayload::modeId, ByteBufCodecs.VAR_INT, LinkVectorPayload::directionId, LinkVectorPayload::new); @Override public Type<? extends CustomPacketPayload> type() { return LINK_VECTOR_TYPE; } }
+    public record ToolConfigPayload(int modeId, int directionId) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, ToolConfigPayload> STREAM_CODEC = StreamCodec.composite(ByteBufCodecs.VAR_INT, ToolConfigPayload::modeId, ByteBufCodecs.VAR_INT, ToolConfigPayload::directionId, ToolConfigPayload::new); @Override public Type<? extends CustomPacketPayload> type() { return TOOL_CONFIG_TYPE; } }
+    public record CoolingSlotPayload(BlockPos controllerPos, int slot, int action) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, CoolingSlotPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, CoolingSlotPayload::controllerPos, ByteBufCodecs.VAR_INT, CoolingSlotPayload::slot, ByteBufCodecs.VAR_INT, CoolingSlotPayload::action, CoolingSlotPayload::new); @Override public Type<? extends CustomPacketPayload> type() { return COOLING_SLOT_TYPE; } }
+    public record SetTargetPayload(BlockPos controllerPos, double x, double y, double z, String name) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, SetTargetPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, SetTargetPayload::controllerPos, ByteBufCodecs.DOUBLE, SetTargetPayload::x, ByteBufCodecs.DOUBLE, SetTargetPayload::y, ByteBufCodecs.DOUBLE, SetTargetPayload::z, ByteBufCodecs.STRING_UTF8, SetTargetPayload::name, SetTargetPayload::new); @Override public Type<? extends CustomPacketPayload> type() { return SET_TARGET_TYPE; } }
+    public record ClearTargetPayload(BlockPos controllerPos) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, ClearTargetPayload> STREAM_CODEC = BlockPos.STREAM_CODEC.map(ClearTargetPayload::new, ClearTargetPayload::controllerPos); @Override public Type<? extends CustomPacketPayload> type() { return CLEAR_TARGET_TYPE; } }
+    public record SetAltitudeHoldTargetPayload(BlockPos controllerPos, double y) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, SetAltitudeHoldTargetPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, SetAltitudeHoldTargetPayload::controllerPos, ByteBufCodecs.DOUBLE, SetAltitudeHoldTargetPayload::y, SetAltitudeHoldTargetPayload::new); @Override public Type<? extends CustomPacketPayload> type() { return SET_ALTITUDE_HOLD_TARGET_TYPE; } }
+    public record RequestWaystoneSnapshotPayload() implements CustomPacketPayload { public static final StreamCodec<ByteBuf, RequestWaystoneSnapshotPayload> STREAM_CODEC = StreamCodec.unit(new RequestWaystoneSnapshotPayload()); @Override public Type<? extends CustomPacketPayload> type() { return REQUEST_WAYSTONES_TYPE; } }
     public record WaystoneSyncEntry(String name, double x, double y, double z) { }
     public record WaystoneSyncPayload(String dimension, List<WaystoneSyncEntry> entries) implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, WaystoneSyncPayload> STREAM_CODEC = StreamCodec.of((buf, payload) -> payload.encode(buf), WaystoneSyncPayload::decode);
-        private void encode(ByteBuf buf) {
-            ByteBufCodecs.STRING_UTF8.encode(buf, dimension == null ? "" : dimension);
-            int count = Math.min(entries == null ? 0 : entries.size(), 4096);
-            ByteBufCodecs.VAR_INT.encode(buf, count);
-            for (int i = 0; i < count; i++) {
-                WaystoneSyncEntry entry = entries.get(i);
-                ByteBufCodecs.STRING_UTF8.encode(buf, entry.name() == null ? "Waystone" : entry.name());
-                buf.writeDouble(entry.x()); buf.writeDouble(entry.y()); buf.writeDouble(entry.z());
-            }
-        }
-        private static WaystoneSyncPayload decode(ByteBuf buf) {
-            String dimension = ByteBufCodecs.STRING_UTF8.decode(buf);
-            int count = Math.min(Math.max(ByteBufCodecs.VAR_INT.decode(buf), 0), 4096);
-            List<WaystoneSyncEntry> entries = new ArrayList<>(count);
-            for (int i = 0; i < count; i++) {
-                String name = ByteBufCodecs.STRING_UTF8.decode(buf);
-                entries.add(new WaystoneSyncEntry(name, buf.readDouble(), buf.readDouble(), buf.readDouble()));
-            }
-            return new WaystoneSyncPayload(dimension, entries);
-        }
+        private void encode(ByteBuf buf) { ByteBufCodecs.STRING_UTF8.encode(buf, dimension == null ? "" : dimension); int count = Math.min(entries == null ? 0 : entries.size(), 4096); ByteBufCodecs.VAR_INT.encode(buf, count); for (int i = 0; i < count; i++) { WaystoneSyncEntry entry = entries.get(i); ByteBufCodecs.STRING_UTF8.encode(buf, entry.name() == null ? "Waystone" : entry.name()); buf.writeDouble(entry.x()); buf.writeDouble(entry.y()); buf.writeDouble(entry.z()); } }
+        private static WaystoneSyncPayload decode(ByteBuf buf) { String dimension = ByteBufCodecs.STRING_UTF8.decode(buf); int count = Math.min(Math.max(ByteBufCodecs.VAR_INT.decode(buf), 0), 4096); List<WaystoneSyncEntry> entries = new ArrayList<>(count); for (int i = 0; i < count; i++) { String name = ByteBufCodecs.STRING_UTF8.decode(buf); entries.add(new WaystoneSyncEntry(name, buf.readDouble(), buf.readDouble(), buf.readDouble())); } return new WaystoneSyncPayload(dimension, entries); }
         @Override public Type<? extends CustomPacketPayload> type() { return WAYSTONE_SYNC_TYPE; }
     }
-
-    public record TelemetryPayload(UUID controllerId, double x, double y, double z, double speed, double heading, double pitch, double roll,
-                                   boolean targetPresent, double targetX, double targetY, double targetZ, String targetName, double distance,
-                                   double temperature, double maxTemperature, int thermalState, int cooldownTicks, int energy, int maxEnergy, int coolingTier,
-                                   double stabiliserNorth, double stabiliserEast, double stabiliserSouth, double stabiliserWest, double stabiliserUp, double stabiliserDown,
-                                   double autopilotNorth, double autopilotEast, double autopilotSouth, double autopilotWest, double autopilotUp, double autopilotDown) implements CustomPacketPayload {
+    public record TelemetryPayload(UUID controllerId, double x, double y, double z, double speed, double heading, double pitch, double roll, boolean targetPresent, double targetX, double targetY, double targetZ, String targetName, double distance, double temperature, double maxTemperature, int thermalState, int cooldownTicks, int energy, int maxEnergy, int coolingTier, double stabiliserNorth, double stabiliserEast, double stabiliserSouth, double stabiliserWest, double stabiliserUp, double stabiliserDown, double autopilotNorth, double autopilotEast, double autopilotSouth, double autopilotWest, double autopilotUp, double autopilotDown) implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, TelemetryPayload> STREAM_CODEC = StreamCodec.of((buf, payload) -> payload.encode(buf), TelemetryPayload::decode);
-        private void encode(ByteBuf buf) {
-            buf.writeLong(controllerId.getMostSignificantBits()); buf.writeLong(controllerId.getLeastSignificantBits());
-            buf.writeDouble(x); buf.writeDouble(y); buf.writeDouble(z); buf.writeDouble(speed); buf.writeDouble(heading); buf.writeDouble(pitch); buf.writeDouble(roll);
-            buf.writeBoolean(targetPresent); buf.writeDouble(targetX); buf.writeDouble(targetY); buf.writeDouble(targetZ); ByteBufCodecs.STRING_UTF8.encode(buf, targetName == null ? "" : targetName);
-            buf.writeDouble(distance); buf.writeDouble(temperature); buf.writeDouble(maxTemperature); buf.writeInt(thermalState); buf.writeInt(cooldownTicks); buf.writeInt(energy); buf.writeInt(maxEnergy); buf.writeInt(coolingTier);
-            double[] values={stabiliserNorth,stabiliserEast,stabiliserSouth,stabiliserWest,stabiliserUp,stabiliserDown,autopilotNorth,autopilotEast,autopilotSouth,autopilotWest,autopilotUp,autopilotDown}; for(double value:values)buf.writeDouble(value);
-        }
-        private static TelemetryPayload decode(ByteBuf buf) {
-            UUID id=new UUID(buf.readLong(),buf.readLong()); double x=buf.readDouble(),y=buf.readDouble(),z=buf.readDouble(),speed=buf.readDouble(),heading=buf.readDouble(),pitch=buf.readDouble(),roll=buf.readDouble();
-            boolean target=buf.readBoolean(); double tx=buf.readDouble(),ty=buf.readDouble(),tz=buf.readDouble(); String name=ByteBufCodecs.STRING_UTF8.decode(buf);
-            double distance=buf.readDouble(),temperature=buf.readDouble(),maxTemperature=buf.readDouble(); int thermal=buf.readInt(),cooldown=buf.readInt(),energy=buf.readInt(),maxEnergy=buf.readInt(),cooling=buf.readInt();
-            double[] v=new double[12];for(int i=0;i<12;i++)v[i]=buf.readDouble();
-            return new TelemetryPayload(id,x,y,z,speed,heading,pitch,roll,target,tx,ty,tz,name,distance,temperature,maxTemperature,thermal,cooldown,energy,maxEnergy,cooling,v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8],v[9],v[10],v[11]);
-        }
+        private void encode(ByteBuf buf) { buf.writeLong(controllerId.getMostSignificantBits()); buf.writeLong(controllerId.getLeastSignificantBits()); buf.writeDouble(x); buf.writeDouble(y); buf.writeDouble(z); buf.writeDouble(speed); buf.writeDouble(heading); buf.writeDouble(pitch); buf.writeDouble(roll); buf.writeBoolean(targetPresent); buf.writeDouble(targetX); buf.writeDouble(targetY); buf.writeDouble(targetZ); ByteBufCodecs.STRING_UTF8.encode(buf, targetName == null ? "" : targetName); buf.writeDouble(distance); buf.writeDouble(temperature); buf.writeDouble(maxTemperature); buf.writeInt(thermalState); buf.writeInt(cooldownTicks); buf.writeInt(energy); buf.writeInt(maxEnergy); buf.writeInt(coolingTier); double[] values={stabiliserNorth,stabiliserEast,stabiliserSouth,stabiliserWest,stabiliserUp,stabiliserDown,autopilotNorth,autopilotEast,autopilotSouth,autopilotWest,autopilotUp,autopilotDown}; for(double value:values)buf.writeDouble(value); }
+        private static TelemetryPayload decode(ByteBuf buf) { UUID id=new UUID(buf.readLong(),buf.readLong()); double x=buf.readDouble(),y=buf.readDouble(),z=buf.readDouble(),speed=buf.readDouble(),heading=buf.readDouble(),pitch=buf.readDouble(),roll=buf.readDouble(); boolean target=buf.readBoolean(); double tx=buf.readDouble(),ty=buf.readDouble(),tz=buf.readDouble(); String name=ByteBufCodecs.STRING_UTF8.decode(buf); double distance=buf.readDouble(),temperature=buf.readDouble(),maxTemperature=buf.readDouble(); int thermal=buf.readInt(),cooldown=buf.readInt(),energy=buf.readInt(),maxEnergy=buf.readInt(),cooling=buf.readInt(); double[] v=new double[12];for(int i=0;i<12;i++)v[i]=buf.readDouble(); return new TelemetryPayload(id,x,y,z,speed,heading,pitch,roll,target,tx,ty,tz,name,distance,temperature,maxTemperature,thermal,cooldown,energy,maxEnergy,cooling,v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8],v[9],v[10],v[11]); }
         @Override public Type<? extends CustomPacketPayload> type(){return TELEMETRY_TYPE;}
     }
 
-    @EventBusSubscriber(modid=FlightComputer.MOD_ID,bus=EventBusSubscriber.Bus.MOD)
+    @EventBusSubscriber(modid=FlightComputer.MOD_ID)
     public static final class Registration {
-        @SubscribeEvent public static void register(RegisterPayloadHandlersEvent event){event.registrar(VERSION)
-                .playToServer(CONTROLLER_ACTION_TYPE,ControllerActionPayload.STREAM_CODEC,FlightComputerNetwork::handleAction)
-                .playToServer(OPERATIONS_ACTION_TYPE,OperationsActionPayload.STREAM_CODEC,FlightComputerNetwork::handleOperationsAction)
-                .playToServer(LINK_VECTOR_TYPE,LinkVectorPayload.STREAM_CODEC,FlightComputerNetwork::handleVectorLink)
-                .playToServer(TOOL_CONFIG_TYPE,ToolConfigPayload.STREAM_CODEC,FlightComputerNetwork::handleToolConfig)
-                .playToServer(COOLING_SLOT_TYPE,CoolingSlotPayload.STREAM_CODEC,FlightComputerNetwork::handleCoolingSlot)
-                .playToServer(SET_TARGET_TYPE,SetTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetTarget)
-                .playToServer(CLEAR_TARGET_TYPE,ClearTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleClearTarget)
-                .playToServer(SET_ALTITUDE_HOLD_TARGET_TYPE,SetAltitudeHoldTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetAltitudeHoldTarget)
-                .playToServer(REQUEST_WAYSTONES_TYPE,RequestWaystoneSnapshotPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneRequest)
-                .playToClient(TELEMETRY_TYPE,TelemetryPayload.STREAM_CODEC,FlightComputerNetwork::handleTelemetry)
-                .playToClient(WAYSTONE_SYNC_TYPE,WaystoneSyncPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneSync);}
+        @SubscribeEvent public static void register(RegisterPayloadHandlersEvent event){event.registrar(VERSION).playToServer(CONTROLLER_ACTION_TYPE,ControllerActionPayload.STREAM_CODEC,FlightComputerNetwork::handleAction).playToServer(OPERATIONS_ACTION_TYPE,OperationsActionPayload.STREAM_CODEC,FlightComputerNetwork::handleOperationsAction).playToServer(LINK_VECTOR_TYPE,LinkVectorPayload.STREAM_CODEC,FlightComputerNetwork::handleVectorLink).playToServer(TOOL_CONFIG_TYPE,ToolConfigPayload.STREAM_CODEC,FlightComputerNetwork::handleToolConfig).playToServer(COOLING_SLOT_TYPE,CoolingSlotPayload.STREAM_CODEC,FlightComputerNetwork::handleCoolingSlot).playToServer(SET_TARGET_TYPE,SetTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetTarget).playToServer(CLEAR_TARGET_TYPE,ClearTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleClearTarget).playToServer(SET_ALTITUDE_HOLD_TARGET_TYPE,SetAltitudeHoldTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetAltitudeHoldTarget).playToServer(REQUEST_WAYSTONES_TYPE,RequestWaystoneSnapshotPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneRequest).playToClient(TELEMETRY_TYPE,TelemetryPayload.STREAM_CODEC,FlightComputerNetwork::handleTelemetry).playToClient(WAYSTONE_SYNC_TYPE,WaystoneSyncPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneSync);}
     }
-
     private static boolean near(ServerPlayer p,BlockPos pos,double radius){return p!=null&&pos!=null&&p.distanceToSqr(pos.getX()+.5,pos.getY()+.5,pos.getZ()+.5)<=radius*radius;}
     private static void handleAction(ControllerActionPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.pos(),64))return;BlockEntity be=player.level().getBlockEntity(p.pos());if(be instanceof FlightControllerBlockEntity fc)FlightControllerAction.fromNetworkId(p.actionId()).ifPresent(fc::applyAction);});}
     private static void handleOperationsAction(OperationsActionPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.pos(),64))return;BlockEntity be=player.level().getBlockEntity(p.pos());if(be instanceof FlightControllerBlockEntity fc)FlightOperationsAction.fromNetworkId(p.actionId()).ifPresent(fc::applyOperationsAction);});}
