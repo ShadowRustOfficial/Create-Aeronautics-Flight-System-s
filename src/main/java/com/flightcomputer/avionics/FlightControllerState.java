@@ -59,7 +59,11 @@ public record FlightControllerState(
                     altitudeHold, headingHold, positionHold, velocityHold, false, false);
             case EMERGENCY_SHUTDOWN -> new FlightControllerState(false, false, FlightMode.DISENGAGED,
                     false, false, false, false, false, false);
-            case PULSE_DISPLAY, TOGGLE_TERRAIN -> this;
+            // Independent push actions are transient control inputs. They must not
+            // mutate the persisted controller mode/state, so the runtime pulse
+            // bridge handles them separately.
+            case PULSE_DISPLAY, TOGGLE_TERRAIN,
+                 PUSH_FORWARD, PUSH_BACKWARD, PUSH_UP, PUSH_DOWN, PUSH_LEFT, PUSH_RIGHT -> this;
         };
     }
 
