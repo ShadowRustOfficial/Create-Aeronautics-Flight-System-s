@@ -3,11 +3,15 @@ package com.flightcomputer.client;
 import com.flightcomputer.client.gui.CoolingConsoleScreen;
 import com.flightcomputer.client.gui.NavigationConsoleScreen;
 import com.flightcomputer.client.gui.ThermalConsoleScreen;
+import com.flightcomputer.network.FlightComputerUiSoundNetwork;
 import com.flightcomputer.registry.ModSounds;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.BlockPos;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
+
+import java.lang.reflect.Field;
 
 /** Centralised UI sound policy for all Flight Computer screens. */
 public final class AudioUiSoundBridge {
@@ -21,6 +25,7 @@ public final class AudioUiSoundBridge {
                 || screen instanceof CoolingConsoleScreen;
     }
 
+    /** Legacy/local playback entry point retained for non-button callers. */
     public static void play(Kind kind) {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.player == null || mc.level == null) return;
@@ -34,19 +39,24 @@ public final class AudioUiSoundBridge {
         mc.getSoundManager().play(SimpleSoundInstance.forUI(holder.get(), 1.0F));
     }
 
-    /** Called by the shared Button sound hook immediately before vanilla would play its click sound. */
+    /**
+     * Called by the shared Button sound hook immediately before vanilla would play its click sound.
+     * Button audio is deliberately muted locally; the server emits the selected sound from the
+     * Flight Computer block so nearby players hear the same interaction.
+     */
     public static void playForButton(Button button) {
         Minecraft mc = Minecraft.getInstance();
         if (button == null || mc == null || !isFlightComputerScreen(mc.screen)) return;
 
+        BlockPos controllerPos = controllerPos(mc.screen);
+        if (controllerPos == null) return;
+
         String text = button.getMessage().getString().trim().toUpperCase(java.util.Locale.ROOT);
 
-        // Navigation / Thermal / Cooling are panel tabs. The four Navigation Console tabs are
-        // included here as well. All use the supplied UI Open sound, never the vanilla click.
         if (text.equals("MAP") || text.equals("ROUTE") || text.equals("FLIGHT CONTROL")
                 || text.equals("DIAGNOSTICS") || text.equals("NAVIGATION")
                 || text.equals("THERMAL") || text.equals("COOLING")) {
-            play(Kind.TAB);
+            request(controllerPos, Kind.TAB);
             return;
         }
 
@@ -63,12 +73,37 @@ public final class AudioUiSoundBridge {
                 || text.startsWith("WAYPOINTS:");
 
         if (toggle) {
-            // The button label represents the state before this click, so play the state being entered.
             boolean currentlyOn = text.contains(": ON") || text.contains(": ENGAGED");
-            play(currentlyOn ? Kind.TOGGLE_OFF : Kind.TOGGLE_ON);
+            request(controllerPos, currentlyOn ? Kind.TOGGLE_OFF : Kind.TOGGLE_ON);
             return;
         }
 
-        play(Kind.INTERACT);
+        request(controllerPos, Kind.INTERACT);
+    }
+
+    private static void request(BlockPos controllerPos, Kind kind) {
+        FlightComputerUiSoundNetwork.request(controllerPos, soundId(kind));
+    }
+
+    private static int soundId(Kind kind) {
+        return switch (kind) {
+            case TOGGLE_ON -> 0;
+            case TOGGLE_OFF -> 1;
+            case TAB -> 2;
+            case INTERACT -> 3;
+            case DISCOVER -> 4;
+        };
+    }
+
+    /** All three Flight Computer screens intentionally keep this field private. */
+    private static BlockPos controllerPos(Screen screen) {
+        try {
+            Field field = screen.getClass().getDeclaredField("controllerPos");
+            field.setAccessible(true);
+            Object value = field.get(screen);
+            return value instanceof BlockPos pos ? pos : null;
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return null;
+        }
     }
 }
