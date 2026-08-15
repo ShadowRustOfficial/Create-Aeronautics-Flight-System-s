@@ -63,21 +63,46 @@ public final class ThrusterRegistry {
     }
 
     /**
-     * Sable's EmbeddedPlotLevelAccessor is NOT addressed with the plot's raw
-     * bounding-box coordinates. Sable explicitly defines the embedded accessor
-     * so that (0, 0, 0) is the plot center, while LevelPlot#getBoundingBox()
-     * stores block coordinates in the plot's global chunk grid.
+     * Discover block entities directly from Sable's loaded plot chunks.
      *
-     * Therefore the bounds must be translated into the accessor's centered
-     * coordinate space before calling getBlockEntity(). The controller position
-     * must be translated into the same space before calculating mount offsets.
+     * Sable stores the vessel's blocks in its plot chunk grid and the block
+     * entities already carry their real plot-space BlockPos. Reading the
+     * loaded chunk block-entity maps avoids guessing at the plot bounding-box
+     * coordinate system and, importantly, does not miss large vessels whose
+     * thrusters are far beyond the old 24-block world scan.
+     *
+     * The bounding-box scan remains as a compatibility fallback for older
+     * Sable builds that do not expose loaded plot chunks through reflection.
      */
     private boolean scanSablePlot(BlockPos controllerPos, FlightMode mode,
-                                   Map<VectorDirection, List<ThrusterLink>> bank, Object subLevel) {
+                                  Map<VectorDirection, List<ThrusterLink>> bank, Object subLevel) {
         try {
             Object plot = invokeNoArg(subLevel, "getPlot");
             if (plot == null) return false;
 
+            Object loadedChunks = invokeNoArg(plot, "getLoadedChunks");
+            if (loadedChunks instanceof Iterable<?> iterable) {
+                for (Object holder : iterable) {
+                    Object chunk = invokeNoArg(holder, "getChunk");
+                    Object blockEntities = invokeNoArg(chunk, "getBlockEntities");
+                    if (!(blockEntities instanceof Map<?, ?> entities)) continue;
+
+                    for (Object value : entities.values()) {
+                        if (!(value instanceof BlockEntity blockEntity)) continue;
+                        discoverCompatible(
+                                blockEntity,
+                                mountOffset(controllerPos, blockEntity.getBlockPos()),
+                                mode,
+                                bank
+                        );
+                    }
+                }
+                return true;
+            }
+
+            // Compatibility fallback: Sable's EmbeddedPlotLevelAccessor uses
+            // coordinates centered on getCenterBlock(). LevelPlot#getBoundingBox()
+            // is local to the plot, so translate both into that accessor space.
             Object accessor = invokeNoArg(plot, "getEmbeddedLevelAccessor");
             if (!(accessor instanceof LevelAccessor levelAccessor)) return false;
 
@@ -93,16 +118,12 @@ public final class ThrusterRegistry {
             long volume = ((long) maxX - minX + 1L) * ((long) maxY - minY + 1L) * ((long) maxZ - minZ + 1L);
             if (volume <= 0L || volume > MAX_SABLE_SCAN_VOLUME) return false;
 
-            // LevelPlot#getBoundingBox() is in the plot's raw block coordinate
-            // space. EmbeddedPlotLevelAccessor#getBlockEntity() expects local
-            // coordinates centered around getCenterBlock().
             int localMinX = minX - center.getX();
             int localMinY = minY - center.getY();
             int localMinZ = minZ - center.getZ();
             int localMaxX = maxX - center.getX();
             int localMaxY = maxY - center.getY();
             int localMaxZ = maxZ - center.getZ();
-
             BlockPos controllerLocal = controllerPos.subtract(center);
 
             for (BlockPos scanPos : BlockPos.betweenClosed(
@@ -110,9 +131,7 @@ public final class ThrusterRegistry {
                     localMaxX, localMaxY, localMaxZ)) {
                 BlockEntity blockEntity = levelAccessor.getBlockEntity(scanPos);
                 if (blockEntity == null) continue;
-
-                double[] offset = mountOffset(controllerLocal, scanPos);
-                discoverCompatible(blockEntity, offset, mode, bank);
+                discoverCompatible(blockEntity, mountOffset(controllerLocal, scanPos), mode, bank);
             }
             return true;
         } catch (RuntimeException | LinkageError ignored) {
@@ -205,13 +224,14 @@ public final class ThrusterRegistry {
         return null;
     }
 
-    private static Method findNoArg(Class<?> type, String name) {
-        try {
-            Method method = type.getMethod(name);
-            return method.getParameterCount() == 0 ? method : null;
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            return null;
+    private static Method findNoArg(Class<?> type, String... names) {
+        for (String name : names) {
+            try {
+                Method method = type.getMethod(name);
+                if (method.getParameterCount() == 0 && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) return method;
+            } catch (ReflectiveOperationException ignored) { }
         }
+        return null;
     }
 
     private static Object invokeNoArg(Object target, String name) {
