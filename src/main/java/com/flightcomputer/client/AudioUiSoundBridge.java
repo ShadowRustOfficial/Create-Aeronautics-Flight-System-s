@@ -25,10 +25,21 @@ public final class AudioUiSoundBridge {
                 || screen instanceof CoolingConsoleScreen;
     }
 
-    /** Legacy/local playback entry point retained for non-button callers. */
+    /**
+     * Play a UI sound through the Flight Computer block whenever the active screen has a
+     * controller position. This keeps UI audio audible to nearby players. A local fallback is
+     * retained only for callers that run without a Flight Computer screen/context.
+     */
     public static void play(Kind kind) {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.player == null || mc.level == null) return;
+
+        BlockPos controllerPos = controllerPos(mc.screen);
+        if (controllerPos != null && isFlightComputerScreen(mc.screen)) {
+            request(controllerPos, kind);
+            return;
+        }
+
         var holder = switch (kind) {
             case TOGGLE_ON -> ModSounds.UI_TOGGLE_ON;
             case TOGGLE_OFF -> ModSounds.UI_TOGGLE_OFF;
@@ -97,6 +108,7 @@ public final class AudioUiSoundBridge {
 
     /** All three Flight Computer screens intentionally keep this field private. */
     private static BlockPos controllerPos(Screen screen) {
+        if (screen == null) return null;
         try {
             Field field = screen.getClass().getDeclaredField("controllerPos");
             field.setAccessible(true);
