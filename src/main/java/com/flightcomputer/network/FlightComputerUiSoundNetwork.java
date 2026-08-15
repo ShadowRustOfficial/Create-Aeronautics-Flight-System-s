@@ -12,6 +12,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
@@ -28,7 +29,7 @@ import java.lang.reflect.Method;
 @EventBusSubscriber(modid = FlightComputer.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
 public final class FlightComputerUiSoundNetwork {
     private static final String VERSION = "1";
-    private static final double MAX_DISTANCE = 64.0D;
+    private static final double MAX_DISTANCE = 96.0D;
     private static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "ui_block_sound");
     public static final CustomPacketPayload.Type<UiSoundPayload> TYPE = new CustomPacketPayload.Type<>(ID);
 
@@ -63,13 +64,13 @@ public final class FlightComputerUiSoundNetwork {
         context.enqueueWork(() -> {
             if (!(context.player() instanceof ServerPlayer player)) return;
 
-            BlockEntity blockEntity = player.level().getBlockEntity(payload.controllerPos());
-            if (!(blockEntity instanceof FlightControllerBlockEntity)) return;
+            FlightControllerBlockEntity controller = resolveController(player, payload.controllerPos());
+            if (controller == null) return;
 
             SoundEvent sound = soundFor(payload.soundId());
             if (sound == null) return;
 
-            Vec3 soundPosition = resolvePhysicalPosition(player.level(), payload.controllerPos());
+            Vec3 soundPosition = resolvePhysicalPosition(player, controller, payload.controllerPos());
             if (player.distanceToSqr(soundPosition.x, soundPosition.y, soundPosition.z) > MAX_DISTANCE * MAX_DISTANCE) return;
 
             player.level().playSound(
@@ -85,6 +86,57 @@ public final class FlightComputerUiSoundNetwork {
         });
     }
 
+    private static FlightControllerBlockEntity resolveController(ServerPlayer player, BlockPos pos) {
+        BlockEntity root = player.level().getBlockEntity(pos);
+        if (root instanceof FlightControllerBlockEntity controller) return controller;
+
+        try {
+            Class<?> companionType = Class.forName(
+                    "dev.ryanhcode.sable.companion.SableCompanion",
+                    false,
+                    FlightComputerUiSoundNetwork.class.getClassLoader()
+            );
+            Object companion = companionType.getField("INSTANCE").get(null);
+            if (companion == null) return null;
+
+            Method tracking = findMethod(companion.getClass(), "getTrackingSubLevel", Entity.class);
+            if (tracking != null) {
+                Object subLevel = tracking.invoke(companion, player);
+                FlightControllerBlockEntity controller = embeddedController(subLevel, pos);
+                if (controller != null) return controller;
+            }
+
+            Method containing = findMethod(companion.getClass(), "getContaining", Level.class, Vec3.class);
+            if (containing != null) {
+                Object subLevel = containing.invoke(companion, player.level(), Vec3.atCenterOf(pos));
+                FlightControllerBlockEntity controller = embeddedController(subLevel, pos);
+                if (controller != null) return controller;
+            }
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+        }
+
+        return null;
+    }
+
+    private static FlightControllerBlockEntity embeddedController(Object subLevel, BlockPos pos) {
+        if (subLevel == null) return null;
+        try {
+            Method accessorMethod = findMethod(subLevel.getClass(), "getEmbeddedLevelAccessor");
+            if (accessorMethod == null) return null;
+            Object accessor = accessorMethod.invoke(subLevel);
+            if (accessor instanceof Level level) {
+                BlockEntity be = level.getBlockEntity(pos);
+                return be instanceof FlightControllerBlockEntity controller ? controller : null;
+            }
+            Method getBlockEntity = findMethod(accessor.getClass(), "getBlockEntity", BlockPos.class);
+            if (getBlockEntity == null) return null;
+            Object be = getBlockEntity.invoke(accessor, pos);
+            return be instanceof FlightControllerBlockEntity controller ? controller : null;
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
     private static SoundEvent soundFor(int id) {
         return switch (id) {
             case 0 -> ModSounds.UI_TOGGLE_ON.get();
@@ -96,28 +148,39 @@ public final class FlightComputerUiSoundNetwork {
         };
     }
 
-    /**
-     * Sable stores sub-level blocks in plot coordinates while rendering them at their dynamic world pose.
-     * Resolve that pose before emitting the sound so the sound originates from the physical vessel.
-     * If Sable is absent or reflection changes, fall back to the block position.
-     */
-    private static Vec3 resolvePhysicalPosition(Level level, BlockPos pos) {
-        Vec3 fallback = Vec3.atCenterOf(pos);
+    /** Resolve the sound to the physical Sable pose when available; otherwise use the actual block position. */
+    private static Vec3 resolvePhysicalPosition(ServerPlayer player, FlightControllerBlockEntity controller, BlockPos pos) {
+        Vec3 fallback = Vec3.atCenterOf(controller.getBlockPos());
         try {
             Class<?> companionType = Class.forName(
                     "dev.ryanhcode.sable.companion.SableCompanion",
                     false,
                     FlightComputerUiSoundNetwork.class.getClassLoader()
             );
-            Field instanceField = companionType.getField("INSTANCE");
-            Object companion = instanceField.get(null);
+            Object companion = companionType.getField("INSTANCE").get(null);
             if (companion == null) return fallback;
 
-            Method project = companion.getClass().getMethod("projectOutOfSubLevel", Level.class, Vec3.class);
-            Object result = project.invoke(companion, level, fallback);
+            Method tracking = findMethod(companion.getClass(), "getTrackingSubLevel", Entity.class);
+            Object subLevel = tracking == null ? null : tracking.invoke(companion, player);
+            if (subLevel == null) return fallback;
+
+            Method poseMethod = findMethod(subLevel.getClass(), "logicalPose");
+            if (poseMethod == null) return fallback;
+            Object pose = poseMethod.invoke(subLevel);
+            Method transform = findMethod(pose.getClass(), "transformPosition", Vec3.class);
+            if (transform == null) return fallback;
+            Object result = transform.invoke(pose, Vec3.atCenterOf(pos));
             return result instanceof Vec3 vec ? vec : fallback;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
             return fallback;
+        }
+    }
+
+    private static Method findMethod(Class<?> type, String name, Class<?>... parameterTypes) {
+        try {
+            return type.getMethod(name, parameterTypes);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return null;
         }
     }
 }
