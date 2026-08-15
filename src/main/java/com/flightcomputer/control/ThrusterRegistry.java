@@ -62,18 +62,7 @@ public final class ThrusterRegistry {
         scanOrdinaryLevel(level, controllerPos, mode, bank);
     }
 
-    /**
-     * Discover block entities directly from Sable's loaded plot chunks.
-     *
-     * Sable stores the vessel's blocks in its plot chunk grid and the block
-     * entities already carry their real plot-space BlockPos. Reading the
-     * loaded chunk block-entity maps avoids guessing at the plot bounding-box
-     * coordinate system and, importantly, does not miss large vessels whose
-     * thrusters are far beyond the old 24-block world scan.
-     *
-     * The bounding-box scan remains as a compatibility fallback for older
-     * Sable builds that do not expose loaded plot chunks through reflection.
-     */
+    /** Discover block entities directly from Sable's loaded plot chunks. */
     private boolean scanSablePlot(BlockPos controllerPos, FlightMode mode,
                                   Map<VectorDirection, List<ThrusterLink>> bank, Object subLevel) {
         try {
@@ -81,23 +70,29 @@ public final class ThrusterRegistry {
             if (plot == null) return false;
 
             Object loadedChunks = invokeNoArg(plot, "getLoadedChunks");
-            if (loadedChunks instanceof Iterable<?> iterable) {
-                for (Object holder : iterable) {
-                    Object chunk = invokeNoArg(holder, "getChunk");
-                    Object blockEntities = invokeNoArg(chunk, "getBlockEntities");
-                    if (!(blockEntities instanceof Map<?, ?> entities)) continue;
+            if (loadedChunks != null) {
+                Iterable<?> holders = asValues(loadedChunks);
+                if (holders != null) {
+                    boolean scannedAnyChunk = false;
+                    for (Object holder : holders) {
+                        Object chunk = invokeNoArg(holder, "getChunk", "chunk");
+                        if (chunk == null && hasBlockEntityMap(holder)) chunk = holder;
+                        Object blockEntities = invokeNoArg(chunk, "getBlockEntities", "blockEntities");
+                        if (!(blockEntities instanceof Map<?, ?> entities)) continue;
+                        scannedAnyChunk = true;
 
-                    for (Object value : entities.values()) {
-                        if (!(value instanceof BlockEntity blockEntity)) continue;
-                        discoverCompatible(
-                                blockEntity,
-                                mountOffset(controllerPos, blockEntity.getBlockPos()),
-                                mode,
-                                bank
-                        );
+                        for (Object value : entities.values()) {
+                            if (!(value instanceof BlockEntity blockEntity)) continue;
+                            discoverCompatible(
+                                    blockEntity,
+                                    mountOffset(controllerPos, blockEntity.getBlockPos()),
+                                    mode,
+                                    bank
+                            );
+                        }
                     }
+                    if (scannedAnyChunk) return true;
                 }
-                return true;
             }
 
             // Compatibility fallback: Sable's EmbeddedPlotLevelAccessor uses
@@ -139,6 +134,16 @@ public final class ThrusterRegistry {
         }
     }
 
+    private static Iterable<?> asValues(Object value) {
+        if (value instanceof Iterable<?> iterable) return iterable;
+        if (value instanceof Map<?, ?> map) return map.values();
+        return null;
+    }
+
+    private static boolean hasBlockEntityMap(Object target) {
+        return invokeNoArg(target, "getBlockEntities", "blockEntities") instanceof Map<?, ?>;
+    }
+
     private void scanOrdinaryLevel(Level level, BlockPos controllerPos, FlightMode mode,
                                    Map<VectorDirection, List<ThrusterLink>> bank) {
         BlockPos min = controllerPos.offset(-DISCOVERY_RADIUS, -DISCOVERY_RADIUS, -DISCOVERY_RADIUS);
@@ -155,7 +160,6 @@ public final class ThrusterRegistry {
         for (VectorDirection direction : VectorDirection.values()) {
             PropulsionSource source = ReflectivePropulsionSource.tryCreate(blockEntity, direction, offset);
             if (!(source instanceof ReflectivePropulsionSource reflective)) continue;
-
             VectorDirection physicalDirection = reflective.getPhysicalDirection();
             if (physicalDirection == null || physicalDirection != direction) continue;
             addIfUnique(bank.get(direction), new ThrusterLink(source, direction, mode));
@@ -165,7 +169,6 @@ public final class ThrusterRegistry {
     private void addExplicit(Level level, BlockPos controllerPos, FlightMode mode, VectorDirection direction,
                              BlockPos storedTarget, Map<VectorDirection, List<ThrusterLink>> bank, Object subLevel) {
         if (storedTarget == null || direction == null) return;
-
         BlockEntity direct = level.getBlockEntity(storedTarget);
         PropulsionSource directSource = direct == null ? null
                 : ReflectivePropulsionSource.tryCreate(direct, direction, mountOffset(controllerPos, storedTarget));
@@ -173,7 +176,6 @@ public final class ThrusterRegistry {
             addIfUnique(bank.get(direction), new ThrusterLink(directSource, direction, mode));
             return;
         }
-
         if (subLevel != null) {
             BlockEntity subLevelEntity = getSubLevelBlockEntity(subLevel, storedTarget);
             if (subLevelEntity != null) {
@@ -185,7 +187,6 @@ public final class ThrusterRegistry {
                 }
             }
         }
-
         BlockPos localTarget = controllerPos.offset(storedTarget);
         BlockEntity local = level.getBlockEntity(localTarget);
         PropulsionSource localSource = ReflectivePropulsionSource.tryCreate(local, direction,
@@ -197,16 +198,13 @@ public final class ThrusterRegistry {
         try {
             BlockEntity be = level.getBlockEntity(controllerPos);
             if (!(be instanceof FlightControllerBlockEntity controller)) return null;
-
             Class<?> sable = Class.forName("dev.ryanhcode.sable.companion.SableCompanion", false,
                     ThrusterRegistry.class.getClassLoader());
             Object instance = sable.getField("INSTANCE").get(null);
             if (instance == null) return null;
-
             try {
                 return instance.getClass().getMethod("getContaining", BlockEntity.class).invoke(instance, controller);
             } catch (NoSuchMethodException ignored) { }
-
             try {
                 return instance.getClass().getMethod("getContaining", Level.class, Vec3.class)
                         .invoke(instance, level, Vec3.atCenterOf(controllerPos));
@@ -234,9 +232,9 @@ public final class ThrusterRegistry {
         return null;
     }
 
-    private static Object invokeNoArg(Object target, String name) {
+    private static Object invokeNoArg(Object target, String... names) {
         if (target == null) return null;
-        Method method = findNoArg(target.getClass(), name);
+        Method method = findNoArg(target.getClass(), names);
         if (method == null) return null;
         try { return method.invoke(target); }
         catch (ReflectiveOperationException | RuntimeException ignored) { return null; }
@@ -262,22 +260,13 @@ public final class ThrusterRegistry {
         list.add(link);
     }
 
-    public void link(ThrusterLink link) {
-        if (link != null) addIfUnique(links.get(link.mode).get(link.direction), link);
-    }
-
-    public List<ThrusterLink> getLinks(FlightMode mode, VectorDirection direction) {
-        return Collections.unmodifiableList(links.get(mode).get(direction));
-    }
-
+    public void link(ThrusterLink link) { if (link != null) addIfUnique(links.get(link.mode).get(link.direction), link); }
+    public List<ThrusterLink> getLinks(FlightMode mode, VectorDirection direction) { return Collections.unmodifiableList(links.get(mode).get(direction)); }
     public List<ThrusterLink> getAllLinks(FlightMode mode) {
         LinkedHashMap<String, ThrusterLink> unique = new LinkedHashMap<>();
-        for (VectorDirection direction : VectorDirection.values()) {
-            for (ThrusterLink link : links.get(mode).get(direction)) unique.putIfAbsent(link.source.getId(), link);
-        }
+        for (VectorDirection direction : VectorDirection.values()) for (ThrusterLink link : links.get(mode).get(direction)) unique.putIfAbsent(link.source.getId(), link);
         return List.copyOf(unique.values());
     }
-
     public List<ThrusterLink> getLinks(FlightMode mode, ControlAxis axis) {
         List<ThrusterLink> result = new ArrayList<>();
         for (VectorDirection direction : VectorDirection.values()) {
@@ -288,40 +277,21 @@ public final class ThrusterRegistry {
         }
         return Collections.unmodifiableList(result);
     }
-
     public List<ThrusterLink> getAllLinks() {
         LinkedHashMap<String, ThrusterLink> unique = new LinkedHashMap<>();
-        for (FlightMode mode : FlightMode.values()) {
-            for (VectorDirection direction : VectorDirection.values()) {
-                for (ThrusterLink link : links.get(mode).get(direction)) unique.putIfAbsent(link.source.getId(), link);
-            }
-        }
+        for (FlightMode mode : FlightMode.values()) for (VectorDirection direction : VectorDirection.values())
+            for (ThrusterLink link : links.get(mode).get(direction)) unique.putIfAbsent(link.source.getId(), link);
         return List.copyOf(unique.values());
     }
-
     public double getVectorAuthority(FlightMode mode, VectorDirection direction) {
-        double total = 0;
-        for (ThrusterLink link : links.get(mode).get(direction)) total += Math.max(0, link.source.getAvailableThrust());
-        return total;
+        double total = 0; for (ThrusterLink link : links.get(mode).get(direction)) total += Math.max(0, link.source.getAvailableThrust()); return total;
     }
-
-    public int getVectorThrusterCount(FlightMode mode, VectorDirection direction) {
-        return links.get(mode).get(direction).size();
-    }
-
+    public int getVectorThrusterCount(FlightMode mode, VectorDirection direction) { return links.get(mode).get(direction).size(); }
     public double getAxisAuthority(FlightMode mode, ControlAxis axis) {
-        double total = 0;
-        for (ThrusterLink link : getLinks(mode, axis)) total += Math.max(0, link.source.getAvailableThrust());
-        return total;
+        double total = 0; for (ThrusterLink link : getLinks(mode, axis)) total += Math.max(0, link.source.getAvailableThrust()); return total;
     }
-
-    public boolean hasAnyVector(FlightMode mode, VectorDirection direction) {
-        return getVectorAuthority(mode, direction) > 0;
-    }
-
+    public boolean hasAnyVector(FlightMode mode, VectorDirection direction) { return getVectorAuthority(mode, direction) > 0; }
     public List<ControlAxis> getUnlinkedAxes(FlightMode mode) {
-        List<ControlAxis> missing = new ArrayList<>();
-        for (ControlAxis axis : ControlAxis.values()) if (getAxisAuthority(mode, axis) <= 0) missing.add(axis);
-        return missing;
+        List<ControlAxis> missing = new ArrayList<>(); for (ControlAxis axis : ControlAxis.values()) if (getAxisAuthority(mode, axis) <= 0) missing.add(axis); return missing;
     }
 }
