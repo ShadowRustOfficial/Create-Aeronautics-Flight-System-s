@@ -8,7 +8,7 @@ import net.minecraft.client.sounds.SoundManager;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /** Replaces vanilla widget click audio for every Flight Computer screen. */
 @Mixin(AbstractWidget.class)
