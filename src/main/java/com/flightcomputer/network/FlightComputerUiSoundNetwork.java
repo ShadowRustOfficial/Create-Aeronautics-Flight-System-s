@@ -18,7 +18,7 @@ import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 /** Server-authoritative UI audio. Uses the exact server-side block sound path as Emergency Shutdown. */
-@EventBusSubscriber(modid = FlightComputer.MOD_ID)
+@EventBusSubscriber(modid = FlightComputer.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
 public final class FlightComputerUiSoundNetwork {
     private static final String VERSION = "1";
     private static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "ui_block_sound");
@@ -58,8 +58,8 @@ public final class FlightComputerUiSoundNetwork {
             SoundEvent sound = soundFor(payload.soundId());
             if (sound == null) return;
 
-            // Deliberately do NOT resolve through Sable or Sound Physics. This is the same
-            // logical-server playback path used by FlightControllerBlockEntity emergency audio.
+            // Deliberately use the exact same server-side Level.playSound path as Emergency Shutdown.
+            // No client SoundManager, Sable sound-physics bridge or local fallback is involved.
             player.level().playSound(
                     null,
                     payload.controllerPos(),
