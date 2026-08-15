@@ -35,6 +35,10 @@ public abstract class FlightComputerNetworkSableDistanceMixin {
 
         context.enqueueWork(() -> {
             if (!(context.player() instanceof ServerPlayer player)) return;
+            Vec3 controllerWorld = project(player, Vec3.atCenterOf(payload.controllerPos()));
+            if (controllerWorld == null) controllerWorld = Vec3.atCenterOf(payload.controllerPos());
+            if (player.position().distanceToSqr(controllerWorld) > 64.0D * 64.0D) return;
+
             BlockEntity blockEntity = player.level().getBlockEntity(payload.controllerPos());
             if (!(blockEntity instanceof com.flightcomputer.block.FlightControllerBlockEntity controller)) return;
             if (!Double.isFinite(payload.x()) || !Double.isFinite(payload.y()) || !Double.isFinite(payload.z())) return;
