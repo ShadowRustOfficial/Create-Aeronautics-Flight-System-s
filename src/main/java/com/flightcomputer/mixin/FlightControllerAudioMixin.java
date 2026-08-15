@@ -10,9 +10,9 @@ import com.flightcomputer.identity.FlightIdentityAccess;
 import com.flightcomputer.registry.ModSounds;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.DoubleTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
+import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
@@ -23,12 +23,13 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Edge-triggered controller audio plus persistent flight identity and manual push handling. */
+/** Edge-triggered controller audio plus Sable-backed identity and manual push handling. */
 @Mixin(FlightControllerBlockEntity.class)
 public abstract class FlightControllerAudioMixin implements FlightIdentityAccess {
     private static final int FIRE_DELAY_TICKS = 100;
@@ -40,17 +41,32 @@ public abstract class FlightControllerAudioMixin implements FlightIdentityAccess
     @Unique private String flightcomputer$flightId = "UNASSIGNED";
     @Unique private final Map<UUID, Vec3> flightcomputer$homes = new HashMap<>();
 
-    @Override public String flightcomputer$getSubLevelName() { return flightcomputer$subLevelName; }
+    @Override public String flightcomputer$getSubLevelName() {
+        String sableName = flightcomputer$readSableDisplayName();
+        if (sableName != null && !sableName.isBlank()) {
+            flightcomputer$subLevelName = sanitize(sableName, "Unnamed Sub Level", 64);
+        }
+        return flightcomputer$subLevelName;
+    }
+
     @Override public void flightcomputer$setSubLevelName(String name) {
-        flightcomputer$subLevelName = sanitize(name, "Unnamed Sub Level", 64);
+        String clean = sanitize(name, "Unnamed Sub Level", 64);
+        flightcomputer$subLevelName = clean;
+        flightcomputer$writeSableDisplayName(clean);
         flightcomputer$syncIdentity();
     }
+
     @Override public String flightcomputer$getFlightId() { return flightcomputer$flightId; }
+
     @Override public void flightcomputer$setFlightId(String id) {
         flightcomputer$flightId = sanitize(id, "UNASSIGNED", 32);
         flightcomputer$syncIdentity();
     }
-    @Override public Vec3 flightcomputer$getHome(UUID playerId) { return playerId == null ? null : flightcomputer$homes.get(playerId); }
+
+    @Override public Vec3 flightcomputer$getHome(UUID playerId) {
+        return playerId == null ? null : flightcomputer$homes.get(playerId);
+    }
+
     @Override public void flightcomputer$setHome(UUID playerId, Vec3 position) {
         if (playerId == null || position == null || !finite(position)) return;
         flightcomputer$homes.put(playerId, position);
@@ -126,12 +142,87 @@ public abstract class FlightControllerAudioMixin implements FlightIdentityAccess
         if (self.getLevel() != null && !self.getLevel().isClientSide())
             self.getLevel().sendBlockUpdated(self.getBlockPos(), self.getBlockState(), self.getBlockState(), 3);
     }
+
+    /** Calls Sable's actual sub-level displayName property, never the Sable UUID. */
+    @Unique private Object flightcomputer$sableSubLevel() {
+        BlockEntity self = (BlockEntity)(Object)this;
+        if (self.getLevel() == null) return null;
+        try {
+            Class<?> sable = Class.forName("dev.ryanhcode.sable.companion.SableCompanion", false,
+                    getClass().getClassLoader());
+            Object helper = sable.getField("INSTANCE").get(null);
+            if (helper == null) return null;
+            Method containing = helper.getClass().getMethod("getContaining", BlockEntity.class);
+            return containing.invoke(helper, self);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            return null;
+        }
+    }
+
+    @Unique private String flightcomputer$readSableDisplayName() {
+        Object subLevel = flightcomputer$sableSubLevel();
+        if (subLevel == null) return null;
+        try {
+            Method getter = flightcomputer$findNoArg(subLevel.getClass(), "getDisplayName");
+            if (getter == null) return null;
+            Object value = getter.invoke(subLevel);
+            if (value instanceof String s) return s;
+            if (value instanceof Component component) return component.getString();
+            return value == null ? null : value.toString();
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    @Unique private boolean flightcomputer$writeSableDisplayName(String name) {
+        Object subLevel = flightcomputer$sableSubLevel();
+        if (subLevel == null) return false;
+        try {
+            Method stringSetter = flightcomputer$findMethod(subLevel.getClass(), "setDisplayName", String.class);
+            if (stringSetter != null) {
+                stringSetter.invoke(subLevel, name);
+                return true;
+            }
+            Method componentSetter = flightcomputer$findMethod(subLevel.getClass(), "setDisplayName", Component.class);
+            if (componentSetter != null) {
+                componentSetter.invoke(subLevel, Component.literal(name));
+                return true;
+            }
+        } catch (ReflectiveOperationException | RuntimeException ignored) { }
+        return false;
+    }
+
+    @Unique private static Method flightcomputer$findNoArg(Class<?> type, String name) {
+        return flightcomputer$findMethod(type, name);
+    }
+
+    @Unique private static Method flightcomputer$findMethod(Class<?> type, String name, Class<?>... parameters) {
+        Class<?> cursor = type;
+        while (cursor != null) {
+            try {
+                Method method = cursor.getDeclaredMethod(name, parameters);
+                method.setAccessible(true);
+                return method;
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                cursor = cursor.getSuperclass();
+            }
+        }
+        try {
+            Method method = type.getMethod(name, parameters);
+            method.setAccessible(true);
+            return method;
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
     @Unique private static String sanitize(String value, String fallback, int maxLength) {
         if (value == null) return fallback;
         String clean = value.trim();
         if (clean.isEmpty()) return fallback;
         return clean.length() > maxLength ? clean.substring(0, maxLength) : clean;
     }
+
     @Unique private static boolean finite(Vec3 p) { return Double.isFinite(p.x) && Double.isFinite(p.y) && Double.isFinite(p.z); }
 
     @Inject(method = "applyAction", at = @At("HEAD"))
