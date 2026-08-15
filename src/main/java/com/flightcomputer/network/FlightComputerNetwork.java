@@ -68,7 +68,7 @@ public final class FlightComputerNetwork {
         @Override public Type<? extends CustomPacketPayload> type(){return TELEMETRY_TYPE;}
     }
 
-    @EventBusSubscriber(modid=FlightComputer.MOD_ID)
+    @EventBusSubscriber(modid=FlightComputer.MOD_ID, bus=EventBusSubscriber.Bus.MOD)
     public static final class Registration {
         @SubscribeEvent public static void register(RegisterPayloadHandlersEvent event){event.registrar(VERSION).playToServer(CONTROLLER_ACTION_TYPE,ControllerActionPayload.STREAM_CODEC,FlightComputerNetwork::handleAction).playToServer(OPERATIONS_ACTION_TYPE,OperationsActionPayload.STREAM_CODEC,FlightComputerNetwork::handleOperationsAction).playToServer(LINK_VECTOR_TYPE,LinkVectorPayload.STREAM_CODEC,FlightComputerNetwork::handleVectorLink).playToServer(TOOL_CONFIG_TYPE,ToolConfigPayload.STREAM_CODEC,FlightComputerNetwork::handleToolConfig).playToServer(COOLING_SLOT_TYPE,CoolingSlotPayload.STREAM_CODEC,FlightComputerNetwork::handleCoolingSlot).playToServer(SET_TARGET_TYPE,SetTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetTarget).playToServer(CLEAR_TARGET_TYPE,ClearTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleClearTarget).playToServer(SET_ALTITUDE_HOLD_TARGET_TYPE,SetAltitudeHoldTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetAltitudeHoldTarget).playToServer(REQUEST_WAYSTONES_TYPE,RequestWaystoneSnapshotPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneRequest).playToClient(TELEMETRY_TYPE,TelemetryPayload.STREAM_CODEC,FlightComputerNetwork::handleTelemetry).playToClient(WAYSTONE_SYNC_TYPE,WaystoneSyncPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneSync);}
     }
