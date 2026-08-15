@@ -10,8 +10,10 @@ import com.flightcomputer.item.FlightLinkToolItem;
 import com.flightcomputer.network.FlightComputerNetwork;
 import com.flightcomputer.registry.ModItems;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.GuiMessage;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -48,6 +50,7 @@ public final class KeyInputHandler {
             if (!(level.getBlockEntity(hit.getBlockPos()) instanceof FlightControllerBlockEntity controller)) continue;
             if (controller.getEnergyStorage().getEnergyStored() <= 0 || controller.getPowerState() == PowerState.NO_POWER) continue;
             mc.setScreen(new NavigationConsoleScreen(hit.getBlockPos()));
+            AudioUiSoundBridge.play(AudioUiSoundBridge.Kind.DISCOVER);
         }
         while (KeyBindings.OPEN_THERMAL.consumeClick()) {
             if (mc.level == null || mc.player == null) continue;
@@ -55,6 +58,7 @@ public final class KeyInputHandler {
             if (!(mc.level.getBlockEntity(hit.getBlockPos()) instanceof FlightControllerBlockEntity controller)) continue;
             if (controller.getEnergyStorage().getEnergyStored() <= 0 || controller.getPowerState() == PowerState.NO_POWER) continue;
             mc.setScreen(new ThermalConsoleScreen(hit.getBlockPos()));
+            AudioUiSoundBridge.play(AudioUiSoundBridge.Kind.DISCOVER);
         }
 
         if (!holdingLinkTool(mc)) return;
