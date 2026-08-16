@@ -14,7 +14,6 @@ public final class SixAxisStabilizer {
     private final AxisPID longitudinalPID;
     private final AxisPID lateralPID;
     private final boolean legacyStableProfile;
-    /** Retained for configuration compatibility; live Sable forces are used by the controller. */
     public double gravity = 11.0;
 
     public SixAxisStabilizer() { this(false); }
@@ -22,17 +21,15 @@ public final class SixAxisStabilizer {
     public SixAxisStabilizer(boolean legacyStableProfile) {
         this.legacyStableProfile = legacyStableProfile;
         if (legacyStableProfile) {
-            // Stabilisation is deliberately less aggressive than the cruise/autopilot profile.
-            // Large Sable vessels have substantially larger inertia and actuator time constants;
-            // the old gains caused repeated torque saturation and visible hunting.
-            pitchPID = new AxisPID(5.0, 0.12, 5.0, 22.0);
-            rollPID = new AxisPID(5.0, 0.12, 5.0, 22.0);
-            yawPID = new AxisPID(3.0, 0.05, 3.5, 14.0);
-            verticalPID = new AxisPID(2.2, 0.20, 1.5, 28.0);
-            longitudinalPID = new AxisPID(1.5, 0.10, 1.0, 28.0);
-            lateralPID = new AxisPID(1.5, 0.10, 1.0, 28.0);
+            // This is the previously stable large-vessel profile: measured angular rates provide
+            // the damping instead of differentiating Euler angles, reducing roll/pitch hunting.
+            pitchPID = new AxisPID(5.0, 0.08, 2.5, 18.0);
+            rollPID = new AxisPID(5.0, 0.08, 2.5, 18.0);
+            yawPID = new AxisPID(4.5, 0.2, 2.0, 18.0);
+            verticalPID = new AxisPID(3.0, 0.6, 1.2, 40.0);
+            longitudinalPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
+            lateralPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
         } else {
-            // Cruise/autopilot gains are intentionally left on the previously working profile.
             pitchPID = new AxisPID(3.5, 0.05, 4.0, 16.0);
             rollPID = new AxisPID(3.5, 0.05, 4.0, 16.0);
             yawPID = new AxisPID(4.0, 0.1, 2.5, 16.0);
@@ -44,12 +41,8 @@ public final class SixAxisStabilizer {
 
     public void applyProfile(TuningResult profile) {
         if (profile == null) return;
-        apply(pitchPID, profile.pitch());
-        apply(rollPID, profile.roll());
-        apply(yawPID, profile.yaw());
-        apply(verticalPID, profile.vertical());
-        apply(longitudinalPID, profile.longitudinal());
-        apply(lateralPID, profile.lateral());
+        apply(pitchPID, profile.pitch()); apply(rollPID, profile.roll()); apply(yawPID, profile.yaw());
+        apply(verticalPID, profile.vertical()); apply(longitudinalPID, profile.longitudinal()); apply(lateralPID, profile.lateral());
     }
     public TuningResult snapshotProfile(long fingerprint, int version) {
         return new TuningResult(g(pitchPID), g(rollPID), g(yawPID), g(verticalPID), g(longitudinalPID), g(lateralPID), fingerprint, version);
@@ -61,15 +54,7 @@ public final class SixAxisStabilizer {
         return computeCommands(state, sp, dt, null, FlightMode.STABILIZE);
     }
 
-    /**
-     * Computes acceleration/force commands from the live Sable vessel state.
-     *
-     * Sable's authoritative velocity/mass/inertia observer already includes passive physics such
-     * as Gravity, Levitation, Lift, Balloon Lift, Drag and Magnetic forces in externalForceBody().
-     * They are treated as environmental/passive forces, not as fake thruster authority or extra
-     * mass compensation. This is important for Levitite-heavy large vessels: the stabiliser only
-     * commands the residual force needed after Sable's actual passive forces have acted.
-     */
+    /** Computes force/torque commands from the live Sable vessel state. */
     public Map<ControlAxis, Double> computeCommands(VehicleState state, StabilizationSetpoint sp, double dt,
                                                     ThrusterRegistry registry, FlightMode mode) {
         Map<ControlAxis, Double> out = new EnumMap<>(ControlAxis.class);
@@ -81,12 +66,15 @@ public final class SixAxisStabilizer {
         double rollScale = responseScale(angularAuthority(registry, mode, state, ControlAxis.ROLL), 4.0D);
         double yawScale = responseScale(angularAuthority(registry, mode, state, ControlAxis.YAW), 3.0D);
 
-        double pitchAcceleration = pitchPID.update(pitchError, state.pitch, dt, pitchScale);
-        double rollAcceleration = rollPID.update(rollError, state.roll, dt, rollScale);
-        double yawAcceleration = yawPID.update(yawError, sp.yawIsRateNotHeading ? state.yawRate : state.yaw, dt, yawScale);
+        // Sable exposes physical angular velocity. Use it directly for derivative damping.
+        double pitchAcceleration = pitchPID.updateWithMeasurementRate(pitchError, state.pitchRate, dt, pitchScale);
+        double rollAcceleration = rollPID.updateWithMeasurementRate(rollError, state.rollRate, dt, rollScale);
+        double yawAcceleration = sp.yawIsRateNotHeading
+                ? yawPID.updateWithMeasurementRate(yawError, state.yawRate, dt, yawScale)
+                : yawPID.update(yawError, state.yaw, dt, yawScale);
+
         Vector3d requestedTorque = state.bodyTorqueForAngularAcceleration(pitchAcceleration, yawAcceleration, rollAcceleration);
-        Vector3d externalTorque = state.externalTorqueBody();
-        requestedTorque.sub(externalTorque);
+        requestedTorque.sub(state.externalTorqueBody());
         out.put(ControlAxis.PITCH, requestedTorque.x);
         out.put(ControlAxis.YAW, requestedTorque.y);
         out.put(ControlAxis.ROLL, requestedTorque.z);
@@ -101,8 +89,6 @@ public final class SixAxisStabilizer {
         double lateralAcceleration = lateralPID.update(sp.desiredLateralVelocity - bodyVel[1], bodyVel[1], dt,
                 responseScale(linearAuthority(registry, mode, ControlAxis.LATERAL, mass), 6.0D));
 
-        // Passive Sable force is deliberately subtracted once. Do not add a second gravity or
-        // levitation term here: doing so makes the controller fight Levitite and causes hunting.
         out.put(ControlAxis.VERTICAL, verticalAcceleration * mass - externalForce.y);
         out.put(ControlAxis.LONGITUDINAL, longitudinalAcceleration * mass - externalForce.z);
         out.put(ControlAxis.LATERAL, lateralAcceleration * mass - externalForce.x);
@@ -145,8 +131,6 @@ public final class SixAxisStabilizer {
     private double responseScale(double authority, double reference) {
         if (!Double.isFinite(authority) || authority <= 0.0D) return legacyStableProfile ? 0.30D : 0.35D;
         double ratio = Math.max(0.0D, authority) / Math.max(reference, 1.0e-3D);
-        // Stabilisation is capped at unity so a large craft cannot turn a high actuator count into
-        // an unnecessarily aggressive response. Cruise/autopilot keeps the existing upper margin.
         double maxScale = legacyStableProfile ? 1.0D : 1.25D;
         return clamp(Math.sqrt(ratio), legacyStableProfile ? 0.30D : 0.35D, maxScale);
     }
