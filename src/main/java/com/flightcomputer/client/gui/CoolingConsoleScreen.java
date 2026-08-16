@@ -29,6 +29,10 @@ public final class CoolingConsoleScreen extends Screen {
         this.controllerPos = controllerPos;
     }
 
+    public BlockPos controllerPos() {
+        return controllerPos;
+    }
+
     @Override protected void init() {
         controller = getController();
         left = Math.max(10, (width - 640) / 2);
