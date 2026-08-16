@@ -2,7 +2,7 @@ name: Build Verification
 
 on:
   push:
-    branches: [main, phase-5-validation, 'patch/navigation-console-refinement-20260811', 'fix/fc-identity-stabiliser-20260816-v9']
+    branches: [main, phase-5-validation, 'patch/navigation-console-refinement-20260811', 'fix/fc-identity-stabiliser-20260816-v9', 'fix/fc-identity-stabiliser-20260816-v10']
   pull_request:
     branches: [main, phase-5-validation]
 
