@@ -30,6 +30,10 @@ public final class ThermalConsoleScreen extends Screen {
         this.controllerPos = controllerPos;
     }
 
+    public BlockPos controllerPos() {
+        return controllerPos;
+    }
+
     @Override
     protected void init() {
         controller = getController();
@@ -78,35 +82,5 @@ public final class ThermalConsoleScreen extends Screen {
         g.fill(left + 20, top + 134, left + 620, top + 152, 0xFF20272C);
         int bar = (int)(600 * ratio);
         g.fill(left + 20, top + 134, left + 20 + bar, top + 152, stateColor);
-        g.drawString(font, String.format("%.1f%%", ratio * 100.0D), left + 285, top + 138, TEXT);
-
-        int cooldown = controller == null ? 0 : controller.getThermalCooldownTicksRemaining();
-        g.drawString(font, cooldown > 0 ? String.format("THERMAL LOCKOUT: %.1f s", cooldown / 20.0D) : "THERMAL LOCKOUT: READY", left + 20, top + 176, cooldown > 0 ? RED : GREEN);
-        long energy = controller == null ? 0L : controller.getEnergyStorage().getEnergyStored();
-        long capacity = controller == null ? 1L : controller.getEnergyStorage().getMaxEnergyStored();
-        g.drawString(font, String.format("POWER: %,d / %,d FE", energy, capacity), left + 20, top + 202, TEXT);
-
-        var snapshot = controller == null ? null : FlightComputerTelemetryClient.get(controller.getControllerId());
-        if (snapshot != null) {
-            g.drawString(font, "LIVE TELEMETRY: " + thermalName(snapshot.thermalState()) + " | COOLING TIER " + snapshot.coolingTier(), left + 20, top + 234, CYAN);
-        }
-        g.drawString(font, "Cooling modules are managed separately in the COOLING tab.", left + 20, top + 270, MUTED);
-        g.drawString(font, "Thermal shutdown prevents propulsion/control output until recovery.", left + 20, top + 294, MUTED);
-
-        super.render(g, mouseX, mouseY, partialTick);
-        g.fill(left + 150, top + 20, left + 295, top + 22, CYAN);
     }
-
-    private static String thermalName(int id) {
-        return switch (id) {
-            case 1 -> "WARM";
-            case 2 -> "HOT";
-            case 3 -> "CRITICAL";
-            case 4 -> "THERMAL SHUTDOWN";
-            default -> "NORMAL";
-        };
-    }
-
-    @Override public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) { }
-    @Override public boolean isPauseScreen() { return false; }
 }
