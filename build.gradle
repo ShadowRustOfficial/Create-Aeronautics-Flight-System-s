@@ -34,6 +34,13 @@ repositories {
             includeGroup "curse.maven"
         }
     }
+    maven {
+        name = "RyanHCode Maven"
+        url = "https://maven.ryanhcode.dev/releases"
+        content {
+            includeGroup "dev.ryanhcode.sable"
+        }
+    }
 }
 
 runs {
@@ -62,6 +69,10 @@ dependencies {
 
     compileOnly("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
     implementation "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
+
+    // Sable is a required runtime dependency (see neoforge.mods.toml). We only
+    // need its API at compile time; the actual Sable mod is supplied by the pack.
+    compileOnly "dev.ryanhcode.sable:sable-common-${minecraft_version}:2.0.4"
 
     // No Xaero, JourneyMap, or VoxelMap dependency. The Flight Computer owns
     // the complete map acquisition, cache, terrain generation and renderer stack.
