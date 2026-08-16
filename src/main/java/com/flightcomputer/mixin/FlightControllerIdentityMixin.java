@@ -8,6 +8,7 @@ import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
@@ -49,13 +50,16 @@ public abstract class FlightControllerIdentityMixin implements FlightIdentityAcc
         if (level != null) {
             SubLevelContainer container = SubLevelContainer.getContainer(level);
             if (container != null) {
-                LevelPlot plot = container.getPlot(controller.getBlockPos());
+                // Sable resolves plots by GLOBAL CHUNK position, not BlockPos.
+                // The previous implementation passed BlockPos directly to a method
+                // that does not exist in Sable's API, which is why v10 did not compile.
+                LevelPlot plot = container.getPlot(new ChunkPos(controller.getBlockPos()));
                 if (plot != null) {
                     SubLevel subLevel = plot.getSubLevel();
                     if (subLevel != null) {
-                        // On ServerSubLevel this is Sable's real name setter, which also
-                        // performs Sable's normal client synchronization. On the client it
-                        // updates the local representation when the Sable packet arrives.
+                        // This is the same setter used by Sable's /sable name set command.
+                        // ServerSubLevel handles the authoritative value; Sable's normal
+                        // name packet path remains responsible for client synchronization.
                         subLevel.setName(cleaned.isEmpty() ? null : cleaned);
                     }
                 }
@@ -132,7 +136,7 @@ public abstract class FlightControllerIdentityMixin implements FlightIdentityAcc
         if (level == null) return null;
         SubLevelContainer container = SubLevelContainer.getContainer(level);
         if (container == null) return null;
-        LevelPlot plot = container.getPlot(controller.getBlockPos());
+        LevelPlot plot = container.getPlot(new ChunkPos(controller.getBlockPos()));
         if (plot == null) return null;
         SubLevel subLevel = plot.getSubLevel();
         return subLevel == null ? null : subLevel.getName();
