@@ -4,16 +4,15 @@ import com.flightcomputer.client.gui.CoolingConsoleScreen;
 import com.flightcomputer.client.gui.NavigationConsoleScreen;
 import com.flightcomputer.client.gui.ThermalConsoleScreen;
 import com.flightcomputer.network.FlightComputerUiSoundNetwork;
-import com.flightcomputer.registry.ModSounds;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
-import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 
-import java.lang.reflect.Field;
-
-/** Centralised UI sound policy for all Flight Computer screens. */
+/**
+ * Maps Flight Computer UI controls to server-authoritative block audio.
+ * No vanilla widget sound and no LocalPlayer.playSound path is used here.
+ */
 public final class AudioUiSoundBridge {
     private AudioUiSoundBridge() {}
 
@@ -25,36 +24,27 @@ public final class AudioUiSoundBridge {
                 || screen instanceof CoolingConsoleScreen;
     }
 
+    /** Sends a request for the controller block to play the sound using SoundSource.BLOCKS. */
     public static void play(Kind kind) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc == null || mc.player == null || mc.level == null) return;
-
-        BlockPos controllerPos = controllerPos(mc.screen);
-        if (controllerPos != null && isFlightComputerScreen(mc.screen)) {
-            request(controllerPos, kind);
-            return;
-        }
-
-        var holder = switch (kind) {
-            case TOGGLE_ON -> ModSounds.UI_TOGGLE_ON;
-            case TOGGLE_OFF -> ModSounds.UI_TOGGLE_OFF;
-            case TAB -> ModSounds.UI_OPEN;
-            case DISCOVER -> ModSounds.UI_DISCOVER;
-            case INTERACT -> ModSounds.UI_INTERACT;
-        };
-        mc.getSoundManager().play(SimpleSoundInstance.forUI(holder.get(), 1.0F));
+        if (mc == null) return;
+        BlockPos pos = controllerPos(mc.screen);
+        if (pos != null) FlightComputerUiSoundNetwork.request(pos, soundId(kind));
     }
 
-    /** Guaranteed local feedback for Navigation Console buttons; the block/server audio path is used elsewhere. */
+    /** Determines the correct supplied UI sound for a button and sends it to the controller block. */
     public static void playForButton(Button button) {
         Minecraft mc = Minecraft.getInstance();
         if (button == null || mc == null || !isFlightComputerScreen(mc.screen)) return;
 
         String text = button.getMessage().getString().trim().toUpperCase(java.util.Locale.ROOT);
+        BlockPos pos = controllerPos(mc.screen);
+        if (pos == null) return;
 
         if (text.equals("MAP") || text.equals("ROUTE") || text.equals("FLIGHT CONTROL")
-                || text.equals("DIAGNOSTICS") || text.equals("THERMAL") || text.equals("COOLING")) {
-            UiSoundClient.tab();
+                || text.equals("DIAGNOSTICS") || text.equals("THERMAL") || text.equals("COOLING")
+                || text.equals("NAVIGATION")) {
+            FlightComputerUiSoundNetwork.request(pos, soundId(Kind.TAB));
             return;
         }
 
@@ -72,15 +62,11 @@ public final class AudioUiSoundBridge {
 
         if (toggle) {
             boolean currentlyOn = text.contains(": ON") || text.contains(": ENGAGED");
-            UiSoundClient.toggle(!currentlyOn);
+            FlightComputerUiSoundNetwork.request(pos, soundId(currentlyOn ? Kind.TOGGLE_OFF : Kind.TOGGLE_ON));
             return;
         }
 
-        UiSoundClient.interact();
-    }
-
-    private static void request(BlockPos controllerPos, Kind kind) {
-        FlightComputerUiSoundNetwork.request(controllerPos, soundId(kind));
+        FlightComputerUiSoundNetwork.request(pos, soundId(Kind.INTERACT));
     }
 
     private static int soundId(Kind kind) {
@@ -94,14 +80,9 @@ public final class AudioUiSoundBridge {
     }
 
     private static BlockPos controllerPos(Screen screen) {
-        if (screen == null) return null;
-        try {
-            Field field = screen.getClass().getDeclaredField("controllerPos");
-            field.setAccessible(true);
-            Object value = field.get(screen);
-            return value instanceof BlockPos pos ? pos : null;
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            return null;
-        }
+        if (screen instanceof NavigationConsoleScreen navigation) return navigation.controllerPos();
+        if (screen instanceof ThermalConsoleScreen thermal) return thermal.controllerPos();
+        if (screen instanceof CoolingConsoleScreen cooling) return cooling.controllerPos();
+        return null;
     }
 }
