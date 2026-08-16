@@ -1,5 +1,6 @@
 package com.flightcomputer.mixin;
 
+import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.control.FlightControlRuntimeManager;
 import com.flightcomputer.identity.FlightIdentityAccess;
 import com.flightcomputer.network.FlightComputerNetwork;
@@ -11,6 +12,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+/** Handles the Navigation Console's special identity/home/player target commands. */
 @Mixin(FlightComputerNetwork.class)
 public abstract class FlightComputerNetworkTargetMixin {
     @Inject(method = "handleSetTarget", at = @At("HEAD"), cancellable = true)
@@ -22,14 +24,30 @@ public abstract class FlightComputerNetworkTargetMixin {
 
         context.enqueueWork(() -> {
             if (!(context.player() instanceof ServerPlayer player)) return;
-            BlockEntity blockEntity = player.level().getBlockEntity(payload.controllerPos());
-            if (!(blockEntity instanceof com.flightcomputer.block.FlightControllerBlockEntity controller)) return;
-            if (!Double.isFinite(payload.x()) || !Double.isFinite(payload.y()) || !Double.isFinite(payload.z())) return;
+            if (!near(player, payload.controllerPos(), 64.0D)) return;
 
-            FlightIdentityAccess identity = (FlightIdentityAccess)(Object)controller;
+            BlockEntity blockEntity = player.level().getBlockEntity(payload.controllerPos());
+            if (!(blockEntity instanceof FlightControllerBlockEntity controller)) return;
+
+            FlightIdentityAccess identity = (FlightIdentityAccess)(Object) controller;
+
+            if (name.equals("__SET_NAME__")) {
+                identity.flightcomputer$setSubLevelName(namePayload(payload));
+                controller.setChanged();
+                return;
+            }
+
+            if (name.equals("__SET_ID__")) {
+                identity.flightcomputer$setFlightId(namePayload(payload));
+                controller.setChanged();
+                return;
+            }
+
+            if (!Double.isFinite(payload.x()) || !Double.isFinite(payload.y()) || !Double.isFinite(payload.z())) return;
 
             if (name.equals("__SET_HOME__")) {
                 identity.flightcomputer$setHome(player.getUUID(), new Vec3(payload.x(), payload.y(), payload.z()));
+                controller.setChanged();
                 return;
             }
 
@@ -49,5 +67,16 @@ public abstract class FlightComputerNetworkTargetMixin {
             }
         });
         ci.cancel();
+    }
+
+    private static String namePayload(FlightComputerNetwork.SetTargetPayload payload) {
+        String value = payload.name() == null ? "" : payload.name();
+        int separator = value.indexOf(':');
+        return separator >= 0 ? value.substring(separator + 1).trim() : "";
+    }
+
+    private static boolean near(ServerPlayer player, net.minecraft.core.BlockPos pos, double radius) {
+        return player != null && pos != null
+                && player.distanceToSqr(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D) <= radius * radius;
     }
 }
