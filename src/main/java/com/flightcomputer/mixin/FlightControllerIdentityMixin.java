@@ -1,9 +1,14 @@
 package com.flightcomputer.mixin;
 
 import com.flightcomputer.identity.FlightIdentityAccess;
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
+import dev.ryanhcode.sable.sublevel.SubLevel;
+import dev.ryanhcode.sable.sublevel.plot.LevelPlot;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -15,22 +20,48 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/** Persists Navigation Console identity and per-player home coordinates on the controller. */
+/**
+ * Flight Computer identity storage.
+ *
+ * The Sub-Level Name is deliberately NOT a second custom name. It is the actual Sable
+ * SubLevel display name, the same field changed by /sable name set. This keeps the
+ * Navigation Console, Sable's nameplate/debug output and other Sable consumers in sync.
+ */
 @Mixin(com.flightcomputer.block.FlightControllerBlockEntity.class)
 public abstract class FlightControllerIdentityMixin implements FlightIdentityAccess {
-    @Unique private String flightComputer$subLevelName = "";
+    @Unique private String flightComputer$legacySubLevelName = "";
     @Unique private String flightComputer$flightId = "";
     @Unique private final Map<UUID, Vec3> flightComputer$homes = new HashMap<>();
 
     @Override
     public String flightcomputer$getSubLevelName() {
-        return flightComputer$subLevelName;
+        String sableName = flightComputer$readSableSubLevelName();
+        return sableName != null ? sableName : flightComputer$legacySubLevelName;
     }
 
     @Override
     public void flightcomputer$setSubLevelName(String name) {
-        flightComputer$subLevelName = sanitise(name, 64, "");
-        ((net.minecraft.world.level.block.entity.BlockEntity)(Object)this).setChanged();
+        String cleaned = sanitise(name, 64, "");
+        flightComputer$legacySubLevelName = cleaned;
+
+        BlockEntity controller = (BlockEntity) (Object) this;
+        Level level = controller.getLevel();
+        if (level != null) {
+            SubLevelContainer container = SubLevelContainer.getContainer(level);
+            if (container != null) {
+                LevelPlot plot = container.getPlot(controller.getBlockPos());
+                if (plot != null) {
+                    SubLevel subLevel = plot.getSubLevel();
+                    if (subLevel != null) {
+                        // On ServerSubLevel this is Sable's real name setter, which also
+                        // performs Sable's normal client synchronization. On the client it
+                        // updates the local representation when the Sable packet arrives.
+                        subLevel.setName(cleaned.isEmpty() ? null : cleaned);
+                    }
+                }
+            }
+        }
+        controller.setChanged();
     }
 
     @Override
@@ -41,7 +72,7 @@ public abstract class FlightControllerIdentityMixin implements FlightIdentityAcc
     @Override
     public void flightcomputer$setFlightId(String id) {
         flightComputer$flightId = sanitise(id, 32, "");
-        ((net.minecraft.world.level.block.entity.BlockEntity)(Object)this).setChanged();
+        ((BlockEntity) (Object) this).setChanged();
     }
 
     @Override
@@ -54,12 +85,13 @@ public abstract class FlightControllerIdentityMixin implements FlightIdentityAcc
         if (playerId == null || position == null
                 || !Double.isFinite(position.x) || !Double.isFinite(position.y) || !Double.isFinite(position.z)) return;
         flightComputer$homes.put(playerId, position);
-        ((net.minecraft.world.level.block.entity.BlockEntity)(Object)this).setChanged();
+        ((BlockEntity) (Object) this).setChanged();
     }
 
     @Inject(method = "saveAdditional", at = @At("TAIL"))
     private void flightComputer$saveIdentity(CompoundTag tag, HolderLookup.Provider registries, CallbackInfo ci) {
-        tag.putString("FlightSubLevelName", flightComputer$subLevelName);
+        String sableName = flightComputer$readSableSubLevelName();
+        tag.putString("FlightSubLevelName", sableName == null ? flightComputer$legacySubLevelName : sableName);
         tag.putString("FlightId", flightComputer$flightId);
         ListTag homes = new ListTag();
         for (Map.Entry<UUID, Vec3> entry : flightComputer$homes.entrySet()) {
@@ -76,7 +108,7 @@ public abstract class FlightControllerIdentityMixin implements FlightIdentityAcc
 
     @Inject(method = "loadAdditional", at = @At("TAIL"))
     private void flightComputer$loadIdentity(CompoundTag tag, HolderLookup.Provider registries, CallbackInfo ci) {
-        flightComputer$subLevelName = sanitise(tag.getString("FlightSubLevelName"), 64, "");
+        flightComputer$legacySubLevelName = sanitise(tag.getString("FlightSubLevelName"), 64, "");
         flightComputer$flightId = sanitise(tag.getString("FlightId"), 32, "");
         flightComputer$homes.clear();
         if (tag.contains("FlightHomes", CompoundTag.TAG_LIST)) {
@@ -91,6 +123,19 @@ public abstract class FlightControllerIdentityMixin implements FlightIdentityAcc
                     flightComputer$homes.put(home.getUUID("Player"), new Vec3(x, y, z));
             }
         }
+    }
+
+    @Unique
+    private String flightComputer$readSableSubLevelName() {
+        BlockEntity controller = (BlockEntity) (Object) this;
+        Level level = controller.getLevel();
+        if (level == null) return null;
+        SubLevelContainer container = SubLevelContainer.getContainer(level);
+        if (container == null) return null;
+        LevelPlot plot = container.getPlot(controller.getBlockPos());
+        if (plot == null) return null;
+        SubLevel subLevel = plot.getSubLevel();
+        return subLevel == null ? null : subLevel.getName();
     }
 
     @Unique
