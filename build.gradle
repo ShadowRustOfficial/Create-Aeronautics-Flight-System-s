@@ -39,6 +39,7 @@ repositories {
         url = "https://maven.ryanhcode.dev/releases"
         content {
             includeGroup "dev.ryanhcode.sable"
+            includeGroup "dev.ryanhcode.sable-companion"
         }
     }
 }
