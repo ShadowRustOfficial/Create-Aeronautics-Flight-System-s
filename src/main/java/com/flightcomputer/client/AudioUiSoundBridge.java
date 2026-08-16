@@ -25,11 +25,6 @@ public final class AudioUiSoundBridge {
                 || screen instanceof CoolingConsoleScreen;
     }
 
-    /**
-     * Play a UI sound through the Flight Computer block whenever the active screen has a
-     * controller position. This keeps UI audio audible to nearby players. A local fallback is
-     * retained only for callers that run without a Flight Computer screen/context.
-     */
     public static void play(Kind kind) {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.player == null || mc.level == null) return;
@@ -50,24 +45,16 @@ public final class AudioUiSoundBridge {
         mc.getSoundManager().play(SimpleSoundInstance.forUI(holder.get(), 1.0F));
     }
 
-    /**
-     * Called by the shared Button sound hook immediately before vanilla would play its click sound.
-     * Button audio is deliberately muted locally; the server emits the selected sound from the
-     * Flight Computer block so nearby players hear the same interaction.
-     */
+    /** Guaranteed local feedback for Navigation Console buttons; the block/server audio path is used elsewhere. */
     public static void playForButton(Button button) {
         Minecraft mc = Minecraft.getInstance();
         if (button == null || mc == null || !isFlightComputerScreen(mc.screen)) return;
 
-        BlockPos controllerPos = controllerPos(mc.screen);
-        if (controllerPos == null) return;
-
         String text = button.getMessage().getString().trim().toUpperCase(java.util.Locale.ROOT);
 
         if (text.equals("MAP") || text.equals("ROUTE") || text.equals("FLIGHT CONTROL")
-                || text.equals("DIAGNOSTICS") || text.equals("NAVIGATION")
-                || text.equals("THERMAL") || text.equals("COOLING")) {
-            request(controllerPos, Kind.TAB);
+                || text.equals("DIAGNOSTICS") || text.equals("THERMAL") || text.equals("COOLING")) {
+            UiSoundClient.tab();
             return;
         }
 
@@ -85,11 +72,11 @@ public final class AudioUiSoundBridge {
 
         if (toggle) {
             boolean currentlyOn = text.contains(": ON") || text.contains(": ENGAGED");
-            request(controllerPos, currentlyOn ? Kind.TOGGLE_OFF : Kind.TOGGLE_ON);
+            UiSoundClient.toggle(!currentlyOn);
             return;
         }
 
-        request(controllerPos, Kind.INTERACT);
+        UiSoundClient.interact();
     }
 
     private static void request(BlockPos controllerPos, Kind kind) {
@@ -106,7 +93,6 @@ public final class AudioUiSoundBridge {
         };
     }
 
-    /** All three Flight Computer screens intentionally keep this field private. */
     private static BlockPos controllerPos(Screen screen) {
         if (screen == null) return null;
         try {
