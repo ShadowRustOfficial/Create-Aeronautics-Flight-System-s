@@ -6,6 +6,9 @@
     "FlightControllerOperationsMixin",
     "FlightOperationsRuntimeMixin",
     "FlightComputerNetworkSableDistanceMixin",
+    "FlightComputerNetworkTargetMixin",
+    "FlightControllerIdentityMixin",
+    "FlightControllerPushActionMixin",
     "FlightControlAutotuneMixin",
     "FlightControllerPidProfileMixin",
     "FlightRouteTelemetryMixin",
@@ -17,7 +20,8 @@
     "client.FlightControllerGoggleMixin",
     "client.NavigationConsoleMapTrackingMixin",
     "client.NavigationConsoleTelemetryOverlayMixin",
-    "client.NavigationConsoleButtonSoundMixin"
+    "client.NavigationConsoleButtonSoundMixin",
+    "client.NavigationConsoleLayoutMixin"
   ],
   "injectors": {
     "defaultRequire": 1
