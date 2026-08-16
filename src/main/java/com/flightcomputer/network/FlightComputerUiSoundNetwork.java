@@ -11,14 +11,14 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
-/** Server-authoritative UI audio. Uses the exact server-side block sound path as Emergency Shutdown. */
-@EventBusSubscriber(modid = FlightComputer.MOD_ID)
+/**
+ * Server-authoritative Flight Computer UI audio.
+ * Every UI sound uses the same world/block playback path as Emergency Shutdown.
+ */
 public final class FlightComputerUiSoundNetwork {
     private static final String VERSION = "1";
     private static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "ui_block_sound");
@@ -39,7 +39,7 @@ public final class FlightComputerUiSoundNetwork {
         }
     }
 
-    @SubscribeEvent
+    /** RegisterPayloadHandlersEvent is a mod-bus event; FlightComputer registers this listener directly. */
     public static void register(RegisterPayloadHandlersEvent event) {
         event.registrar(VERSION)
                 .playToServer(TYPE, UiSoundPayload.STREAM_CODEC, FlightComputerUiSoundNetwork::handle);
@@ -58,8 +58,7 @@ public final class FlightComputerUiSoundNetwork {
             SoundEvent sound = soundFor(payload.soundId());
             if (sound == null) return;
 
-            // Deliberately do NOT resolve through Sable or Sound Physics. This is the same
-            // logical-server playback path used by FlightControllerBlockEntity emergency audio.
+            // EXACTLY the same playback mechanism as FlightControllerBlockEntity's Emergency Shutdown.
             player.level().playSound(
                     null,
                     payload.controllerPos(),
