@@ -2,6 +2,7 @@ package com.flightcomputer.mixin;
 
 import com.flightcomputer.avionics.FlightControllerAction;
 import com.flightcomputer.avionics.FlightControllerState;
+import com.flightcomputer.avionics.FlightMode;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -15,7 +16,7 @@ public abstract class FlightControllerAutopilotIsolationMixin {
                                                    CallbackInfoReturnable<FlightControllerState> cir) {
         if (action != FlightControllerAction.TOGGLE_AUTOPILOT && action != FlightControllerAction.START_ROUTE) return;
         FlightControllerState state = cir.getReturnValue();
-        if (state == null || state.flightMode() != com.flightcomputer.control.FlightMode.AUTOPILOT || !state.stabiliser()) return;
+        if (state == null || state.flightMode() != FlightMode.AUTOPILOT || !state.stabiliser()) return;
         cir.setReturnValue(new FlightControllerState(
                 state.engaged(), false, state.flightMode(),
                 state.altitudeHold(), state.headingHold(), state.positionHold(), state.velocityHold(),
