@@ -2,6 +2,7 @@ package com.flightcomputer;
 
 import com.flightcomputer.network.FlightComputerUiSoundNetwork;
 import com.flightcomputer.network.FlightControllerContactNetwork;
+import com.flightcomputer.network.FlightIdentityNetwork;
 import com.flightcomputer.registry.ModBlockEntities;
 import com.flightcomputer.registry.ModBlocks;
 import com.flightcomputer.registry.ModItems;
@@ -29,6 +30,7 @@ public final class FlightComputer {
         // the deprecated EventBusSubscriber.bus() API.
         modBus.addListener(FlightComputerUiSoundNetwork::register);
         modBus.addListener(FlightControllerContactNetwork::register);
+        modBus.addListener(FlightIdentityNetwork::register);
 
         modContainer.registerConfig(ModConfig.Type.COMMON, FlightComputerConfig.SPEC);
         modBus.addListener(this::commonSetup);
