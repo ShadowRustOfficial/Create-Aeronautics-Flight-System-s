@@ -20,7 +20,6 @@
     "client.FlightControllerGoggleMixin",
     "client.NavigationConsoleMapTrackingMixin",
     "client.NavigationConsoleTelemetryOverlayMixin",
-    "client.NavigationConsoleButtonSoundMixin",
     "client.NavigationConsoleLayoutMixin",
     "client.NavigationConsoleFlightControllerContactsMixin"
   ],
