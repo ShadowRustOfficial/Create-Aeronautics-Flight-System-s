@@ -37,7 +37,8 @@ public final class FlightContactRegistry {
 
     public static FlightContact get(UUID id) { return id == null ? null : CONTACTS.get(id); }
 
-    public static List<FlightContact> active(long tick) {
+    public static List<FlightContact> active(long ignoredTick) {
+        long tick = System.currentTimeMillis() / 50L;
         List<FlightContact> result = new ArrayList<>();
         CONTACTS.values().removeIf(c -> c.isStale(tick));
         result.addAll(CONTACTS.values());
