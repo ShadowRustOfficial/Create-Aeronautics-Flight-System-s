@@ -8,7 +8,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Publishes the existing controller lifecycle into the map contact feed without touching control logic. */
+/** Publishes powered controller discovery data from the existing server runtime tick. */
 @Mixin(FlightControlRuntimeManager.class)
 public abstract class FlightControllerContactMixin {
     @Inject(method = "tick", at = @At("TAIL"))
