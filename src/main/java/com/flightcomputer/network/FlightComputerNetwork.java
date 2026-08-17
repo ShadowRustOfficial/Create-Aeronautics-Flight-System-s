@@ -7,6 +7,7 @@ import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.control.FlightControlRuntimeManager;
 import com.flightcomputer.control.FlightMode;
 import com.flightcomputer.control.VectorDirection;
+import com.flightcomputer.identity.FlightIdentityAccess;
 import com.flightcomputer.integration.WaystoneServerIntegration;
 import com.flightcomputer.item.CoolingUpgradeItem;
 import com.flightcomputer.item.FlightLinkToolItem;
@@ -36,6 +37,12 @@ import java.util.UUID;
 
 public final class FlightComputerNetwork {
     private static final String VERSION = "5.2";
+    private static final String SET_NAME_PREFIX = "__SET_NAME__:";
+    private static final String SET_ID_PREFIX = "__SET_ID__:";
+    private static final String SET_HOME = "__SET_HOME__";
+    private static final String HOME_TARGET = "__HOME__";
+    private static final String PLAYER_TARGET_PREFIX = "__PLAYER__:";
+
     public static final CustomPacketPayload.Type<ControllerActionPayload> CONTROLLER_ACTION_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "controller_action"));
     public static final CustomPacketPayload.Type<OperationsActionPayload> OPERATIONS_ACTION_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "operations_action"));
     public static final CustomPacketPayload.Type<LinkVectorPayload> LINK_VECTOR_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "link_vector"));
@@ -68,7 +75,7 @@ public final class FlightComputerNetwork {
     }
     public record TelemetryPayload(UUID controllerId, double x, double y, double z, double speed, double heading, double pitch, double roll, boolean targetPresent, double targetX, double targetY, double targetZ, String targetName, double distance, double temperature, double maxTemperature, int thermalState, int cooldownTicks, int energy, int maxEnergy, int coolingTier, double stabiliserNorth, double stabiliserEast, double stabiliserSouth, double stabiliserWest, double stabiliserUp, double stabiliserDown, double autopilotNorth, double autopilotEast, double autopilotSouth, double autopilotWest, double autopilotUp, double autopilotDown) implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, TelemetryPayload> STREAM_CODEC = StreamCodec.of((buf, payload) -> payload.encode(buf), TelemetryPayload::decode);
-        private void encode(ByteBuf buf) { buf.writeLong(controllerId.getMostSignificantBits()); buf.writeLong(controllerId.getLeastSignificantBits()); buf.writeDouble(x); buf.writeDouble(y); buf.writeDouble(z); buf.writeDouble(speed); buf.writeDouble(heading); buf.writeDouble(pitch); buf.writeDouble(roll); buf.writeBoolean(targetPresent); buf.writeDouble(targetX); buf.writeDouble(targetY); buf.writeDouble(targetZ); ByteBufCodecs.STRING_UTF8.encode(buf, targetName == null ? "" : targetName); buf.writeDouble(distance); buf.writeDouble(temperature); buf.writeDouble(maxTemperature); buf.writeInt(thermalState); buf.writeInt(cooldownTicks); buf.writeInt(energy); buf.writeInt(maxEnergy); buf.writeInt(coolingTier); double[] values={stabiliserNorth,stabiliserEast,stabiliserSouth,stabiliserWest,stabiliserUp,stabiliserDown,stabiliserUp,stabiliserDown,autopilotNorth,autopilotEast,autopilotSouth,autopilotWest,autopilotUp,autopilotDown}; for(double value:values)buf.writeDouble(value); }
+        private void encode(ByteBuf buf) { buf.writeLong(controllerId.getMostSignificantBits()); buf.writeLong(controllerId.getLeastSignificantBits()); buf.writeDouble(x); buf.writeDouble(y); buf.writeDouble(z); buf.writeDouble(speed); buf.writeDouble(heading); buf.writeDouble(pitch); buf.writeDouble(roll); buf.writeBoolean(targetPresent); buf.writeDouble(targetX); buf.writeDouble(targetY); buf.writeDouble(targetZ); ByteBufCodecs.STRING_UTF8.encode(buf, targetName == null ? "" : targetName); buf.writeDouble(distance); buf.writeDouble(temperature); buf.writeDouble(maxTemperature); buf.writeInt(thermalState); buf.writeInt(cooldownTicks); buf.writeInt(energy); buf.writeInt(maxEnergy); buf.writeInt(coolingTier); double[] values={stabiliserNorth,stabiliserEast,stabiliserSouth,stabiliserWest,stabiliserUp,stabiliserDown,autopilotNorth,autopilotEast,autopilotSouth,autopilotWest,autopilotUp,autopilotDown}; for(double value:values)buf.writeDouble(value); }
         private static TelemetryPayload decode(ByteBuf buf) { UUID id=new UUID(buf.readLong(),buf.readLong()); double x=buf.readDouble(),y=buf.readDouble(),z=buf.readDouble(),speed=buf.readDouble(),heading=buf.readDouble(),pitch=buf.readDouble(),roll=buf.readDouble(); boolean target=buf.readBoolean(); double tx=buf.readDouble(),ty=buf.readDouble(),tz=buf.readDouble(); String name=ByteBufCodecs.STRING_UTF8.decode(buf); double distance=buf.readDouble(),temperature=buf.readDouble(),maxTemperature=buf.readDouble(); int thermal=buf.readInt(),cooldown=buf.readInt(),energy=buf.readInt(),maxEnergy=buf.readInt(),cooling=buf.readInt(); double[] v=new double[12];for(int i=0;i<12;i++)v[i]=buf.readDouble(); return new TelemetryPayload(id,x,y,z,speed,heading,pitch,roll,target,tx,ty,tz,name,distance,temperature,maxTemperature,thermal,cooldown,energy,maxEnergy,cooling,v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8],v[9],v[10],v[11]); }
         @Override public Type<? extends CustomPacketPayload> type(){return TELEMETRY_TYPE;}
     }
@@ -83,7 +90,59 @@ public final class FlightComputerNetwork {
     private static void handleVectorLink(LinkVectorPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||!near(player,p.targetPos(),1024))return;FlightMode[] modes=FlightMode.values();VectorDirection[] dirs=VectorDirection.values();if(p.modeId()<0||p.modeId()>=modes.length||p.directionId()<0||p.directionId()>=dirs.length)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||player.level().getBlockState(p.targetPos()).isAir())return;fc.bindVector(modes[p.modeId()],dirs[p.directionId()],p.targetPos());});}
     private static void handleToolConfig(ToolConfigPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player))return;if(p.modeId()<0||p.modeId()>=FlightMode.values().length||p.directionId()<0||p.directionId()>=VectorDirection.values().length)return;FlightLinkToolItem.setSelection(player.getUUID(),p.modeId(),p.directionId());});}
     private static void handleCoolingSlot(CoolingSlotPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||p.slot()<0||p.slot()>=3)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||fc.isThermalLockout())return;var handler=fc.getUpgradeHandler();if(p.action()==0){var hand=player.getMainHandItem();if(hand.isEmpty()||!(hand.getItem() instanceof CoolingUpgradeItem))return;var remainder=handler.insertItem(p.slot(),hand.copyWithCount(1),false);if(remainder.isEmpty())hand.shrink(1);}else if(p.action()==1){var extracted=handler.extractItem(p.slot(),1,false);if(!extracted.isEmpty()&&!player.addItem(extracted))player.drop(extracted,false);}fc.setChanged();});}
-    private static void handleSetTarget(SetTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||Double.isNaN(p.x())||Double.isNaN(p.y())||Double.isNaN(p.z()))return;FlightControlRuntimeManager.setTarget(fc,new Vec3(p.x(),p.y(),p.z()),p.name());});}
+
+    private static void handleSetTarget(SetTargetPayload p,IPayloadContext c){c.enqueueWork(()->{
+        if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;
+        BlockEntity be=player.level().getBlockEntity(p.controllerPos());
+        if(!(be instanceof FlightControllerBlockEntity fc))return;
+        String name=p.name()==null?"":p.name().trim();
+
+        if(name.startsWith(SET_NAME_PREFIX)){
+            String requested=name.substring(SET_NAME_PREFIX.length()).trim();
+            if(requested.isEmpty())return;
+            requested=requested.length()>64?requested.substring(0,64):requested;
+            String escaped=requested.replace("\\","\\\\").replace("\"","\\\"");
+            if(player.getServer()!=null){
+                player.getServer().getCommands().performPrefixedCommand(
+                        player.createCommandSourceStack().withSuppressedOutput(),
+                        "sable name set @v \""+escaped+"\"");
+            }
+            if(fc instanceof FlightIdentityAccess identity)identity.flightcomputer$setSubLevelName(requested);
+            return;
+        }
+
+        if(name.startsWith(SET_ID_PREFIX)){
+            String id=name.substring(SET_ID_PREFIX.length()).trim();
+            if(fc instanceof FlightIdentityAccess identity)identity.flightcomputer$setFlightId(id.length()>32?id.substring(0,32):id);
+            return;
+        }
+
+        if(SET_HOME.equals(name)){
+            if(fc instanceof FlightIdentityAccess identity)identity.flightcomputer$setHome(player.getUUID(),player.position());
+            return;
+        }
+
+        if(HOME_TARGET.equals(name)){
+            if(fc instanceof FlightIdentityAccess identity){
+                Vec3 home=identity.flightcomputer$getHome(player.getUUID());
+                if(home!=null)FlightControlRuntimeManager.setTarget(fc,home,"Home");
+            }
+            return;
+        }
+
+        if(name.startsWith(PLAYER_TARGET_PREFIX)){
+            String playerName=name.substring(PLAYER_TARGET_PREFIX.length()).trim();
+            if(playerName.isEmpty()||player.getServer()==null)return;
+            ServerPlayer target=player.getServer().getPlayerList().getPlayerByName(playerName);
+            if(target!=null&&target.level().dimension().equals(player.level().dimension())){
+                FlightControlRuntimeManager.setTarget(fc,target.position(),target.getGameProfile().getName());
+            }
+            return;
+        }
+
+        if(Double.isNaN(p.x())||Double.isNaN(p.y())||Double.isNaN(p.z()))return;
+        FlightControlRuntimeManager.setTarget(fc,new Vec3(p.x(),p.y(),p.z()),p.name());
+    });}
     private static void handleClearTarget(ClearTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(be instanceof FlightControllerBlockEntity fc)FlightControlRuntimeManager.clearTarget(fc);});}
     private static void handleSetAltitudeHoldTarget(SetAltitudeHoldTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||!Double.isFinite(p.y()))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(be instanceof FlightControllerBlockEntity fc)FlightControlRuntimeManager.setAltitudeHoldTarget(fc,p.y());});}
     private static void handleUiButtonSound(UiButtonSoundPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity controller)||controller.getLevel()==null||controller.getLevel().isClientSide())return;SoundEvent sound=switch(p.soundId()){case 0->ModSounds.UI_TOGGLE_ON.get();case 1->ModSounds.UI_TOGGLE_OFF.get();case 2->ModSounds.UI_OPEN.get();case 3->ModSounds.UI_INTERACT.get();case 4->ModSounds.UI_DISCOVER.get();default->null;};if(sound!=null){controller.getLevel().playSound(null,controller.getBlockPos(),sound,SoundSource.BLOCKS,1.0F,1.0F);}});}
