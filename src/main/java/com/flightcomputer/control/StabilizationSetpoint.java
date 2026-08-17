@@ -29,7 +29,9 @@ public final class StabilizationSetpoint {
             double yawRateStick, double verticalStick, double longitudinalStick, double lateralStick,
             double maxTiltAngle, double maxYawRate, double maxManualSpeed) {
         StabilizationSetpoint sp = new StabilizationSetpoint();
-        sp.desiredPitch = clamp(pitchStick, -1, 1) * maxTiltAngle;
+        // STABILIZE never uses pitch to translate. Pitch is reserved for CRUISE/autopilot;
+        // stabilisation keeps the vessel level and moves vertically through the vertical thrust bank.
+        sp.desiredPitch = 0.0D;
         sp.desiredRoll = clamp(rollStick, -1, 1) * maxTiltAngle;
         sp.yawIsRateNotHeading = true;
         sp.desiredYawRate = clamp(yawRateStick, -1, 1) * maxYawRate;
