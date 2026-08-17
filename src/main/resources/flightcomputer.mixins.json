@@ -9,13 +9,15 @@
     "FlightControlAutotuneMixin",
     "FlightControllerPidProfileMixin",
     "FlightRouteTelemetryMixin",
+    "FlightControllerContactMixin",
     "FlightControllerRouteActionMixin",
     "FlightControllerAudioMixin"
   ],
   "client": [
     "client.FlightControllerGoggleMixin",
     "client.NavigationConsoleMapTrackingMixin",
-    "client.NavigationConsoleTelemetryOverlayMixin"
+    "client.NavigationConsoleTelemetryOverlayMixin",
+    "client.NavigationConsoleFlightControllerContactsMixin"
   ],
   "injectors": {
     "defaultRequire": 1
