@@ -15,6 +15,7 @@ import com.flightcomputer.control.FlightMode;
 import com.flightcomputer.control.VectorDirection;
 import com.flightcomputer.item.CoolingUpgradeItem;
 import com.flightcomputer.registry.ModBlockEntities;
+import com.flightcomputer.registry.ModSounds;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -22,6 +23,8 @@ import net.minecraft.nbt.DoubleTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -183,7 +186,10 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         }
         if (action == FlightControllerAction.TOGGLE_TERRAIN) terrainEnabled = !terrainEnabled;
         else controllerState = controllerState.apply(action);
-        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) energyStorage.extractEnergy(energyStorage.getEnergyStored(), false);
+        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) {
+            energyStorage.extractEnergy(energyStorage.getEnergyStored(), false);
+            playControllerSound(ModSounds.EMERGENCY_SHUTDOWN.get());
+        }
         lastAction = action;
         switch (action) {
             case CYCLE_MODE -> modePulseId++;
@@ -256,7 +262,6 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         flightOperations.resetOperationalAssist();
         updatePowerState();
         updateThermalState();
-        onThermalShutdown();
         markDirtyAndSync();
     }
 
@@ -340,10 +345,18 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         }
         if (previous == ThermalState.THERMAL_SHUTDOWN && current != ThermalState.THERMAL_SHUTDOWN) onThermalRecovery();
     }
-    protected void onOverheatWarning() { }
-    protected void onThermalCritical() { }
-    protected void onThermalShutdown() { }
-    protected void onThermalRecovery() { }
+    protected void onOverheatWarning() {
+        playControllerSound(ModSounds.WARNING_ENGINE_OVERHEAT.get());
+    }
+    protected void onThermalCritical() {
+        playControllerSound(ModSounds.ENGINE_HEAT_CRITICAL.get());
+    }
+    protected void onThermalShutdown() {
+        playControllerSound(ModSounds.FIRE_SYSTEMS_ACTIVE.get());
+    }
+    protected void onThermalRecovery() {
+        playControllerSound(ModSounds.FIRE_NEUTRALISED.get());
+    }
 
     public boolean linkTo(UUID targetControllerId) {
         if (targetControllerId == null || controllerId.equals(targetControllerId)) return false;
@@ -355,6 +368,19 @@ public class FlightControllerBlockEntity extends BlockEntity implements GeoBlock
         if (linkedControllerId != null) {
             linkedControllerId = null;
             markDirtyAndSync();
+        }
+    }
+
+    private void playControllerSound(SoundEvent sound) {
+        if (level != null && !level.isClientSide) {
+            level.playSound(
+                    null,
+                    worldPosition,
+                    sound,
+                    SoundSource.BLOCKS,
+                    1.0F,
+                    1.0F
+            );
         }
     }
 
