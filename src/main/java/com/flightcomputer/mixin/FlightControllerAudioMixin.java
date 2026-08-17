@@ -2,16 +2,15 @@ package com.flightcomputer.mixin;
 
 import com.flightcomputer.avionics.FlightControllerAction;
 import com.flightcomputer.avionics.FlightControllerActionResult;
+import com.flightcomputer.avionics.FlightMode;
 import com.flightcomputer.avionics.ThermalState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.control.ControlAxis;
 import com.flightcomputer.control.ManualControlBridge;
-import com.flightcomputer.control.FlightMode;
 import com.flightcomputer.identity.FlightIdentityAccess;
 import com.flightcomputer.registry.ModSounds;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.DoubleTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.sounds.SoundEvent;
