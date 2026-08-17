@@ -32,7 +32,10 @@ public final class SixAxisStabilizer {
             // Vertical movement is translation only. It is not converted into a pitch request.
             // Lower authority plus the slew limiter makes ascent/descent a smooth common-mode
             // thrust change instead of a sudden impulse that can excite pitch or roll.
-            verticalPID = new AxisPID(1.8, 0.12, 0.8, 12.0);
+            // Integral is deliberately disabled here: hover thrust is already supplied by the
+            // measured external force (gravity/levitation/etc.), so accumulated I-error can only
+            // turn a small vertical error into a runaway launch on large vessels.
+            verticalPID = new AxisPID(1.8, 0.0, 0.8, 3.0);
             longitudinalPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
             lateralPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
         } else {
@@ -83,7 +86,7 @@ public final class SixAxisStabilizer {
         out.put(ControlAxis.YAW, requestedTorque.y);
         out.put(ControlAxis.ROLL, requestedTorque.z);
 
-        double mass = Math.max(state.mass, 1.0e-3);
+        double mass = Math.max(state.mass, 1.0e-3D);
         Vector3d externalForce = state.externalForceBody();
         double verticalAcceleration = verticalPID.update(sp.desiredVerticalVelocity - state.vy, state.vy, dt,
                 responseScale(linearAuthority(registry, mode, ControlAxis.VERTICAL, mass), 6.0D));
@@ -98,7 +101,19 @@ public final class SixAxisStabilizer {
             // STABILIZE descends by reducing the common upward lift bank, never by firing the
             // opposite/downward bank. Autopilot is the only mode allowed to command directional
             // vertical manoeuvres through the full six-axis allocator.
-            requestedVerticalForce = Math.max(0.0D, requestedVerticalForce);
+            //
+            // The measured external force is the feed-forward hover term. This is important for
+            // large Sable vessels and for builds using levitation: we do not replace the measured
+            // lift/gravity balance with a hard-coded gravity constant.
+            double hoverForce = -externalForce.y;
+            double correction = verticalAcceleration * mass;
+
+            // Never allow the stabiliser's velocity PID to turn a small vertical error into an
+            // unbounded upward command. At most +2 m/s^2 above the measured hover requirement is
+            // allowed, while descent can reduce that requirement all the way to zero.
+            double correctionLimit = mass * 2.0D;
+            correction = clamp(correction, -correctionLimit, correctionLimit);
+            requestedVerticalForce = Math.max(0.0D, hoverForce + correction);
             requestedVerticalForce = slewVerticalForce(requestedVerticalForce, mass, dt);
         }
         out.put(ControlAxis.VERTICAL, requestedVerticalForce);
