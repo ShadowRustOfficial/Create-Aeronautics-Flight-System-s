@@ -4,11 +4,11 @@ import com.flightcomputer.client.map.FlightControllerWorldPositionResolver;
 import com.flightcomputer.client.map.FlightContactRegistry;
 import com.flightcomputer.map.FlightContact;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -29,14 +29,13 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
     @Shadow private FlightControllerWorldPositionResolver positionResolver;
     @Shadow private double centerX;
     @Shadow private double centerZ;
-    @Shadow private int top;
 
     @Unique private Button flightComputer$controllerSelector;
     @Unique private UUID flightComputer$selectedController;
     @Unique private int flightComputer$selectionIndex;
 
     protected NavigationConsoleFlightControllerContactsMixin() {
-        super(null);
+        super(Component.literal("Navigation Console"));
     }
 
     @Inject(method = "initMap", at = @At("TAIL"))
@@ -44,7 +43,7 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
         int y = top() + 374;
         int buttonWidth = Math.min(260, Math.max(190, width - 8));
         flightComputer$controllerSelector = Button.builder(
-                net.minecraft.network.chat.Component.literal("CONTROLLER: (None) ▼"),
+                Component.literal("CONTROLLER: (None) ▼"),
                 b -> flightComputer$cycleController())
                 .bounds(left, y, buttonWidth, 20)
                 .build();
@@ -88,14 +87,14 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
         if (contacts.isEmpty()) {
             flightComputer$selectedController = null;
             flightComputer$selectionIndex = 0;
-            flightComputer$controllerSelector.setMessage(net.minecraft.network.chat.Component.literal("CONTROLLER: (None) ▼"));
+            flightComputer$controllerSelector.setMessage(Component.literal("CONTROLLER: (None) ▼"));
             return;
         }
         if (flightComputer$selectedController != null) {
             for (int i = 0; i < contacts.size(); i++) {
                 if (contacts.get(i).controllerId().equals(flightComputer$selectedController)) {
                     flightComputer$selectionIndex = i;
-                    flightComputer$controllerSelector.setMessage(net.minecraft.network.chat.Component.literal(
+                    flightComputer$controllerSelector.setMessage(Component.literal(
                             "CONTROLLER: " + contacts.get(i).displayId() + " ▼"));
                     return;
                 }
@@ -104,7 +103,7 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
         flightComputer$selectionIndex = Math.floorMod(flightComputer$selectionIndex, contacts.size());
         FlightContact contact = contacts.get(flightComputer$selectionIndex);
         flightComputer$selectedController = contact.controllerId();
-        flightComputer$controllerSelector.setMessage(net.minecraft.network.chat.Component.literal(
+        flightComputer$controllerSelector.setMessage(Component.literal(
                 "CONTROLLER: " + contact.displayId() + " ▼"));
     }
 
