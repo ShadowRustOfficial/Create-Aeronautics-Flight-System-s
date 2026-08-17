@@ -1,6 +1,7 @@
 package com.flightcomputer.network;
 
 import com.flightcomputer.FlightComputer;
+import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.registry.ModSounds;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
@@ -11,13 +12,15 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 /**
  * Server-authoritative Flight Computer UI audio.
- * Every UI sound uses the same world/block playback path as Emergency Shutdown.
+ * Playback deliberately mirrors Emergency Shutdown: the server resolves the actual Flight
+ * Controller block entity and calls its Level.playSound(null, blockPos, ..., SoundSource.BLOCKS).
  */
 public final class FlightComputerUiSoundNetwork {
     private static final String VERSION = "1";
@@ -33,10 +36,7 @@ public final class FlightComputerUiSoundNetwork {
                 UiSoundPayload::new
         );
 
-        @Override
-        public Type<? extends CustomPacketPayload> type() {
-            return TYPE;
-        }
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
     /** RegisterPayloadHandlersEvent is a mod-bus event; FlightComputer registers this listener directly. */
@@ -53,15 +53,19 @@ public final class FlightComputerUiSoundNetwork {
     private static void handle(UiSoundPayload payload, IPayloadContext context) {
         context.enqueueWork(() -> {
             if (!(context.player() instanceof ServerPlayer player)) return;
-            if (!near(player, payload.controllerPos(), 64.0D)) return;
+            BlockPos requestedPos = payload.controllerPos();
+            if (!near(player, requestedPos, 64.0D)) return;
+
+            BlockEntity blockEntity = player.level().getBlockEntity(requestedPos);
+            if (!(blockEntity instanceof FlightControllerBlockEntity controller)) return;
 
             SoundEvent sound = soundFor(payload.soundId());
             if (sound == null) return;
 
-            // EXACTLY the same playback mechanism as FlightControllerBlockEntity's Emergency Shutdown.
-            player.level().playSound(
+            // This is intentionally the same server-side block playback used by Emergency Shutdown.
+            controller.getLevel().playSound(
                     null,
-                    payload.controllerPos(),
+                    controller.getBlockPos(),
                     sound,
                     SoundSource.BLOCKS,
                     1.0F,
