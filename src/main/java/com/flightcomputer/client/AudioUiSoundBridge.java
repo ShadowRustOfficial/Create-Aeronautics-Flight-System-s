@@ -3,13 +3,13 @@ package com.flightcomputer.client;
 import com.flightcomputer.client.gui.CoolingConsoleScreen;
 import com.flightcomputer.client.gui.NavigationConsoleScreen;
 import com.flightcomputer.client.gui.ThermalConsoleScreen;
-import com.flightcomputer.network.FlightComputerNetwork;
+import com.flightcomputer.network.FlightComputerUiSoundNetwork;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 
-/** Maps Flight Computer UI controls to server-authoritative block audio. */
+/** Maps Flight Computer UI controls to the dedicated server-authoritative block-audio path. */
 public final class AudioUiSoundBridge {
     private AudioUiSoundBridge() {}
 
@@ -25,7 +25,7 @@ public final class AudioUiSoundBridge {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null) return;
         BlockPos pos = controllerPos(mc.screen);
-        if (pos != null) FlightComputerNetwork.sendUiButtonSound(pos, soundId(kind));
+        if (pos != null) FlightComputerUiSoundNetwork.request(pos, soundId(kind));
     }
 
     public static void playForButton(Button button) {
@@ -39,7 +39,7 @@ public final class AudioUiSoundBridge {
         if (text.equals("MAP") || text.equals("ROUTE") || text.equals("FLIGHT CONTROL")
                 || text.equals("DIAGNOSTICS") || text.equals("THERMAL") || text.equals("COOLING")
                 || text.equals("NAVIGATION")) {
-            FlightComputerNetwork.sendUiButtonSound(pos, soundId(Kind.TAB));
+            FlightComputerUiSoundNetwork.request(pos, soundId(Kind.TAB));
             return;
         }
 
@@ -57,11 +57,11 @@ public final class AudioUiSoundBridge {
 
         if (toggle) {
             boolean currentlyOn = text.contains(": ON") || text.contains(": ENGAGED");
-            FlightComputerNetwork.sendUiButtonSound(pos, soundId(currentlyOn ? Kind.TOGGLE_OFF : Kind.TOGGLE_ON));
+            FlightComputerUiSoundNetwork.request(pos, soundId(currentlyOn ? Kind.TOGGLE_OFF : Kind.TOGGLE_ON));
             return;
         }
 
-        FlightComputerNetwork.sendUiButtonSound(pos, soundId(Kind.INTERACT));
+        FlightComputerUiSoundNetwork.request(pos, soundId(Kind.INTERACT));
     }
 
     private static int soundId(Kind kind) {
