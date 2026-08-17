@@ -10,11 +10,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * Flight Computer buttons use server-authoritative block audio.
- * The actual sound is played by the Flight Controller with Level.playSound(..., SoundSource.BLOCKS),
- * exactly like Emergency Shutdown. Vanilla widget audio is suppressed separately.
- */
+/** Suppresses vanilla Minecraft widget click audio for Flight Computer screens. */
 @Mixin(AbstractWidget.class)
 public abstract class NavigationConsoleButtonSoundMixin {
     @Inject(method = "playDownSound", at = @At("HEAD"), cancellable = true)
@@ -24,15 +20,5 @@ public abstract class NavigationConsoleButtonSoundMixin {
         Minecraft minecraft = Minecraft.getInstance();
         if (!AudioUiSoundBridge.isFlightComputerScreen(minecraft.screen)) return;
         ci.cancel();
-    }
-
-    /** Fires once from the actual Button action rather than from widget audio handling. */
-    @Inject(method = "onPress", at = @At("HEAD"))
-    private void flightcomputer$playBlockSound(CallbackInfo ci) {
-        Object widget = this;
-        if (!(widget instanceof Button button)) return;
-        Minecraft minecraft = Minecraft.getInstance();
-        if (!AudioUiSoundBridge.isFlightComputerScreen(minecraft.screen)) return;
-        AudioUiSoundBridge.playForButton(button);
     }
 }
