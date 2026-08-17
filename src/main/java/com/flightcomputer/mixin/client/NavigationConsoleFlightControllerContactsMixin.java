@@ -26,7 +26,7 @@ import java.util.UUID;
 public abstract class NavigationConsoleFlightControllerContactsMixin extends Screen {
     @Shadow @Final protected Minecraft minecraft;
     @Shadow @Final protected Font font;
-    @Shadow private FlightControllerWorldPositionResolver positionResolver;
+    @Shadow @Final private FlightControllerWorldPositionResolver positionResolver;
     @Shadow private double centerX;
     @Shadow private double centerZ;
 
