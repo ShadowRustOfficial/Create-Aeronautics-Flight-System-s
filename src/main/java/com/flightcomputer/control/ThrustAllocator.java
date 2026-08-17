@@ -22,6 +22,16 @@ public final class ThrustAllocator {
     public double getLastWorldTorqueY() { return lastWorldTorqueY; }
     public double getLastWorldTorqueZ() { return lastWorldTorqueZ; }
 
+    /** Immediately removes all commanded thrust and clears allocator state. */
+    public void hardStop() {
+        for (PropulsionSource source : lastActiveSources.values()) {
+            try { source.applyThrust(0.0D); } catch (RuntimeException ignored) { }
+        }
+        lastActiveSources.clear();
+        lastThermalLoad = 0.0D;
+        resetLastWrench();
+    }
+
     public void applyCombined(ThrusterRegistry registry, VehicleState state,
                               Map<ControlAxis, Double> stabiliser, Map<ControlAxis, Double> autopilot) {
         if (state == null) { hardStop(); lastThermalLoad = 0.0D; resetLastWrench(); return; }
@@ -162,8 +172,7 @@ public final class ThrustAllocator {
     private double[] contribution(ThrusterLink link, double thrust, VehicleState state, Quaterniond rotation) {
         VectorDirection d = link.direction;
         Vector3d force = new Vector3d(d.x(), d.y(), d.z()).mul(thrust * link.polarity);
-        Vector3d r = new Vector3d(link.source.getMountOffset())
-                .sub(state.comX, state.comY, state.comZ);
+        Vector3d r = new Vector3d(link.source.getMountOffset()).sub(state.comX, state.comY, state.comZ);
         rotation.transform(force);
         rotation.transform(r);
         double fx = force.x, fy = force.y, fz = force.z;
