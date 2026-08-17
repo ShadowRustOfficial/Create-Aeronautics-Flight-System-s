@@ -52,7 +52,7 @@ public final class FlightControllerContactNetwork {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    /** Registered from FlightComputer's mod event bus; avoids the deprecated subscriber bus API. */
+    /** Registered by the mod-bus event subscriber without using the deprecated bus= subscriber API. */
     public static void register(RegisterPayloadHandlersEvent event) {
         event.registrar(VERSION).playToClient(TYPE, ContactPayload.STREAM_CODEC, FlightControllerContactNetwork::handle);
     }
