@@ -11,8 +11,6 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -54,12 +52,9 @@ public final class FlightControllerContactNetwork {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    @EventBusSubscriber(modid = FlightComputer.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
-    public static final class Registration {
-        @SubscribeEvent
-        public static void register(RegisterPayloadHandlersEvent event) {
-            event.registrar(VERSION).playToClient(TYPE, ContactPayload.STREAM_CODEC, FlightControllerContactNetwork::handle);
-        }
+    /** Registered from FlightComputer's mod event bus; avoids the deprecated subscriber bus API. */
+    public static void register(RegisterPayloadHandlersEvent event) {
+        event.registrar(VERSION).playToClient(TYPE, ContactPayload.STREAM_CODEC, FlightControllerContactNetwork::handle);
     }
 
     private static void handle(ContactPayload payload, IPayloadContext context) {
