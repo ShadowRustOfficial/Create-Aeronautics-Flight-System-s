@@ -94,7 +94,13 @@ public final class SixAxisStabilizer {
                 responseScale(linearAuthority(registry, mode, ControlAxis.LATERAL, mass), 6.0D));
 
         double requestedVerticalForce = verticalAcceleration * mass - externalForce.y;
-        if (legacyStableProfile) requestedVerticalForce = slewVerticalForce(requestedVerticalForce, mass, dt);
+        if (legacyStableProfile) {
+            // STABILIZE descends by reducing the common upward lift bank, never by firing the
+            // opposite/downward bank. Autopilot is the only mode allowed to command directional
+            // vertical manoeuvres through the full six-axis allocator.
+            requestedVerticalForce = Math.max(0.0D, requestedVerticalForce);
+            requestedVerticalForce = slewVerticalForce(requestedVerticalForce, mass, dt);
+        }
         out.put(ControlAxis.VERTICAL, requestedVerticalForce);
         out.put(ControlAxis.LONGITUDINAL, longitudinalAcceleration * mass - externalForce.z);
         out.put(ControlAxis.LATERAL, lateralAcceleration * mass - externalForce.x);
