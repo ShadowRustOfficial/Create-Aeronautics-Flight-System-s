@@ -6,6 +6,7 @@ import com.flightcomputer.avionics.ThermalState;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.control.ControlAxis;
 import com.flightcomputer.control.ManualControlBridge;
+import com.flightcomputer.control.FlightMode;
 import com.flightcomputer.identity.FlightIdentityAccess;
 import com.flightcomputer.registry.ModSounds;
 import net.minecraft.core.HolderLookup;
@@ -148,6 +149,47 @@ public abstract class FlightControllerAudioMixin implements FlightIdentityAccess
         LAST_EMERGENCY_SOUND.put(controller.getControllerId(), now);
         controller.getLevel().playSound(null,
                 controller.getBlockPos(), ModSounds.EMERGENCY_SHUTDOWN.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+    }
+
+    /**
+     * The UI does NOT have its own sound transport. The GUI already sends the same
+     * FlightControllerAction that every other controller control uses. Once the server
+     * successfully applies that action, emit the sound directly from the controller block,
+     * using the exact same Level.playSound(null, blockPos, ..., SoundSource.BLOCKS, ...) call
+     * used by Emergency Shutdown.
+     */
+    @Inject(method = "applyAction", at = @At("RETURN"))
+    private void flightcomputer$uiButtonSound(FlightControllerAction action,
+                                                CallbackInfoReturnable<FlightControllerActionResult> cir) {
+        FlightControllerBlockEntity controller = (FlightControllerBlockEntity) (Object) this;
+        if (action == null || cir.getReturnValue() == null || !cir.getReturnValue().accepted()
+                || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
+
+        ModSounds sound = flightcomputer$buttonSound(action, controller);
+        if (sound != null) {
+            controller.getLevel().playSound(null, controller.getBlockPos(), sound.get(),
+                    SoundSource.BLOCKS, 0.78F, 1.0F);
+        }
+    }
+
+    @Unique
+    private static ModSounds flightcomputer$buttonSound(FlightControllerAction action, FlightControllerBlockEntity controller) {
+        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) return null;
+        return switch (action) {
+            case TOGGLE_ENGAGED -> controller.isEngaged() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
+            case TOGGLE_STABILISER -> controller.isStabiliser() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
+            case TOGGLE_AUTOPILOT -> controller.getControllerState().flightMode() == FlightMode.AUTOPILOT ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
+            case TOGGLE_ALTITUDE_HOLD -> controller.getControllerState().altitudeHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
+            case TOGGLE_HEADING_HOLD -> controller.getControllerState().headingHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
+            case TOGGLE_POSITION_HOLD -> controller.getControllerState().positionHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
+            case TOGGLE_VELOCITY_HOLD -> controller.getControllerState().velocityHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
+            case TOGGLE_NAVIGATION -> controller.getControllerState().navigationEnabled() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
+            case TOGGLE_TERRAIN -> controller.isTerrainEnabled() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
+            case CYCLE_MODE -> ModSounds.UI_OPEN.get();
+            case START_ROUTE, ABORT_ROUTE, PULSE_DISPLAY,
+                 PUSH_FORWARD, PUSH_BACKWARD, PUSH_UP, PUSH_DOWN, PUSH_LEFT, PUSH_RIGHT -> ModSounds.UI_INTERACT.get();
+            case EMERGENCY_SHUTDOWN -> null;
+        };
     }
 
     @Inject(method = "onThermalStateChanged", at = @At("HEAD"))
