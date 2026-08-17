@@ -25,7 +25,8 @@
     "client.NavigationConsoleLayoutMixin",
     "client.NavigationConsoleFlightControllerContactsMixin",
     "client.NavigationConsoleButtonServerSoundMixin",
-    "client.NavigationConsoleMuteVanillaButtonSoundMixin"
+    "client.NavigationConsoleMuteVanillaButtonSoundMixin",
+    "client.NavigationConsoleIdentityButtonMixin"
   ],
   "injectors": {
     "defaultRequire": 1
