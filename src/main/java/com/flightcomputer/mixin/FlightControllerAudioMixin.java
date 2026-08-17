@@ -13,7 +13,6 @@ import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
-import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
@@ -149,41 +148,6 @@ public abstract class FlightControllerAudioMixin implements FlightIdentityAccess
         LAST_EMERGENCY_SOUND.put(controller.getControllerId(), now);
         controller.getLevel().playSound(null,
                 controller.getBlockPos(), ModSounds.EMERGENCY_SHUTDOWN.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
-    }
-
-    /** Uses the exact server-side Level.playSound path used by Emergency Shutdown. */
-    @Inject(method = "applyAction", at = @At("RETURN"))
-    private void flightcomputer$uiButtonSound(FlightControllerAction action,
-                                                CallbackInfoReturnable<FlightControllerActionResult> cir) {
-        FlightControllerBlockEntity controller = (FlightControllerBlockEntity) (Object) this;
-        if (action == null || cir.getReturnValue() == null || !cir.getReturnValue().accepted()
-                || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
-
-        SoundEvent sound = flightcomputer$buttonSound(action, controller);
-        if (sound != null) {
-            controller.getLevel().playSound(null, controller.getBlockPos(), sound,
-                    SoundSource.BLOCKS, 0.78F, 1.0F);
-        }
-    }
-
-    @Unique
-    private static SoundEvent flightcomputer$buttonSound(FlightControllerAction action, FlightControllerBlockEntity controller) {
-        if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) return null;
-        return switch (action) {
-            case TOGGLE_ENGAGED -> controller.isEngaged() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
-            case TOGGLE_STABILISER -> controller.isStabiliser() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
-            case TOGGLE_AUTOPILOT -> controller.getControllerState().flightMode() == FlightMode.AUTOPILOT ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
-            case TOGGLE_ALTITUDE_HOLD -> controller.getControllerState().altitudeHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
-            case TOGGLE_HEADING_HOLD -> controller.getControllerState().headingHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
-            case TOGGLE_POSITION_HOLD -> controller.getControllerState().positionHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
-            case TOGGLE_VELOCITY_HOLD -> controller.getControllerState().velocityHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
-            case TOGGLE_NAVIGATION -> controller.getControllerState().navigationEnabled() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
-            case TOGGLE_TERRAIN -> controller.isTerrainEnabled() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
-            case CYCLE_MODE -> ModSounds.UI_OPEN.get();
-            case START_ROUTE, ABORT_ROUTE, PULSE_DISPLAY,
-                 PUSH_FORWARD, PUSH_BACKWARD, PUSH_UP, PUSH_DOWN, PUSH_LEFT, PUSH_RIGHT -> ModSounds.UI_INTERACT.get();
-            case EMERGENCY_SHUTDOWN -> null;
-        };
     }
 
     @Inject(method = "onThermalStateChanged", at = @At("HEAD"))
