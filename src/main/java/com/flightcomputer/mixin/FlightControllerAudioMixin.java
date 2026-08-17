@@ -14,6 +14,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.DoubleTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
@@ -151,13 +152,7 @@ public abstract class FlightControllerAudioMixin implements FlightIdentityAccess
                 controller.getBlockPos(), ModSounds.EMERGENCY_SHUTDOWN.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
     }
 
-    /**
-     * The UI does NOT have its own sound transport. The GUI already sends the same
-     * FlightControllerAction that every other controller control uses. Once the server
-     * successfully applies that action, emit the sound directly from the controller block,
-     * using the exact same Level.playSound(null, blockPos, ..., SoundSource.BLOCKS, ...) call
-     * used by Emergency Shutdown.
-     */
+    /** Uses the exact server-side Level.playSound path used by Emergency Shutdown. */
     @Inject(method = "applyAction", at = @At("RETURN"))
     private void flightcomputer$uiButtonSound(FlightControllerAction action,
                                                 CallbackInfoReturnable<FlightControllerActionResult> cir) {
@@ -165,15 +160,15 @@ public abstract class FlightControllerAudioMixin implements FlightIdentityAccess
         if (action == null || cir.getReturnValue() == null || !cir.getReturnValue().accepted()
                 || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
 
-        ModSounds sound = flightcomputer$buttonSound(action, controller);
+        SoundEvent sound = flightcomputer$buttonSound(action, controller);
         if (sound != null) {
-            controller.getLevel().playSound(null, controller.getBlockPos(), sound.get(),
+            controller.getLevel().playSound(null, controller.getBlockPos(), sound,
                     SoundSource.BLOCKS, 0.78F, 1.0F);
         }
     }
 
     @Unique
-    private static ModSounds flightcomputer$buttonSound(FlightControllerAction action, FlightControllerBlockEntity controller) {
+    private static SoundEvent flightcomputer$buttonSound(FlightControllerAction action, FlightControllerBlockEntity controller) {
         if (action == FlightControllerAction.EMERGENCY_SHUTDOWN) return null;
         return switch (action) {
             case TOGGLE_ENGAGED -> controller.isEngaged() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get();
