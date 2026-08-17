@@ -14,19 +14,26 @@ public final class SixAxisStabilizer {
     private final AxisPID longitudinalPID;
     private final AxisPID lateralPID;
     private final boolean legacyStableProfile;
+    private double lastVerticalForce;
+    private boolean verticalForceInitialized;
     public double gravity = 11.0;
 
-    public SixAxisStabilizer() { this(false); }
+    /** Use the same proven large-vessel attitude profile for autopilot and manual stabilisation. */
+    public SixAxisStabilizer() { this(true); }
 
     public SixAxisStabilizer(boolean legacyStableProfile) {
         this.legacyStableProfile = legacyStableProfile;
         if (legacyStableProfile) {
-            // This is the previously stable large-vessel profile: measured angular rates provide
-            // the damping instead of differentiating Euler angles, reducing roll/pitch hunting.
-            pitchPID = new AxisPID(5.0, 0.08, 2.5, 18.0);
+            // Large vessels need slower pitch authority than roll authority. Roll gains remain
+            // unchanged from the stable profile; pitch is deliberately softened so vertical
+            // thrust changes cannot make the vessel hunt nose-up/nose-down.
+            pitchPID = new AxisPID(3.2, 0.04, 1.8, 10.0);
             rollPID = new AxisPID(5.0, 0.08, 2.5, 18.0);
             yawPID = new AxisPID(4.5, 0.2, 2.0, 18.0);
-            verticalPID = new AxisPID(3.0, 0.6, 1.2, 40.0);
+            // Vertical movement is translation only. It is not converted into a pitch request.
+            // The lower authority and slew limiter below make ascent/descent a smooth common-mode
+            // thrust change instead of a sudden impulse that can excite the vessel's pitch axis.
+            verticalPID = new AxisPID(1.8, 0.12, 0.8, 12.0);
             longitudinalPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
             lateralPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
         } else {
@@ -89,10 +96,32 @@ public final class SixAxisStabilizer {
         double lateralAcceleration = lateralPID.update(sp.desiredLateralVelocity - bodyVel[1], bodyVel[1], dt,
                 responseScale(linearAuthority(registry, mode, ControlAxis.LATERAL, mass), 6.0D));
 
-        out.put(ControlAxis.VERTICAL, verticalAcceleration * mass - externalForce.y);
+        double requestedVerticalForce = verticalAcceleration * mass - externalForce.y;
+        if (legacyStableProfile) requestedVerticalForce = slewVerticalForce(requestedVerticalForce, mass, dt);
+        out.put(ControlAxis.VERTICAL, requestedVerticalForce);
         out.put(ControlAxis.LONGITUDINAL, longitudinalAcceleration * mass - externalForce.z);
         out.put(ControlAxis.LATERAL, lateralAcceleration * mass - externalForce.x);
         return out;
+    }
+
+    /**
+     * Limits only the RATE OF CHANGE of vertical thrust. The first demand is accepted immediately
+     * so enabling the stabiliser does not take seconds to reach hover thrust; subsequent ascent /
+     * descent changes are deliberately smooth and cannot create a vertical impulse that excites
+     * pitch or roll.
+     */
+    private double slewVerticalForce(double requested, double mass, double dt) {
+        if (!Double.isFinite(requested)) return verticalForceInitialized ? lastVerticalForce : 0.0D;
+        if (!verticalForceInitialized) {
+            lastVerticalForce = requested;
+            verticalForceInitialized = true;
+            return requested;
+        }
+        double safeDt = clamp(dt, 1.0 / 200.0, 0.5);
+        double maxVerticalAccelerationChange = 1.25D;
+        double maxDelta = Math.max(1.0D, mass * maxVerticalAccelerationChange * safeDt);
+        lastVerticalForce += clamp(requested - lastVerticalForce, -maxDelta, maxDelta);
+        return lastVerticalForce;
     }
 
     private double linearAuthority(ThrusterRegistry registry, FlightMode mode, ControlAxis axis, double mass) {
@@ -135,7 +164,11 @@ public final class SixAxisStabilizer {
         return clamp(Math.sqrt(ratio), legacyStableProfile ? 0.30D : 0.35D, maxScale);
     }
 
-    public void resetAll() { pitchPID.reset(); rollPID.reset(); yawPID.reset(); verticalPID.reset(); longitudinalPID.reset(); lateralPID.reset(); }
+    public void resetAll() {
+        pitchPID.reset(); rollPID.reset(); yawPID.reset(); verticalPID.reset(); longitudinalPID.reset(); lateralPID.reset();
+        lastVerticalForce = 0.0D;
+        verticalForceInitialized = false;
+    }
     private static double wrapAngle(double radians) { double a = radians % (2 * Math.PI); if (a > Math.PI) a -= 2 * Math.PI; if (a < -Math.PI) a += 2 * Math.PI; return a; }
     private static double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
 }
