@@ -3,13 +3,17 @@ package com.flightcomputer.client;
 import com.flightcomputer.client.gui.CoolingConsoleScreen;
 import com.flightcomputer.client.gui.NavigationConsoleScreen;
 import com.flightcomputer.client.gui.ThermalConsoleScreen;
-import com.flightcomputer.network.FlightComputerUiSoundNetwork;
+import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 
-/** Maps Flight Computer UI controls to the dedicated server-authoritative block-audio path. */
+/**
+ * Maps Flight Computer UI controls directly onto the same server-authoritative network path
+ * used by the controller actions.  The server resolves the controller block and performs
+ * Level.playSound(..., SoundSource.BLOCKS), exactly like Emergency Shutdown.
+ */
 public final class AudioUiSoundBridge {
     private AudioUiSoundBridge() {}
 
@@ -25,21 +29,26 @@ public final class AudioUiSoundBridge {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null) return;
         BlockPos pos = controllerPos(mc.screen);
-        if (pos != null) FlightComputerUiSoundNetwork.request(pos, soundId(kind));
+        if (pos != null) FlightComputerNetwork.sendUiButtonSound(pos, soundId(kind));
     }
 
+    /**
+     * Called from Button.onPress before the button callback executes.  Vanilla button audio is
+     * muted separately; this is the only UI audio trigger.  No client-side sound is played here.
+     */
     public static void playForButton(Button button) {
         Minecraft mc = Minecraft.getInstance();
         if (button == null || mc == null || !isFlightComputerScreen(mc.screen)) return;
 
-        String text = button.getMessage().getString().trim().toUpperCase(java.util.Locale.ROOT);
         BlockPos pos = controllerPos(mc.screen);
         if (pos == null) return;
+
+        String text = button.getMessage().getString().trim().toUpperCase(java.util.Locale.ROOT);
 
         if (text.equals("MAP") || text.equals("ROUTE") || text.equals("FLIGHT CONTROL")
                 || text.equals("DIAGNOSTICS") || text.equals("THERMAL") || text.equals("COOLING")
                 || text.equals("NAVIGATION")) {
-            FlightComputerUiSoundNetwork.request(pos, soundId(Kind.TAB));
+            FlightComputerNetwork.sendUiButtonSound(pos, soundId(Kind.TAB));
             return;
         }
 
@@ -57,11 +66,12 @@ public final class AudioUiSoundBridge {
 
         if (toggle) {
             boolean currentlyOn = text.contains(": ON") || text.contains(": ENGAGED");
-            FlightComputerUiSoundNetwork.request(pos, soundId(currentlyOn ? Kind.TOGGLE_OFF : Kind.TOGGLE_ON));
+            FlightComputerNetwork.sendUiButtonSound(pos,
+                    soundId(currentlyOn ? Kind.TOGGLE_OFF : Kind.TOGGLE_ON));
             return;
         }
 
-        FlightComputerUiSoundNetwork.request(pos, soundId(Kind.INTERACT));
+        FlightComputerNetwork.sendUiButtonSound(pos, soundId(Kind.INTERACT));
     }
 
     private static int soundId(Kind kind) {
