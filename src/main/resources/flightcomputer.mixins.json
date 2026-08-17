@@ -21,6 +21,7 @@
     "client.NavigationConsoleMapTrackingMixin",
     "client.NavigationConsoleTelemetryOverlayMixin",
     "client.NavigationConsoleButtonSoundMixin",
+    "client.FlightComputerButtonPressSoundMixin",
     "client.NavigationConsoleLayoutMixin"
   ],
   "injectors": {
