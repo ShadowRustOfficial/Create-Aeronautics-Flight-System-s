@@ -7,8 +7,8 @@ ui_toggle_on.ogg    <- UI TOGGLE ON.ogg
 ui_toggle_off.ogg   <- UI TOGGLE OFF.ogg
 tilt_warning.ogg    <- TILT WARNING.ogg
 warning.ogg         <- Warning.ogg
-cooling_insert.ogg   <- COOLING INSERT.ogg
-cooling_remove.ogg   <- COOLING REMOVE.ogg
+cooling_insert.ogg  <- COOLING INSERT.ogg
+cooling_remove.ogg  <- COOLING REMOVE.ogg
 
 Existing flight audio:
 ambient_flight_ghost_2.ogg <- Ghost ambient flight layer (currently referenced by the client but the binary asset is not present in this branch)
