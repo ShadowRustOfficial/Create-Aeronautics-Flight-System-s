@@ -82,28 +82,20 @@ public final class NavigationConsoleScreen extends Screen {
         controller = getController();
         if (controller != null) showTerrain = controller.isTerrainEnabled();
         updateControllerPosition();
-
         int l = innerLeft(), w = panelWidth() - 36, y = top(), gap = 10;
         int tabW = (w - gap * 3) / 4;
         addRenderableWidget(Button.builder(Component.literal("MAP"), b -> switchTab(Tab.MAP)).bounds(l, y, tabW, 26).build());
         addRenderableWidget(Button.builder(Component.literal("ROUTE"), b -> switchTab(Tab.ROUTE)).bounds(l + tabW + gap, y, tabW, 26).build());
         addRenderableWidget(Button.builder(Component.literal("FLIGHT CONTROL"), b -> switchTab(Tab.FLIGHT_CONTROL)).bounds(l + (tabW + gap) * 2, y, tabW, 26).build());
         addRenderableWidget(Button.builder(Component.literal("DIAGNOSTICS"), b -> switchTab(Tab.DIAGNOSTICS)).bounds(l + (tabW + gap) * 3, y, tabW, 26).build());
-
-        int utilityY = y + 31;
-        int utilityWidth = (w - gap) / 2;
+        int utilityY = y + 31, utilityWidth = (w - gap) / 2;
         addRenderableWidget(Button.builder(Component.literal("THERMAL"), b -> minecraft.setScreen(new ThermalConsoleScreen(controllerPos))).bounds(l, utilityY, utilityWidth, 22).build());
         addRenderableWidget(Button.builder(Component.literal("COOLING"), b -> minecraft.setScreen(new CoolingConsoleScreen(controllerPos))).bounds(l + utilityWidth + gap, utilityY, utilityWidth, 22).build());
-
-        if (tab == Tab.MAP) initMap(l, w);
-        else if (tab == Tab.ROUTE) initRoute(l, w);
-        else if (tab == Tab.FLIGHT_CONTROL) initFlightControl(l, w);
-        else initDiagnostics(l, w);
+        if (tab == Tab.MAP) initMap(l, w); else if (tab == Tab.ROUTE) initRoute(l, w); else if (tab == Tab.FLIGHT_CONTROL) initFlightControl(l, w); else initDiagnostics(l, w);
     }
 
     private void initMap(int l, int w) {
-        int y = height - 48, gap = 8;
-        int cols = 6, bw = (w - gap * (cols - 1)) / cols;
+        int y = height - 48, gap = 8, cols = 6, bw = (w - gap * (cols - 1)) / cols;
         addRenderableWidget(Button.builder(Component.literal("CENTRE PLAYER"), b -> centrePlayer()).bounds(l, y, bw, 22).build());
         addRenderableWidget(Button.builder(Component.literal("CENTRE CTRL"), b -> centreController()).bounds(l + bw + gap, y, bw, 22).build());
         addRenderableWidget(Button.builder(Component.literal("TERRAIN: " + on(showTerrain)), b -> { showTerrain = !showTerrain; b.setMessage(Component.literal("TERRAIN: " + on(showTerrain))); }).bounds(l + (bw + gap) * 2, y, bw, 22).build());
@@ -113,11 +105,8 @@ public final class NavigationConsoleScreen extends Screen {
     }
 
     private void initRoute(int l, int w) {
-        int y = contentTop() + 48, gap = 8;
-        int inputW = Math.min(520, w - 210);
-        targetInput = new EditBox(font, l, y, inputW, 22, Component.literal("Target X Y Z"));
-        targetInput.setHint(Component.literal("X Y Z  (example: 120 80 -240)"));
-        addRenderableWidget(targetInput);
+        int y = contentTop() + 48, gap = 8, inputW = Math.min(520, w - 210);
+        targetInput = new EditBox(font, l, y, inputW, 22, Component.literal("Target X Y Z")); targetInput.setHint(Component.literal("X Y Z  (example: 120 80 -240)")); addRenderableWidget(targetInput);
         addRenderableWidget(Button.builder(Component.literal("SET DESTINATION"), b -> sendTarget()).bounds(l + inputW + gap, y, 190, 22).build());
         y += 34;
         int col = (w - gap * 2) / 3;
@@ -127,23 +116,19 @@ public final class NavigationConsoleScreen extends Screen {
         y += 34;
         selectWaystoneButton = Button.builder(Component.literal("SELECT WAYSTONE"), this::selectWaystone).bounds(l, y, col, 22).build();
         selectWaypointButton = Button.builder(Component.literal("SELECT WAYPOINT"), this::selectWaypoint).bounds(l + col + gap, y, col, 22).build();
-        addRenderableWidget(selectWaystoneButton);
-        addRenderableWidget(selectWaypointButton);
+        addRenderableWidget(selectWaystoneButton); addRenderableWidget(selectWaypointButton);
         addRenderableWidget(Button.builder(Component.literal("REFRESH LOCATIONS"), b -> refreshLocations()).bounds(l + (col + gap) * 2, y, col, 22).build());
     }
 
     private void initFlightControl(int l, int w) {
-        int gap = 10, col = (w - gap * 3) / 4;
-        int y = contentTop() + 48;
-        int half = (w - gap) / 2;
+        int gap = 10, col = (w - gap * 3) / 4, y = contentTop() + 48, half = (w - gap) / 2;
         engageButton = Button.builder(Component.literal("SYSTEM"), b -> send(FlightControllerAction.TOGGLE_ENGAGED)).bounds(l, y, col, 24).build();
         stabiliserButton = Button.builder(Component.literal("STABILISER"), b -> send(FlightControllerAction.TOGGLE_STABILISER)).bounds(l + col + gap, y, col, 24).build();
         modeButton = Button.builder(Component.literal("MODE"), b -> send(FlightControllerAction.CYCLE_MODE)).bounds(l + (col + gap) * 2, y, col, 24).build();
         autopilotButton = Button.builder(Component.literal("AUTOPILOT"), b -> send(FlightControllerAction.TOGGLE_AUTOPILOT)).bounds(l + (col + gap) * 3, y, col, 24).build();
         addRenderableWidget(engageButton); addRenderableWidget(stabiliserButton); addRenderableWidget(modeButton); addRenderableWidget(autopilotButton);
 
-        int pushY = y + 58;
-        int pushW = Math.max(70, (half - gap * 5) / 6);
+        int pushY = y + 58, pushW = Math.max(70, (half - gap * 5) / 6);
         String[] pushNames = {"F", "B", "U", "D", "L", "R"};
         FlightControllerAction[] pushActions = {FlightControllerAction.PUSH_FORWARD, FlightControllerAction.PUSH_BACKWARD, FlightControllerAction.PUSH_UP, FlightControllerAction.PUSH_DOWN, FlightControllerAction.PUSH_LEFT, FlightControllerAction.PUSH_RIGHT};
         for (int i = 0; i < 6; i++) { final int index = i; addRenderableWidget(Button.builder(Component.literal(pushNames[index]), b -> send(pushActions[index])).bounds(l + index * (pushW + 6), pushY, pushW, 26).build()); }
@@ -152,16 +137,13 @@ public final class NavigationConsoleScreen extends Screen {
         targetPlayerButton = Button.builder(Component.literal("PLAYER"), b -> { targetMode = TargetMode.PLAYER; refreshTargetLabels(); }).bounds(targetLeft, pushY, targetWidth / 2 - 4, 26).build();
         targetHomeButton = Button.builder(Component.literal("HOME"), b -> { targetMode = TargetMode.HOME; refreshTargetLabels(); }).bounds(targetLeft + targetWidth / 2 + 4, pushY, targetWidth / 2 - 4, 26).build();
         addRenderableWidget(targetPlayerButton); addRenderableWidget(targetHomeButton);
-        targetPlayerInput = new EditBox(font, targetLeft, pushY + 32, targetWidth - 118, 22, Component.literal("Player name"));
-        targetPlayerInput.setValue(minecraft != null && minecraft.player != null ? minecraft.player.getGameProfile().getName() : ""); targetPlayerInput.setMaxLength(32); addRenderableWidget(targetPlayerInput);
+        targetPlayerInput = new EditBox(font, targetLeft, pushY + 32, targetWidth - 118, 22, Component.literal("Player name")); targetPlayerInput.setValue(minecraft != null && minecraft.player != null ? minecraft.player.getGameProfile().getName() : ""); targetPlayerInput.setMaxLength(32); addRenderableWidget(targetPlayerInput);
         addRenderableWidget(Button.builder(Component.literal("SET TARGET"), b -> sendSelectedTarget()).bounds(targetLeft + targetWidth - 110, pushY + 32, 110, 22).build());
         homeInput = new EditBox(font, targetLeft, pushY + 60, targetWidth - 110, 22, Component.literal("Home X Y Z")); homeInput.setMaxLength(64); loadHomeInput(); addRenderableWidget(homeInput);
         addRenderableWidget(Button.builder(Component.literal("SET HOME"), b -> sendHome()).bounds(targetLeft + targetWidth - 110, pushY + 60, 110, 22).build());
 
-        int altitudeY = pushY + 96;
-        int altitudeW = Math.max(220, half - gap);
-        altitudeTargetInput = new EditBox(font, l, altitudeY, altitudeW, 22, Component.literal("Altitude Y"));
-        altitudeTargetInput.setValue(String.format(Locale.ROOT, "%.1f", controllerY)); altitudeTargetInput.setHint(Component.literal("World Y level")); altitudeTargetInput.setMaxLength(16); addRenderableWidget(altitudeTargetInput);
+        int altitudeY = pushY + 96, altitudeW = Math.max(220, half - gap);
+        altitudeTargetInput = new EditBox(font, l, altitudeY, altitudeW, 22, Component.literal("Altitude Y")); altitudeTargetInput.setValue(String.format(Locale.ROOT, "%.1f", controllerY)); altitudeTargetInput.setHint(Component.literal("World Y level")); altitudeTargetInput.setMaxLength(16); addRenderableWidget(altitudeTargetInput);
         setAltitudeButton = Button.builder(Component.literal("SET ALTITUDE TARGET"), b -> sendAltitudeTarget()).bounds(l + altitudeW + gap, altitudeY, half - gap, 22).build(); addRenderableWidget(setAltitudeButton);
 
         int controlY = altitudeY + 38;
@@ -179,8 +161,7 @@ public final class NavigationConsoleScreen extends Screen {
 
     private void initDiagnostics(int l, int w) {
         int gap = 10, half = (w - gap) / 2, y = contentTop() + 62;
-        nameInput = new EditBox(font, l, y, half - 120, 22, Component.literal("Sub Level Name"));
-        flightIdInput = new EditBox(font, l + half + gap, y, half - 120, 22, Component.literal("Flight ID"));
+        nameInput = new EditBox(font, l, y, half - 120, 22, Component.literal("Sub Level Name")); flightIdInput = new EditBox(font, l + half + gap, y, half - 120, 22, Component.literal("Flight ID"));
         nameInput.setMaxLength(64); flightIdInput.setMaxLength(32);
         if (controller instanceof FlightIdentityAccess identity) { nameInput.setValue(identity.flightcomputer$getSubLevelName()); flightIdInput.setValue(identity.flightcomputer$getFlightId()); }
         addRenderableWidget(nameInput); addRenderableWidget(flightIdInput);
@@ -230,7 +211,7 @@ public final class NavigationConsoleScreen extends Screen {
     private void renderMarkers(GuiGraphics g, List<FlightMapMarker> markers, int l, int t, int w, int h, int color) { for (FlightMapMarker marker : markers) { int x = screenX(marker.worldX(), l, w), y = screenZ(marker.worldZ(), t, h); if (x >= l && x < l + w && y >= t && y < t + h) { diamond(g, x, y, color); g.drawString(font, marker.label(), x + 6, y - 4, color); } } }
 
     private void renderRoute(GuiGraphics g, int l, int top) { g.drawString(font, "ROUTE / FLIGHT PLAN", l, top, TEXT); FlightComputerNetwork.TelemetryPayload telemetry = FlightComputerTelemetryClient.get(controller == null ? null : controller.getControllerId()); FlightControllerState state = controller == null ? null : controller.getControllerState(); int y = top + 180; if (telemetry != null && telemetry.targetPresent()) { g.drawString(font, "DESTINATION: " + (telemetry.targetName().isBlank() ? "NAVIGATION TARGET" : telemetry.targetName()), l, y, CYAN); g.drawString(font, String.format(Locale.ROOT, "CURRENT   X %.1f  Y %.1f  Z %.1f", telemetry.x(), telemetry.y(), telemetry.z()), l, y + 24, TEXT); g.drawString(font, String.format(Locale.ROOT, "TARGET    X %.1f  Y %.1f  Z %.1f", telemetry.targetX(), telemetry.targetY(), telemetry.targetZ()), l, y + 46, TEXT); double bearing = Math.toDegrees(Math.atan2(telemetry.targetX() - telemetry.x(), telemetry.targetZ() - telemetry.z())); if (bearing < 0) bearing += 360.0; g.drawString(font, String.format(Locale.ROOT, "ALT %.1f m   DIST %.1f m   BRG %.1f°   HDG %.1f°   SPEED %.2f m/s", telemetry.y(), telemetry.distance(), bearing, telemetry.heading(), telemetry.speed()), l, y + 70, TEXT); String mode = state == null ? "UNKNOWN" : state.flightMode().name(); String route = state != null && state.routeActive() ? "ACTIVE" : "IDLE"; g.drawString(font, "MODE: " + mode + "   ROUTE: " + route + "   NAVIGATION: " + (state != null && state.navigationEnabled() ? "ON" : "OFF"), l, y + 94, telemetry.targetPresent() && state != null && state.flightMode() == FlightMode.AUTOPILOT ? GREEN : MUTED); } else g.drawString(font, "NO ACTIVE NAVIGATION TARGET", l, y, MUTED); g.drawString(font, "WAYSTONES: " + routeWaystones.markers().size(), l, y + 128, WAYSTONE); g.drawString(font, "WAYPOINTS: " + routeWaypoints.markers().size(), l + 180, y + 128, CYAN); }
-    private void renderFlight(GuiGraphics g, int l, int top) { g.drawString(font, "FLIGHT CONTROL", l, top, TEXT); g.drawString(font, "MANUAL / STABILISED / AUTOPILOT — SERVER AUTHORITATIVE", l, top + 22, MUTED); if (controller != null) { FlightControllerState s = controller.getControllerState(); g.drawString(font, "MODE: " + s.flightMode().name().replace('_', ' '), l, top + 118, CYAN); g.drawString(font, "NAVIGATION: " + on(s.navigationEnabled()), l + 220, top + 118, CYAN); g.drawString(font, "ALTITUDE HOLD: " + on(s.altitudeHold()), l + 410, top + 118, CYAN); g.drawString(font, "HEADING HOLD: " + on(s.headingHold()), l, top + 140, CYAN); g.drawString(font, "POSITION HOLD: " + on(s.positionHold()), l + 220, top + 140, CYAN); g.drawString(font, "VELOCITY HOLD: " + on(s.velocityHold()), l + 410, top + 140, CYAN); g.drawString(font, "PUSH: F/B FORWARD/BACK · U/D VERTICAL · L/R LATERAL", l, top + 164, MUTED); g.drawString(font, "TARGET MODE: " + targetMode.name(), l + 560, top + 164, CYAN); } }
+    private void renderFlight(GuiGraphics g, int l, int top) { g.drawString(font, "FLIGHT CONTROL", l, top, TEXT); g.drawString(font, "MANUAL / STABILISED / AUTOPILOT — SERVER AUTHORITATIVE", l, top + 22, MUTED); if (controller != null) { FlightControllerState s = controller.getControllerState(); g.drawString(font, "MODE: " + s.flightMode().name().replace('_', ' '), l, top + 42, CYAN); g.drawString(font, "NAVIGATION: " + on(s.navigationEnabled()), l + 220, top + 42, CYAN); g.drawString(font, "ALTITUDE HOLD: " + on(s.altitudeHold()), l + 410, top + 42, CYAN); g.drawString(font, "HEADING HOLD: " + on(s.headingHold()), l, top + 64, CYAN); g.drawString(font, "POSITION HOLD: " + on(s.positionHold()), l + 220, top + 64, CYAN); g.drawString(font, "VELOCITY HOLD: " + on(s.velocityHold()), l + 410, top + 64, CYAN); g.drawString(font, "PUSH: F/B FORWARD/BACK · U/D VERTICAL · L/R LATERAL", l, top + 88, MUTED); g.drawString(font, "TARGET MODE: " + targetMode.name(), l + 560, top + 88, CYAN); } }
     private void renderDiagnostics(GuiGraphics g, int l, int top) { FlightMapDiagnostics d = mapPipeline.diagnostics(); g.drawString(font, "DIAGNOSTICS / SYSTEM HEALTH", l, top, TEXT); if (controller instanceof FlightIdentityAccess identity) { g.drawString(font, "SUB LEVEL: " + identity.flightcomputer$getSubLevelName(), l, top + 118, CYAN); g.drawString(font, "FLIGHT ID: " + identity.flightcomputer$getFlightId(), l + 380, top + 118, CYAN); g.drawString(font, "NAMEPLATE IDENTITY: READY", l, top + 140, GREEN); } g.drawString(font, "MAP PROVIDER: " + d.provider(), l, top + 170, CYAN); g.drawString(font, "MAP STATE: " + d.state(), l + 380, top + 170, CYAN); g.drawString(font, "CACHE HITS: " + d.cacheHits(), l, top + 194, TEXT); g.drawString(font, "CACHE MISSES: " + d.cacheMisses(), l + 190, top + 194, TEXT); g.drawString(font, "REQUESTED: " + d.requestedTiles(), l + 380, top + 194, TEXT); g.drawString(font, "DECODED: " + d.decodedTiles(), l, top + 218, TEXT); g.drawString(font, "FAILED: " + d.failedTiles(), l + 190, top + 218, TEXT); g.drawString(font, "PENDING: " + d.pendingTiles(), l + 380, top + 218, TEXT); var setup = FlightSetupTelemetryClient.get(controller == null ? null : controller.getControllerId()); if (setup != null) { g.drawString(font, "SETUP: READY", l, top + 252, GREEN); g.drawString(font, "POWER " + setup.powerLevel() + "%", l, top + 276, TEXT); g.drawString(font, "CONTROL " + setup.controlLevel() + "%", l + 190, top + 276, TEXT); g.drawString(font, "PROPULSION " + setup.propulsionLevel() + "%", l + 380, top + 276, TEXT); g.drawString(font, "NAVIGATION " + setup.navigationLevel() + "%", l, top + 300, TEXT); } }
 
     @Override public boolean mouseClicked(double mouseX, double mouseY, int button) { if (tab == Tab.MAP && button == 0) { int ml = left() + 18, mt = contentTop() + 8, mr = left() + panelWidth() - 18, mb = height - 70; if (mouseX >= ml && mouseX < mr && mouseY >= mt && mouseY < mb) { dragging = true; lastDragX = mouseX; lastDragY = mouseY; } } return super.mouseClicked(mouseX, mouseY, button); }
