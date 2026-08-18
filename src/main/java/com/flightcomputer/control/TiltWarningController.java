@@ -1,6 +1,5 @@
 package com.flightcomputer.control;
 
-import com.flightcomputer.FlightComputer;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.registry.ModSounds;
 import net.minecraft.core.BlockPos;
@@ -19,8 +18,12 @@ import java.util.UUID;
 public final class TiltWarningController {
     private static final double WARNING_ANGLE = Math.toRadians(30.0D);
     private static final double CLEAR_ANGLE = Math.toRadians(25.0D);
-    private static final int REPEAT_TICKS = 40;
-    private static final Map<UUID, Integer> COOLDOWNS = new HashMap<>();
+    /** TILT WARNING is re-issued once per second while the condition remains active. */
+    private static final int TILT_WARNING_REPEAT_TICKS = 20;
+    /** WARNING.ogg is the slower periodic warning layer requested for excessive tilt. */
+    private static final int WARNING_REPEAT_TICKS = 50;
+    private static final Map<UUID, Integer> TILT_COOLDOWNS = new HashMap<>();
+    private static final Map<UUID, Integer> WARNING_COOLDOWNS = new HashMap<>();
     private static final Map<UUID, Boolean> WARNING_ACTIVE = new HashMap<>();
 
     private TiltWarningController() { }
@@ -29,8 +32,10 @@ public final class TiltWarningController {
         if (controller == null || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
 
         UUID id = controller.getControllerId();
-        int cooldown = COOLDOWNS.getOrDefault(id, 0);
-        if (cooldown > 0) COOLDOWNS.put(id, cooldown - 1);
+        int tiltCooldown = Math.max(0, TILT_COOLDOWNS.getOrDefault(id, 0) - 1);
+        int warningCooldown = Math.max(0, WARNING_COOLDOWNS.getOrDefault(id, 0) - 1);
+        TILT_COOLDOWNS.put(id, tiltCooldown);
+        WARNING_COOLDOWNS.put(id, warningCooldown);
 
         double[] attitude = readAttitude(controller.getLevel(), controller.getBlockPos(), controller);
         if (attitude == null) return;
@@ -40,20 +45,20 @@ public final class TiltWarningController {
 
         if (tilt >= WARNING_ANGLE) {
             WARNING_ACTIVE.put(id, true);
-            if (cooldown <= 0) {
-                controller.getLevel().playSound(
-                        null,
-                        controller.getBlockPos(),
-                        ModSounds.TILT_WARNING.get(),
-                        SoundSource.BLOCKS,
-                        1.0F,
-                        1.0F
-                );
-                COOLDOWNS.put(id, REPEAT_TICKS);
+            Level level = controller.getLevel();
+            BlockPos pos = controller.getBlockPos();
+            if (tiltCooldown <= 0) {
+                level.playSound(null, pos, ModSounds.TILT_WARNING.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+                TILT_COOLDOWNS.put(id, TILT_WARNING_REPEAT_TICKS);
+            }
+            if (warningCooldown <= 0) {
+                level.playSound(null, pos, ModSounds.WARNING.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+                WARNING_COOLDOWNS.put(id, WARNING_REPEAT_TICKS);
             }
         } else if (active && tilt <= CLEAR_ANGLE) {
             WARNING_ACTIVE.put(id, false);
-            COOLDOWNS.remove(id);
+            TILT_COOLDOWNS.remove(id);
+            WARNING_COOLDOWNS.remove(id);
         }
     }
 
@@ -74,8 +79,6 @@ public final class TiltWarningController {
             if (subLevel == null) {
                 Method tracking = findMethod(companion.getClass(), "getTrackingSubLevel", Entity.class);
                 if (tracking != null) {
-                    // The controller itself is the authoritative block entity; tracking lookup is
-                    // only a fallback for Sable builds where getContaining(BlockEntity) is absent.
                     subLevel = tracking.invoke(companion, controller.getLevel().getNearestPlayer(
                             controllerPos.getX() + 0.5D,
                             controllerPos.getY() + 0.5D,
@@ -88,13 +91,7 @@ public final class TiltWarningController {
 
             if (subLevel == null) {
                 Method containingPosition = findMethod(companion.getClass(), "getContaining", Level.class, Vec3.class);
-                if (containingPosition != null) {
-                    subLevel = containingPosition.invoke(
-                            companion,
-                            level,
-                            Vec3.atCenterOf(controllerPos)
-                    );
-                }
+                if (containingPosition != null) subLevel = containingPosition.invoke(companion, level, Vec3.atCenterOf(controllerPos));
             }
 
             if (subLevel == null) return null;
