@@ -2,6 +2,7 @@ package com.flightcomputer.client.gui;
 
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.item.CoolingUpgradeItem;
+import com.flightcomputer.network.CoolingSoundNetwork;
 import com.flightcomputer.network.FlightComputerNetwork;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -29,6 +30,8 @@ public final class CoolingConsoleScreen extends Screen {
         this.controllerPos = controllerPos;
     }
 
+    public BlockPos controllerPos() { return controllerPos; }
+
     @Override protected void init() {
         controller = getController();
         left = Math.max(10, (width - 640) / 2);
@@ -39,10 +42,14 @@ public final class CoolingConsoleScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("CLOSE"), b -> onClose()).bounds(left + 490, top, 145, 22).build());
         for (int slot = 0; slot < 3; slot++) {
             final int bay = slot;
-            addRenderableWidget(Button.builder(Component.literal("INSERT HELD"), b -> FlightComputerNetwork.sendCoolingSlot(controllerPos, bay, 0))
-                    .bounds(left + 85 + slot * 155, top + 160, 120, 20).build());
-            addRenderableWidget(Button.builder(Component.literal("REMOVE"), b -> FlightComputerNetwork.sendCoolingSlot(controllerPos, bay, 1))
-                    .bounds(left + 85 + slot * 155, top + 184, 120, 20).build());
+            addRenderableWidget(Button.builder(Component.literal("INSERT HELD"), b -> {
+                FlightComputerNetwork.sendCoolingSlot(controllerPos, bay, 0);
+                CoolingSoundNetwork.request(controllerPos, bay, 0);
+            }).bounds(left + 85 + slot * 155, top + 160, 120, 20).build());
+            addRenderableWidget(Button.builder(Component.literal("REMOVE"), b -> {
+                FlightComputerNetwork.sendCoolingSlot(controllerPos, bay, 1);
+                CoolingSoundNetwork.request(controllerPos, bay, 1);
+            }).bounds(left + 85 + slot * 155, top + 184, 120, 20).build());
         }
     }
 
@@ -52,11 +59,7 @@ public final class CoolingConsoleScreen extends Screen {
         return be instanceof FlightControllerBlockEntity fc ? fc : null;
     }
 
-    @Override public void tick() {
-        super.tick();
-        controller = getController();
-        if (controller == null) onClose();
-    }
+    @Override public void tick() { super.tick(); controller = getController(); if (controller == null) onClose(); }
 
     @Override public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         int right = left + 640, bottom = top + 340;
@@ -90,8 +93,13 @@ public final class CoolingConsoleScreen extends Screen {
                 int x = left + 100 + slot * 155, y = top + 82;
                 if (mouseX >= x && mouseX <= x + 110 && mouseY >= y && mouseY <= y + 70) {
                     ItemStack hand = minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getMainHandItem();
-                    if (button == 1 || hand.isEmpty()) FlightComputerNetwork.sendCoolingSlot(controllerPos, slot, 1);
-                    else if (hand.getItem() instanceof CoolingUpgradeItem) FlightComputerNetwork.sendCoolingSlot(controllerPos, slot, 0);
+                    if (button == 1 || hand.isEmpty()) {
+                        FlightComputerNetwork.sendCoolingSlot(controllerPos, slot, 1);
+                        CoolingSoundNetwork.request(controllerPos, slot, 1);
+                    } else if (hand.getItem() instanceof CoolingUpgradeItem) {
+                        FlightComputerNetwork.sendCoolingSlot(controllerPos, slot, 0);
+                        CoolingSoundNetwork.request(controllerPos, slot, 0);
+                    }
                     return true;
                 }
             }
