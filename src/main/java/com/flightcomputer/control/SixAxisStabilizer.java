@@ -14,8 +14,11 @@ public final class SixAxisStabilizer {
     private final AxisPID longitudinalPID;
     private final AxisPID lateralPID;
     private final boolean legacyStableProfile;
-    private double lastVerticalForce;
-    private boolean verticalForceInitialized;
+
+    /** Captured equilibrium lift. PID remains the correction loop around this value. */
+    private double hoverForceBias;
+    private boolean hoverForceInitialized;
+    private boolean hoverHoldActive;
     public double gravity = 11.0;
 
     public SixAxisStabilizer() { this(false); }
@@ -94,6 +97,48 @@ public final class SixAxisStabilizer {
                 responseScale(linearAuthority(registry, mode, ControlAxis.LATERAL, mass), 6.0D));
 
         double requestedVerticalForce = verticalAcceleration * mass - externalForce.y;
+
+        // When the commanded vertical velocity is effectively zero and the vessel is already
+        // settled, capture the physical equilibrium lift instead of making PID repeatedly solve
+        // gravity from scratch. The PID is still active, but only as a correction around this
+        // captured force. This is the important distinction between "reach hover" and "hold hover".
+        boolean hoverDemand = Math.abs(sp.desiredVerticalVelocity) <= 0.12D;
+        boolean physicallySettled = Math.abs(state.vy) <= 0.35D
+                && Math.abs(state.ay) <= 1.5D
+                && Math.abs(state.pitch) <= Math.toRadians(10.0D)
+                && Math.abs(state.roll) <= Math.toRadians(10.0D);
+        boolean externalEstimateValid = Double.isFinite(externalForce.y)
+                && Math.abs(externalForce.y) >= mass * 1.5D;
+        boolean shouldCapture = hoverDemand && physicallySettled && externalEstimateValid;
+
+        if (shouldCapture) {
+            if (!hoverHoldActive) {
+                // Do not carry integral from an ascent/descent manoeuvre into the new equilibrium.
+                verticalPID.resetIntegral();
+                hoverHoldActive = true;
+            }
+            double measuredHoverForce = Math.max(0.0D, -externalForce.y);
+            if (!hoverForceInitialized || !Double.isFinite(hoverForceBias)) {
+                hoverForceBias = measuredHoverForce;
+                hoverForceInitialized = true;
+            } else {
+                // Adapt slowly to fuel/mass changes, damage, merged masses and other persistent
+                // force changes. A sudden disturbance is handled by the PID correction, not by
+                // immediately moving the equilibrium itself.
+                hoverForceBias += (measuredHoverForce - hoverForceBias) * 0.025D;
+            }
+
+            // Keep the original PID gains/calculation intact; only bound the transient correction
+            // around the captured equilibrium so it cannot repeatedly over-fire then under-fire.
+            double correctionAcceleration = clamp(verticalAcceleration, -1.75D, 1.75D);
+            requestedVerticalForce = hoverForceBias + correctionAcceleration * mass;
+        } else {
+            hoverHoldActive = false;
+            // Outside the captured hover state the original force equation remains authoritative.
+            // Keep the last bias available for the next capture, but never use stale hover force
+            // during a deliberate climb/descent or translational manoeuvre.
+        }
+
         if (legacyStableProfile) {
             // STABILIZE descends by reducing the common upward lift bank, never by firing the
             // opposite/downward bank. Autopilot is the only mode allowed to command directional
@@ -107,12 +152,13 @@ public final class SixAxisStabilizer {
         return out;
     }
 
-    /**
-     * Limits only the RATE OF CHANGE of vertical thrust. The first demand is accepted immediately
+    /** Limits only the RATE OF CHANGE of vertical thrust. The first demand is accepted immediately
      * so enabling the stabiliser does not take seconds to reach hover thrust; subsequent ascent /
      * descent changes are deliberately smooth and cannot create a vertical impulse that excites
      * pitch or roll.
      */
+    private double lastVerticalForce;
+    private boolean verticalForceInitialized;
     private double slewVerticalForce(double requested, double mass, double dt) {
         if (!Double.isFinite(requested)) return verticalForceInitialized ? lastVerticalForce : 0.0D;
         if (!verticalForceInitialized) {
@@ -171,6 +217,9 @@ public final class SixAxisStabilizer {
         pitchPID.reset(); rollPID.reset(); yawPID.reset(); verticalPID.reset(); longitudinalPID.reset(); lateralPID.reset();
         lastVerticalForce = 0.0D;
         verticalForceInitialized = false;
+        hoverForceBias = 0.0D;
+        hoverForceInitialized = false;
+        hoverHoldActive = false;
     }
     private static double wrapAngle(double radians) { double a = radians % (2 * Math.PI); if (a > Math.PI) a -= 2 * Math.PI; if (a < -Math.PI) a += 2 * Math.PI; return a; }
     private static double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
