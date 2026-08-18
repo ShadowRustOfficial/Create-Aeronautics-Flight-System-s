@@ -24,15 +24,10 @@ public final class SixAxisStabilizer {
         double pitchCommand=pitchPID.update(pitchError,state.pitch,dt,inertiaPitch),rollCommand=rollPID.update(rollError,state.roll,dt,inertiaRoll);
         if(!legacyStableProfile){pitchCommand+=clamp(-3*state.pitchRate*inertiaPitch,-8,8);rollCommand+=clamp(-3*state.rollRate*inertiaRoll,-8,8);}
         double yawCommand=yawPID.update(yawError,sp.yawIsRateNotHeading?state.yawRate:state.yaw,dt,inertiaYaw);
-
-        // Never use a hard-coded gravity constant. Sable's gravity is configurable and the live
-        // residual also includes drag, levitation, balloon lift, lift, magnetic, impact/recoil and
-        // other forces that actually act on this particular sub-level.
         Vector3d externalBody=state.externalForceBody(),externalTorque=state.externalTorqueBody();
         double passiveY=externalBody.y;
         if(Math.abs(passiveY)<1e-6&&Math.abs(state.gravityAcceleration)>1e-6)passiveY=-mass*state.gravityAcceleration;
         pitchCommand-=externalTorque.x;rollCommand-=externalTorque.z;
-
         double[] bodyVel=state.bodyFrameVelocity();
         double verticalForce=verticalPID.update(sp.desiredVerticalVelocity-state.vy,state.vy,dt,mass)-passiveY;
         double longitudinalForce=longitudinalPID.update(sp.desiredLongitudinalVelocity-bodyVel[0],bodyVel[0],dt,mass)-externalBody.z;
@@ -42,6 +37,6 @@ public final class SixAxisStabilizer {
     }
     public Map<ControlAxis,Double> computeCommands(VehicleState state,StabilizationSetpoint sp,double dt,ThrusterRegistry ignoredRegistry,FlightMode ignoredMode){return computeCommands(state,sp,dt);}
     public void resetAll(){pitchPID.reset();rollPID.reset();yawPID.reset();verticalPID.reset();longitudinalPID.reset();lateralPID.reset();}
-    private static void applyProfile(){ }
     private static double wrapAngle(double radians){double a=radians%(2*Math.PI);if(a>Math.PI)a-=2*Math.PI;if(a<-Math.PI)a+=2*Math.PI;return a;}
+    private static double clamp(double value,double min,double max){return Math.max(min,Math.min(max,value));}
 }
