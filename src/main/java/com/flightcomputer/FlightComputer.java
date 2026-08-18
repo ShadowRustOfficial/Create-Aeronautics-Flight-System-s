@@ -1,6 +1,5 @@
 package com.flightcomputer;
 
-import com.flightcomputer.network.FlightComputerUiSoundNetwork;
 import com.flightcomputer.network.FlightControllerContactNetwork;
 import com.flightcomputer.network.FlightIdentityNetwork;
 import com.flightcomputer.registry.ModBlockEntities;
@@ -28,7 +27,6 @@ public final class FlightComputer {
         modBus.addListener(FlightComputerCapabilities::register);
         // RegisterPayloadHandlersEvent is a mod-bus event. Register directly instead of using
         // the deprecated EventBusSubscriber.bus() API.
-        modBus.addListener(FlightComputerUiSoundNetwork::register);
         modBus.addListener(FlightControllerContactNetwork::register);
         modBus.addListener(FlightIdentityNetwork::register);
 

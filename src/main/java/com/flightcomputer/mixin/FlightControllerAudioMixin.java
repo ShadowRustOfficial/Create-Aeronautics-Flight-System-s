@@ -32,9 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Mixin(FlightControllerBlockEntity.class)
 public abstract class FlightControllerAudioMixin implements FlightIdentityAccess {
     private static final int FIRE_DELAY_TICKS = 100;
-    private static final int EMERGENCY_SOUND_COOLDOWN = 200;
     private static final Map<UUID, Integer> FIRE_PENDING = new ConcurrentHashMap<>();
-    private static final Map<UUID, Long> LAST_EMERGENCY_SOUND = new ConcurrentHashMap<>();
 
     @Unique private String flightcomputer$subLevelName = "Unnamed Sub Level";
     @Unique private String flightcomputer$flightId = "UNASSIGNED";
@@ -83,7 +81,48 @@ public abstract class FlightControllerAudioMixin implements FlightIdentityAccess
             default -> { return; }
         }
         ManualControlBridge.request(controller.getControllerId(), axis, value);
+        if (controller.getLevel() != null && !controller.getLevel().isClientSide()) {
+            controller.getLevel().playSound(null, controller.getBlockPos(),
+                    ModSounds.UI_INTERACT.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+        }
         cir.setReturnValue(FlightControllerActionResult.accepted(controller.getControllerState(), action, "PUSH"));
+    }
+
+    /**
+     * ControllerAction buttons use the same server-side block playback mechanism as Emergency
+     * Shutdown. The mixin is attached to applyAction, so no client-side sound path is involved.
+     */
+    @Inject(method = "applyAction", at = @At("RETURN"))
+    private void flightcomputer$uiActionSound(FlightControllerAction action,
+                                                CallbackInfoReturnable<FlightControllerActionResult> cir) {
+        if (action == null || action == FlightControllerAction.EMERGENCY_SHUTDOWN
+                || cir.getReturnValue() == null || !cir.getReturnValue().accepted()) return;
+
+        FlightControllerBlockEntity controller = (FlightControllerBlockEntity)(Object)this;
+        if (controller.getLevel() == null || controller.getLevel().isClientSide()) return;
+
+        switch (action) {
+            case TOGGLE_ENGAGED -> controller.getLevel().playSound(null, controller.getBlockPos(),
+                    controller.isEngaged() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+            case TOGGLE_STABILISER -> controller.getLevel().playSound(null, controller.getBlockPos(),
+                    controller.isStabiliser() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+            case TOGGLE_AUTOPILOT -> controller.getLevel().playSound(null, controller.getBlockPos(),
+                    controller.getControllerState().flightMode() == FlightMode.AUTOPILOT ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+            case TOGGLE_ALTITUDE_HOLD -> controller.getLevel().playSound(null, controller.getBlockPos(),
+                    controller.getControllerState().altitudeHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+            case TOGGLE_HEADING_HOLD -> controller.getLevel().playSound(null, controller.getBlockPos(),
+                    controller.getControllerState().headingHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+            case TOGGLE_POSITION_HOLD -> controller.getLevel().playSound(null, controller.getBlockPos(),
+                    controller.getControllerState().positionHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+            case TOGGLE_VELOCITY_HOLD -> controller.getLevel().playSound(null, controller.getBlockPos(),
+                    controller.getControllerState().velocityHold() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+            case TOGGLE_NAVIGATION -> controller.getLevel().playSound(null, controller.getBlockPos(),
+                    controller.getControllerState().navigationEnabled() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+            case TOGGLE_TERRAIN -> controller.getLevel().playSound(null, controller.getBlockPos(),
+                    controller.isTerrainEnabled() ? ModSounds.UI_TOGGLE_ON.get() : ModSounds.UI_TOGGLE_OFF.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+            default -> controller.getLevel().playSound(null, controller.getBlockPos(),
+                    ModSounds.UI_INTERACT.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+        }
     }
 
     @Inject(method = "saveAdditional", at = @At("TAIL"))
@@ -133,22 +172,6 @@ public abstract class FlightControllerAudioMixin implements FlightIdentityAccess
         return clean.length() > maxLength ? clean.substring(0, maxLength) : clean;
     }
     @Unique private static boolean finite(Vec3 p) { return Double.isFinite(p.x) && Double.isFinite(p.y) && Double.isFinite(p.z); }
-
-    @Inject(method = "applyAction", at = @At("HEAD"))
-    private void flightcomputer$emergencySound(FlightControllerAction action,
-                                                CallbackInfoReturnable<?> cir) {
-        FlightControllerBlockEntity controller = (FlightControllerBlockEntity) (Object) this;
-        if (action != FlightControllerAction.EMERGENCY_SHUTDOWN || controller.getLevel() == null
-                || controller.getLevel().isClientSide() || !controller.isEngaged()) return;
-
-        long now = controller.getLevel().getGameTime();
-        long previous = LAST_EMERGENCY_SOUND.getOrDefault(controller.getControllerId(), Long.MIN_VALUE);
-        if (now - previous < EMERGENCY_SOUND_COOLDOWN) return;
-
-        LAST_EMERGENCY_SOUND.put(controller.getControllerId(), now);
-        controller.getLevel().playSound(null,
-                controller.getBlockPos(), ModSounds.EMERGENCY_SHUTDOWN.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
-    }
 
     @Inject(method = "onThermalStateChanged", at = @At("HEAD"))
     private void flightcomputer$thermalTransition(ThermalState previous, ThermalState current, CallbackInfo ci) {

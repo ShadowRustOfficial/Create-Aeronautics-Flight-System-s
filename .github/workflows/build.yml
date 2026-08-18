@@ -2,9 +2,9 @@ name: Build Verification
 
 on:
   push:
-    branches: [main, phase-5-validation, 'patch/navigation-console-refinement-20260811', 'fix/fc-identity-stabiliser-20260816-v9', 'fix/fc-identity-stabiliser-20260816-v10', 'fix/fc-identity-stabiliser-20260817-v11']
+    branches: [main, phase-5-validation, 'patch/navigation-console-refinement-20260811', 'fix/fc-identity-stabiliser-20260816-v9', 'fix/fc-identity-stabiliser-20260816-v10', 'fix/fc-identity-stabiliser-20260817-v11', 'tmp/fc-ui-audio-validation-20260818']
   pull_request:
-    branches: [main, phase-5-validation]
+    branches: [main, phase-5-validation, 'fix/fc-identity-stabiliser-20260817-v11']
 
 permissions:
   contents: read
