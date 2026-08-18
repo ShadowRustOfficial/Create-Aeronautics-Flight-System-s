@@ -89,9 +89,6 @@ public final class MPCNavigator {
 
         double distanceForSpeed=Math.max(segFlat,Math.abs(segDy));
         double brakingDistance=Math.max(0.0,distanceForSpeed-radius);
-        // The planner deliberately uses only a conservative fraction of the measured authority.
-        // The allocator and the real vessel still have to share that authority with attitude
-        // correction, so using the raw theoretical deceleration causes large approach overshoot.
         double stoppingSpeed=Math.sqrt(Math.max(0.0,2.0*safeDeceleration*0.55*brakingDistance));
         double desiredSpeed=Math.min(Math.max(0.0,maxSpeed),stoppingSpeed);
         if (distanceForSpeed < 12.0) desiredSpeed=Math.min(desiredSpeed,Math.max(0.75,distanceForSpeed*0.55));
@@ -100,9 +97,6 @@ public final class MPCNavigator {
         double desiredVesselYaw=desiredVesselYawForBearing(state,bearing);
         double headingError=normalizeRadians(desiredVesselYaw-state.yaw);
         lastChosenHeadingOffsetDeg=Math.toDegrees(headingError);
-
-        // Do not command a heading step. The yaw loop receives a bounded rate target so the ship
-        // turns smoothly, settles on the bearing, and does not whip past it before translation.
         sp.yawIsRateNotHeading=true;
         sp.desiredYawRate=clamp(headingError*HEADING_RATE_P,-MAX_HEADING_RATE,MAX_HEADING_RATE);
 
@@ -117,9 +111,9 @@ public final class MPCNavigator {
 
         double worldVx=Math.sin(bearing)*horizontalSpeed;
         double worldVz=Math.cos(bearing)*horizontalSpeed;
-        double cosYaw=Math.cos(-state.yaw), sinYaw=Math.sin(-state.yaw);
-        sp.desiredLongitudinalVelocity=worldVz*cosYaw-worldVx*sinYaw;
-        sp.desiredLateralVelocity=worldVz*sinYaw+worldVx*cosYaw;
+        double sinYaw=Math.sin(state.yaw), cosYaw=Math.cos(state.yaw);
+        sp.desiredLongitudinalVelocity=worldVx*sinYaw+worldVz*cosYaw;
+        sp.desiredLateralVelocity=worldVx*cosYaw-worldVz*sinYaw;
         sp.desiredVerticalVelocity=verticalSpeed;
         return sp;
     }
