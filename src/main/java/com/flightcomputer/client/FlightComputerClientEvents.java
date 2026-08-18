@@ -19,8 +19,9 @@ public final class FlightComputerClientEvents {
 
     @SubscribeEvent
     public static void clientTick(ClientTickEvent.Post event) {
+        // Ambient flight audio remains client-side. Controller UI and warning sounds do not:
+        // those are emitted by the server from the Flight Controller block.
         FlightComputerSoundClient.tick();
-        FlightComputerTiltWarningClient.tick();
     }
 
     @SubscribeEvent
