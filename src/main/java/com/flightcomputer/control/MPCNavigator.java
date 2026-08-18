@@ -5,14 +5,14 @@ import java.util.List;
 
 /** Receding-horizon route planner used by the autopilot and the map route preview. */
 public final class MPCNavigator {
-    private static final int HORIZON_STEPS = 10;
-    private static final double HORIZON_DT = 0.3;
-    private static final double ARRIVAL_RADIUS = 1.5;
-    private static final double ARRIVAL_HOLD_P = 0.55;
-    private static final double ARRIVAL_MAX_SPEED = 1.25;
+    private static final double ARRIVAL_RADIUS = 2.5;
+    private static final double ARRIVAL_HOLD_P = 0.42;
+    private static final double ARRIVAL_MAX_SPEED = 0.8;
     private static final double CLEARANCE_MARGIN = 1.0;
     private static final double HYSTERESIS_BONUS = 6.0;
     private static final double LOOKAHEAD_DISTANCE = 32.0;
+    private static final double MAX_HEADING_RATE = Math.toRadians(24.0);
+    private static final double HEADING_RATE_P = 1.15;
 
     private final ObstacleSensor obstacleSensor;
     private double targetX, targetY, targetZ;
@@ -46,10 +46,7 @@ public final class MPCNavigator {
         return Math.atan2(targetX - state.x, targetZ - state.z);
     }
 
-    /**
-     * Returns the vessel yaw that makes the Flight Computer's BACK point along the selected
-     * world-space travel bearing. Translation is deliberately kept independent of this heading.
-     */
+    /** Returns the vessel yaw that makes the Flight Computer's BACK point along the selected bearing. */
     private static double desiredVesselYawForBearing(VehicleState state, double bearing) {
         return normalizeRadians(bearing - state.bodyBackYawOffset);
     }
@@ -66,10 +63,8 @@ public final class MPCNavigator {
             arrivalLocked = true;
             pathBlocked = false;
             routePoints = List.of(new Vec3(state.x,state.y,state.z), new Vec3(targetX,targetY,targetZ));
-            // At the exact destination there is no meaningful travel bearing. Hold the current
-            // vessel orientation rather than injecting a new yaw impulse while position-locking.
-            sp.desiredYaw=state.yaw;
-            sp.yawIsRateNotHeading=false;
+            sp.yawIsRateNotHeading = true;
+            sp.desiredYawRate = 0.0D;
             double sinYaw=Math.sin(state.yaw), cosYaw=Math.cos(state.yaw);
             double worldCorrectionX=clamp(dx*ARRIVAL_HOLD_P,-ARRIVAL_MAX_SPEED,ARRIVAL_MAX_SPEED);
             double worldCorrectionZ=clamp(dz*ARRIVAL_HOLD_P,-ARRIVAL_MAX_SPEED,ARRIVAL_MAX_SPEED);
@@ -90,19 +85,29 @@ public final class MPCNavigator {
         double segFlat=Math.sqrt(segDx*segDx+segDz*segDz);
         double bearing=Math.atan2(segDx,segDz);
         double radius=Math.max(0.5,state.boundingRadius);
-        double safeDeceleration=Math.max(0.5,maxDeceleration);
+        double safeDeceleration=Math.max(0.35,maxDeceleration);
 
         double distanceForSpeed=Math.max(segFlat,Math.abs(segDy));
-        double stoppingSpeed=Math.sqrt(Math.max(0.0,2.0*safeDeceleration*Math.max(0.0,distanceForSpeed-radius)));
+        double brakingDistance=Math.max(0.0,distanceForSpeed-radius);
+        // The planner deliberately uses only a conservative fraction of the measured authority.
+        // The allocator and the real vessel still have to share that authority with attitude
+        // correction, so using the raw theoretical deceleration causes large approach overshoot.
+        double stoppingSpeed=Math.sqrt(Math.max(0.0,2.0*safeDeceleration*0.55*brakingDistance));
         double desiredSpeed=Math.min(Math.max(0.0,maxSpeed),stoppingSpeed);
-        if(distanceForSpeed>6.0) desiredSpeed=Math.max(desiredSpeed,Math.min(maxSpeed,6.0));
+        if (distanceForSpeed < 12.0) desiredSpeed=Math.min(desiredSpeed,Math.max(0.75,distanceForSpeed*0.55));
+        if (distanceForSpeed < 5.0) desiredSpeed=Math.min(desiredSpeed,Math.max(0.25,distanceForSpeed*0.35));
 
         double desiredVesselYaw=desiredVesselYawForBearing(state,bearing);
-        double headingOffset=Math.toDegrees(normalizeRadians(desiredVesselYaw-state.yaw));
-        lastChosenHeadingOffsetDeg=headingOffset;
+        double headingError=normalizeRadians(desiredVesselYaw-state.yaw);
+        lastChosenHeadingOffsetDeg=Math.toDegrees(headingError);
 
-        double horizontalSpeed=segFlat<1.0e-6?0.0:Math.min(desiredSpeed,Math.max(0.0,segFlat*1.5));
-        double verticalSpeed=clamp(segDy*0.9,-Math.max(1.0,maxSpeed),Math.max(1.0,maxSpeed));
+        // Do not command a heading step. The yaw loop receives a bounded rate target so the ship
+        // turns smoothly, settles on the bearing, and does not whip past it before translation.
+        sp.yawIsRateNotHeading=true;
+        sp.desiredYawRate=clamp(headingError*HEADING_RATE_P,-MAX_HEADING_RATE,MAX_HEADING_RATE);
+
+        double horizontalSpeed=segFlat<1.0e-6?0.0:Math.min(desiredSpeed,Math.max(0.0,segFlat*0.9));
+        double verticalSpeed=clamp(segDy*0.65,-Math.max(1.0,maxSpeed),Math.max(1.0,maxSpeed));
         if (planned.size() <= 1 && obstacleSensor != null && !segmentClear(state,new Vec3(targetX,targetY,targetZ),radius,Math.max(.5,state.boundingHalfHeight))) {
             pathBlocked=true;
             horizontalSpeed=0.0;
@@ -110,13 +115,6 @@ public final class MPCNavigator {
             pathBlocked=false;
         }
 
-        sp.yawIsRateNotHeading=false;
-        sp.desiredYaw=desiredVesselYaw;
-
-        // Keep the desired translation in WORLD space. This is intentionally independent of
-        // heading so a vessel can begin translating toward the target while it turns to present
-        // the Flight Computer's back to the route. The subsequent body-frame conversion preserves
-        // the sign of the requested north/south/east/west velocity.
         double worldVx=Math.sin(bearing)*horizontalSpeed;
         double worldVz=Math.cos(bearing)*horizontalSpeed;
         double cosYaw=Math.cos(-state.yaw), sinYaw=Math.sin(-state.yaw);
@@ -164,7 +162,6 @@ public final class MPCNavigator {
         return true;
     }
 
-    private double simulateRemaining(double start,double closing){double r=start;for(int i=0;i<HORIZON_STEPS;i++)r=Math.max(0,r-closing*HORIZON_DT);return r;}
     private static double normalizeRadians(double radians){double r=radians%(Math.PI*2.0);if(r>Math.PI)r-=Math.PI*2;if(r<-Math.PI)r+=Math.PI*2;return r;}
     private static double clamp(double value,double min,double max){return Math.max(min,Math.min(max,value));}
 }
