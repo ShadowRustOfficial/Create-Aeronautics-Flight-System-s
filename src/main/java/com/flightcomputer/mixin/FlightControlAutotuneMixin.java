@@ -10,7 +10,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(FlightControlRuntimeManager.class)
 public abstract class FlightControlAutotuneMixin {
-    @Inject(method = "tick", at = @At("TAIL"))
+    /**
+     * Adaptive PID profile application belongs at the controller-runtime boundary, where the
+     * FlightControllerBlockEntity is available. Do not inject this logic into the lower-level
+     * FlightComputer tick method: that method intentionally has no controller identity/context.
+     */
+    @Inject(method = "tick(Lcom/flightcomputer/block/FlightControllerBlockEntity;)V", at = @At("TAIL"), require = 1)
     private static void flightcomputer$autoTune(FlightControllerBlockEntity controller, CallbackInfo ci) {
         AutoTuneRuntimeBridge.tick(controller);
     }
