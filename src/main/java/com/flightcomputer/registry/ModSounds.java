@@ -35,8 +35,14 @@ public final class ModSounds {
     public static final DeferredHolder<SoundEvent, SoundEvent> UI_INTERACT = register("ui_interact");
     /** UI discover/open-panel compatibility sound. */
     public static final DeferredHolder<SoundEvent, SoundEvent> UI_DISCOVER = register("ui_discover");
-    /** Excessive tilt warning. */
+    /** Excessive tilt warning loop cue. */
     public static final DeferredHolder<SoundEvent, SoundEvent> TILT_WARNING = register("tilt_warning");
+    /** General periodic excessive-tilt warning. */
+    public static final DeferredHolder<SoundEvent, SoundEvent> WARNING = register("warning");
+    /** Cooling upgrade insertion sound. */
+    public static final DeferredHolder<SoundEvent, SoundEvent> COOLING_INSERT = register("cooling_insert");
+    /** Cooling upgrade removal sound. */
+    public static final DeferredHolder<SoundEvent, SoundEvent> COOLING_REMOVE = register("cooling_remove");
 
     public static final DeferredHolder<SoundEvent, SoundEvent> ENGINE_HEAT_CRITICAL = register("engine_heat_critical");
     public static final DeferredHolder<SoundEvent, SoundEvent> WARNING_ENGINE_OVERHEAT = register("warning_engine_overheat");
