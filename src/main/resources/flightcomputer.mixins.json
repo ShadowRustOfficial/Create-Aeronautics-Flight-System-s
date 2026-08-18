@@ -16,7 +16,6 @@
     "FlightControllerAudioMixin",
     "FlightControllerTiltWarningMixin",
     "FlightControllerAttitudeCorrectionMixin",
-    "SixAxisStabilizerStartupMixin",
     "FlightControllerAutopilotIsolationMixin"
   ],
   "client": [
