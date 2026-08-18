@@ -6,6 +6,7 @@ import com.flightcomputer.control.SixAxisStabilizer;
 import com.flightcomputer.control.ThrusterRegistry;
 import com.flightcomputer.control.VehicleState;
 import com.flightcomputer.control.VehicleStateProvider;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -15,17 +16,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /** Recomputes controller gains when the physical sub-level actually changes. */
 @Mixin(FlightComputer.class)
 public abstract class FlightComputerAdaptiveTuningMixin {
-    @Shadow private VehicleStateProvider stateProvider;
-    @Shadow private ThrusterRegistry registry;
-    @Shadow private SixAxisStabilizer stabilizeStabilizer;
-    @Shadow private SixAxisStabilizer cruiseStabilizer;
+    @Shadow @Final private VehicleStateProvider stateProvider;
+    @Shadow @Final private ThrusterRegistry registry;
+    @Shadow @Final private SixAxisStabilizer stabilizeStabilizer;
+    @Shadow @Final private SixAxisStabilizer cruiseStabilizer;
+    private final AdaptiveFlightTuner flightcomputer$adaptiveTuner=new AdaptiveFlightTuner();
 
-    private final AdaptiveFlightTuner flightcomputer$adaptiveTuner = new AdaptiveFlightTuner();
-
-    @Inject(method = "tick(DZZ)V", at = @At("HEAD"))
-    private void flightcomputer$adaptiveTuning(double dt, boolean stabiliserEnabled, boolean autopilotEnabled, CallbackInfo ci) {
+    @Inject(method="tick(DZZ)V",at=@At("HEAD"))
+    private void flightcomputer$adaptiveTuning(double dt,boolean stabiliserEnabled,boolean autopilotEnabled,CallbackInfo ci){
         if(stateProvider==null||registry==null||stabilizeStabilizer==null||cruiseStabilizer==null)return;
-        VehicleState state=stateProvider.getState();
-        if(state!=null)flightcomputer$adaptiveTuner.update(state,registry,stabilizeStabilizer,cruiseStabilizer);
+        VehicleState state=stateProvider.getState();if(state!=null)flightcomputer$adaptiveTuner.update(state,registry,stabilizeStabilizer,cruiseStabilizer);
     }
 }
