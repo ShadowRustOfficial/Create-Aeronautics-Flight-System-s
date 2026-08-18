@@ -22,7 +22,11 @@ public final class FlightComputerSoundClient {
     private static UUID activeController;
     private static int activeTicks;
     private static boolean takeoffStarted;
+    private static int tiltWarningCooldown;
     private static final double MAX_AMBIENT_SOURCE_DISTANCE = 32.0D;
+    private static final double TILT_WARNING_ANGLE = 30.0D;
+    private static final double TILT_WARNING_CLEAR_ANGLE = 25.0D;
+    private static final int TILT_WARNING_REPEAT_TICKS = 40;
     private static final int TAKEOFF_HANDOFF_TICKS = 440;
     private static final int TAKEOFF_CROSSFADE_TICKS = 20;
     private static final float FLIGHT_LOOP_VOLUME = 0.32F;
@@ -34,20 +38,55 @@ public final class FlightComputerSoundClient {
 
     public static void tick() {
         Minecraft mc = Minecraft.getInstance();
-        if (mc == null || mc.level == null || mc.player == null) { stopAmbient(); sableRefreshCooldown = 0; SableAcousticCache.tick(null); return; }
+        if (mc == null || mc.level == null || mc.player == null) {
+            stopAmbient();
+            tiltWarningCooldown = 0;
+            sableRefreshCooldown = 0;
+            SableAcousticCache.tick(null);
+            return;
+        }
         LocalPlayer player = mc.player;
         FlightComputerNetwork.TelemetryPayload best = null;
         double bestDistance = Double.MAX_VALUE;
         for (FlightComputerNetwork.TelemetryPayload payload : FlightComputerTelemetryClient.snapshots()) {
             if (!FlightRouteTelemetryClient.isFlightControlActive(payload.controllerId()) || isMuted(payload.controllerId())) continue;
             double d = player.distanceToSqr(payload.x(), payload.y(), payload.z());
-            if (d < bestDistance && d <= MAX_AMBIENT_SOURCE_DISTANCE * MAX_AMBIENT_SOURCE_DISTANCE) { bestDistance = d; best = payload; }
+            if (d < bestDistance && d <= MAX_AMBIENT_SOURCE_DISTANCE * MAX_AMBIENT_SOURCE_DISTANCE) {
+                bestDistance = d;
+                best = payload;
+            }
         }
-        if (best == null) { stopAmbient(); sableRefreshCooldown = 0; SableAcousticCache.tick(null); return; }
+        if (best == null) {
+            stopAmbient();
+            tiltWarningCooldown = 0;
+            sableRefreshCooldown = 0;
+            SableAcousticCache.tick(null);
+            return;
+        }
 
         UUID id = best.controllerId();
-        if (activeController == null || !id.equals(activeController)) { stopAmbient(); activeController = id; activeTicks = 0; takeoffStarted = false; sableRefreshCooldown = 0; }
+        if (activeController == null || !id.equals(activeController)) {
+            stopAmbient();
+            activeController = id;
+            activeTicks = 0;
+            takeoffStarted = false;
+            tiltWarningCooldown = 0;
+            sableRefreshCooldown = 0;
+        }
         activeTicks++;
+        if (tiltWarningCooldown > 0) tiltWarningCooldown--;
+
+        double tilt = Math.max(Math.abs(best.pitch()), Math.abs(best.roll()));
+        if (tilt >= TILT_WARNING_ANGLE) {
+            if (tiltWarningCooldown <= 0) {
+                mc.level.playLocalSound(best.x(), best.y(), best.z(), ModSounds.WARNING.get(),
+                        SoundSource.BLOCKS, 1.0F, 1.0F, false);
+                tiltWarningCooldown = TILT_WARNING_REPEAT_TICKS;
+            }
+        } else if (tilt <= TILT_WARNING_CLEAR_ANGLE) {
+            tiltWarningCooldown = 0;
+        }
+
         SableAcousticCache.registerSource(new net.minecraft.world.phys.Vec3(best.x(), best.y(), best.z()));
 
         if (!takeoffStarted) {
@@ -58,20 +97,32 @@ public final class FlightComputerSoundClient {
 
         if (activeTicks >= TAKEOFF_HANDOFF_TICKS) {
             float f = (float)Math.max(0.0D, Math.min(1.0D, (activeTicks - TAKEOFF_HANDOFF_TICKS) / (double)TAKEOFF_CROSSFADE_TICKS));
-            if (activeFlightLoop == null || activeFlightLoop.isStopped()) { activeFlightLoop = new AmbientLoop(ModSounds.FLIGHT_LOOP_INTEGRATED.get(), best, FLIGHT_LOOP_VOLUME); activeFlightLoop.setFade(f); mc.getSoundManager().play(activeFlightLoop); }
-            else { activeFlightLoop.setTelemetry(best); activeFlightLoop.setFade(f); }
-            if (activeTakeoff != null && !activeTakeoff.isStopped()) { activeTakeoff.setFade(1.0F-f); if (f >= 1.0F) activeTakeoff.stopNow(); }
+            if (activeFlightLoop == null || activeFlightLoop.isStopped()) {
+                activeFlightLoop = new AmbientLoop(ModSounds.FLIGHT_LOOP_INTEGRATED.get(), best, FLIGHT_LOOP_VOLUME);
+                activeFlightLoop.setFade(f);
+                mc.getSoundManager().play(activeFlightLoop);
+            } else {
+                activeFlightLoop.setTelemetry(best);
+                activeFlightLoop.setFade(f);
+            }
+            if (activeTakeoff != null && !activeTakeoff.isStopped()) {
+                activeTakeoff.setFade(1.0F-f);
+                if (f >= 1.0F) activeTakeoff.stopNow();
+            }
         }
 
-        // Ghost is a distinct, continuous ambient layer. It is intentionally started independently
-        // of the takeoff handoff so it cannot be lost during the transition between sounds.
         if (activeGhostAmbient == null || activeGhostAmbient.isStopped()) {
             activeGhostAmbient = new AmbientLoop(ModSounds.AMBIENT_FLIGHT_GHOST_2.get(), best, GHOST_AMBIENT_VOLUME);
             mc.getSoundManager().play(activeGhostAmbient);
-        } else { activeGhostAmbient.setTelemetry(best); activeGhostAmbient.setFade(1.0F); }
+        } else {
+            activeGhostAmbient.setTelemetry(best);
+            activeGhostAmbient.setFade(1.0F);
+        }
 
-        if (sableRefreshCooldown <= 0) { SableAcousticCache.tick(mc); sableRefreshCooldown = SABLE_REFRESH_INTERVAL_TICKS; }
-        else sableRefreshCooldown--;
+        if (sableRefreshCooldown <= 0) {
+            SableAcousticCache.tick(mc);
+            sableRefreshCooldown = SABLE_REFRESH_INTERVAL_TICKS;
+        } else sableRefreshCooldown--;
     }
 
     public static boolean isMuted(UUID id) { return id != null && MUTED.getOrDefault(id, false); }
