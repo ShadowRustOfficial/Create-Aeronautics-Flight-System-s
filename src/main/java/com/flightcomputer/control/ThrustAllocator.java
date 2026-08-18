@@ -9,8 +9,8 @@ import java.util.Map;
 /** Final allocator: combined controller output is converted into one physical actuator command per thruster. */
 public final class ThrustAllocator {
     private static final int ITERATIONS = 18;
-    private static final double STABILISER_STEP = 0.12D;
-    private static final double STABILISER_TORQUE_WEIGHT = 3.0D;
+    private static final double STABILISER_STEP = 0.08D;
+    private static final double STABILISER_TORQUE_WEIGHT = 2.5D;
     private final Map<String, PropulsionSource> lastActiveSources = new LinkedHashMap<>();
     private double lastThermalLoad;
     private double lastWorldForceX, lastWorldForceY, lastWorldForceZ;
@@ -28,6 +28,7 @@ public final class ThrustAllocator {
         if(target.normSquared()<=1e-12||unique.isEmpty()){hardStop();lastThermalLoad=0;resetLastWrench();return;}
         List<ThrusterLink> sources=List.copyOf(unique.values());
         double[] commands=stabiliserOnly?seedStabiliser(sources,target,vehicleRotation,state):seedVectorBanks(sources,target,vehicleRotation);
+        double[] minimumLiftCommands=stabiliserOnly?commands.clone():null;
         double forceScale=Math.max(1,totalAuthority(sources));
         double torqueScale=Math.max(1,totalTorqueAuthority(sources,state,vehicleRotation));
         for(int iteration=0;iteration<ITERATIONS;iteration++){
@@ -44,6 +45,11 @@ public final class ThrustAllocator {
                     dot+=residual*weightedContribution; magnitude+=weightedContribution*weightedContribution;
                 }
                 if(magnitude>1e-12){double step=stabiliserOnly?STABILISER_STEP:0.35D;commands[i]=clamp(commands[i]+step*dot/magnitude,0,1);}
+                // Attitude correction must never steal the baseline lift required to hover.
+                // Torque is produced by differential thrust around that floor, not by reducing
+                // total lift until the craft begins to descend.
+                if(stabiliserOnly && minimumLiftCommands != null && sources.get(i).direction==VectorDirection.UP)
+                    commands[i]=Math.max(commands[i],minimumLiftCommands[i]);
             }
         }
         double load=0,authority=0;
@@ -57,7 +63,7 @@ public final class ThrustAllocator {
     private double[] seedVectorBanks(List<ThrusterLink> sources,ControlWrench target,Quaterniond rotation){double[] commands=new double[sources.size()];for(VectorDirection direction:VectorDirection.values()){double authority=0;Vector3d unitForce=null;for(ThrusterLink link:sources){if(link.direction!=direction)continue;double available=Math.max(0,link.source.getAvailableThrust());if(available<=0)continue;authority+=available;if(unitForce==null){unitForce=new Vector3d(direction.x(),direction.y(),direction.z());rotation.transform(unitForce).mul(link.polarity);double length=unitForce.length();if(length>1e-9)unitForce.div(length);}}if(unitForce==null||authority<=0)continue;double required=target.forceX*unitForce.x+target.forceY*unitForce.y+target.forceZ*unitForce.z;double fraction=clamp(required/authority,0,1);for(int i=0;i<sources.size();i++){ThrusterLink link=sources.get(i);if(link.direction==direction&&link.source.getAvailableThrust()>0)commands[i]=fraction;}}return commands;}
     private Map<String,ThrusterLink> collectActiveSources(ThrusterRegistry registry,Map<ControlAxis,Double> stabiliser,Map<ControlAxis,Double> autopilot){Map<String,ThrusterLink> unique=new LinkedHashMap<>();if(stabiliser!=null&&!stabiliser.isEmpty())addStabiliserSources(registry,stabiliser,unique);if(autopilot!=null&&!autopilot.isEmpty())for(ThrusterLink link:registry.getAllLinks(FlightMode.CRUISE))unique.putIfAbsent(link.source.getId(),link);return unique;}
     private static void addStabiliserSources(ThrusterRegistry registry,Map<ControlAxis,Double> commands,Map<String,ThrusterLink> unique){if(nonZero(commands.get(ControlAxis.VERTICAL))||nonZero(commands.get(ControlAxis.PITCH))||nonZero(commands.get(ControlAxis.ROLL))){addDirectionSources(registry,VectorDirection.UP,unique,FlightMode.STABILIZE);addDirectionSources(registry,VectorDirection.DOWN,unique,FlightMode.STABILIZE);addDirectionSources(registry,VectorDirection.EAST,unique,FlightMode.STABILIZE);addDirectionSources(registry,VectorDirection.WEST,unique,FlightMode.STABILIZE);}}
-    private static void addDirectionSources(ThrusterRegistry registry,VectorDirection direction,Map<String,ThrusterLink> unique,FlightMode mode){for(ThrusterLink link:registry.getLinks(mode,direction))if(link!=null&&link.source!=null)unique.putIfAbsent(link.source.getId(),link.source==null?null:link);} private static boolean nonZero(Double value){return value!=null&&Double.isFinite(value)&&Math.abs(value)>1e-6;}
+    private static void addDirectionSources(ThrusterRegistry registry,VectorDirection direction,Map<String,ThrusterLink> unique,FlightMode mode){for(ThrusterLink link:registry.getLinks(mode,direction))if(link!=null&&link.source!=null)unique.putIfAbsent(link.source.getId(),link);} private static boolean nonZero(Double value){return value!=null&&Double.isFinite(value)&&Math.abs(value)>1e-6;}
     private double[] achieved(List<ThrusterLink> links,double[] commands,Quaterniond rotation,VehicleState state){double[] result=new double[6];for(int i=0;i<links.size();i++){double[] c=contribution(links.get(i),links.get(i).source.getAvailableThrust(),state,rotation);for(int k=0;k<6;k++)result[k]+=c[k]*commands[i];}return result;}
     private double[] contribution(ThrusterLink link,double thrust,VehicleState state,Quaterniond rotation){Vector3d force=worldForce(link,thrust,rotation);Vector3d r=new Vector3d(link.source.getMountOffset()).sub(state.comX,state.comY,state.comZ);rotation.transform(r);double fx=force.x,fy=force.y,fz=force.z;return new double[]{fx,fy,fz,r.y*fz-r.z*fy,r.z*fx-r.x*fz,r.x*fy-r.y*fx};}
     private static Vector3d worldForce(ThrusterLink link,double thrust,Quaterniond rotation){Vector3d force=new Vector3d(link.direction.x(),link.direction.y(),link.direction.z()).mul(thrust*link.polarity);rotation.transform(force);return force;}
