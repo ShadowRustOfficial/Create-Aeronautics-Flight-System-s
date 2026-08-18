@@ -9,6 +9,8 @@ import java.util.Map;
 /** Final allocator: combined controller output is converted into one physical actuator command per thruster. */
 public final class ThrustAllocator {
     private static final int ITERATIONS = 10;
+    /** Relax the sequential solver so coupled thrusters converge instead of ping-ponging over/under target. */
+    private static final double SOLVER_RELAXATION = 0.65D;
     private final Map<String, PropulsionSource> lastActiveSources = new LinkedHashMap<>();
     private double lastThermalLoad;
     private double lastWorldForceX, lastWorldForceY, lastWorldForceZ;
@@ -68,7 +70,8 @@ public final class ThrustAllocator {
                     magnitude += weightedContribution * weightedContribution;
                 }
                 if (magnitude <= 1.0e-12) continue;
-                commands[i] = clamp(commands[i] + dot / magnitude, 0.0D, 1.0D);
+                double correction = SOLVER_RELAXATION * dot / magnitude;
+                commands[i] = clamp(commands[i] + correction, 0.0D, 1.0D);
             }
         }
 
@@ -200,5 +203,11 @@ public final class ThrustAllocator {
 
     private static double clamp(double value, double min, double max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    public void hardStop() {
+        for (PropulsionSource source : lastActiveSources.values()) source.applyThrust(0.0D);
+        lastActiveSources.clear();
+        resetLastWrench();
     }
 }
