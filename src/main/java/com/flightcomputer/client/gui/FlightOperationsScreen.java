@@ -43,6 +43,10 @@ public final class FlightOperationsScreen extends Screen {
         this.controllerPos = controllerPos;
     }
 
+    public BlockPos controllerPos() {
+        return controllerPos;
+    }
+
     @Override protected void init() {
         controller = getController();
         int left = Math.max(10, (width - 760) / 2);
