@@ -22,19 +22,13 @@ public final class SixAxisStabilizer {
 
     public SixAxisStabilizer(boolean legacyStableProfile) {
         this.legacyStableProfile = legacyStableProfile;
-        // Attitude control is deliberately conservative: position error provides the restoring
-        // authority while measured angular rate supplies the damping. This avoids the violent
-        // over-correction seen when the vessel has a large Sable inertia or asymmetric thrusters.
-        pitchPID = new AxisPID(2.4, 0.02, 3.2, 12.0);
-        rollPID = new AxisPID(3.0, 0.03, 4.5, 14.0);
-        yawPID = new AxisPID(3.0, 0.10, 3.0, 12.0);
+        // Attitude hold is a PD controller in practice. Integral on pitch/roll is intentionally
+        // removed because it slowly winds up against asymmetric propulsion and then launches the
+        // vessel into the opposite direction. The rate term is the primary damping authority.
+        pitchPID = new AxisPID(2.15, 0.0, 4.8, 14.0);
+        rollPID = new AxisPID(2.55, 0.0, 5.4, 16.0);
+        yawPID = new AxisPID(2.8, 0.06, 3.4, 14.0);
         if (legacyStableProfile) {
-            // Vertical movement is translation only. It is not converted into a pitch request.
-            // Lower authority plus the slew limiter makes ascent/descent a smooth common-mode
-            // thrust change instead of a sudden impulse that can excite pitch or roll.
-            // Integral is deliberately disabled here: hover thrust is already supplied by the
-            // measured external force (gravity/levitation/etc.), so accumulated I-error can only
-            // turn a small vertical error into a runaway launch on large vessels.
             verticalPID = new AxisPID(1.8, 0.0, 0.8, 3.0);
             longitudinalPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
             lateralPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
@@ -63,9 +57,11 @@ public final class SixAxisStabilizer {
     public Map<ControlAxis, Double> computeCommands(VehicleState state, StabilizationSetpoint sp, double dt,
                                                     ThrusterRegistry registry, FlightMode mode) {
         Map<ControlAxis, Double> out = new EnumMap<>(ControlAxis.class);
-        double pitchError = wrapAngle(sp.desiredPitch - state.pitch);
-        double rollError = wrapAngle(sp.desiredRoll - state.roll);
-        double yawError = sp.yawIsRateNotHeading ? sp.desiredYawRate - state.yawRate : wrapAngle(sp.desiredYaw - state.yaw);
+        double pitchError = deadband(wrapAngle(sp.desiredPitch - state.pitch), Math.toRadians(0.35));
+        double rollError = deadband(wrapAngle(sp.desiredRoll - state.roll), Math.toRadians(0.35));
+        double yawError = sp.yawIsRateNotHeading
+                ? sp.desiredYawRate - state.yawRate
+                : deadband(wrapAngle(sp.desiredYaw - state.yaw), Math.toRadians(0.25));
 
         double pitchScale = responseScale(angularAuthority(registry, mode, state, ControlAxis.PITCH), 4.0D);
         double rollScale = responseScale(angularAuthority(registry, mode, state, ControlAxis.ROLL), 4.0D);
@@ -163,5 +159,9 @@ public final class SixAxisStabilizer {
         verticalForceInitialized = false;
     }
     private static double wrapAngle(double radians) { double a = radians % (2 * Math.PI); if (a > Math.PI) a -= 2 * Math.PI; if (a < -Math.PI) a += 2 * Math.PI; return a; }
+    private static double deadband(double value, double band) {
+        if (Math.abs(value) <= band) return 0.0D;
+        return value > 0.0D ? value - band : value + band;
+    }
     private static double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
 }
