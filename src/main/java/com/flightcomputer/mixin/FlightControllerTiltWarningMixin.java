@@ -16,13 +16,17 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/** Emits the supplied TILT WARNING sound from the controller block when a Sable vessel tilts excessively. */
+/** Emits server-authoritative excessive-tilt warning audio from the controller block. */
 @Mixin(targets = "com.flightcomputer.control.FlightControlRuntimeManager")
 public abstract class FlightControllerTiltWarningMixin {
     private static final double WARNING_DEGREES = 30.0D;
     private static final double CLEAR_DEGREES = 25.0D;
-    private static final int REPEAT_TICKS = 40;
-    private static final Map<UUID, Integer> COOLDOWNS = new HashMap<>();
+    /** TILT WARNING.ogg is ~0.288s, so 6 ticks prevents an audible gap between repetitions. */
+    private static final int TILT_REPEAT_TICKS = 6;
+    /** Warning.ogg repeats every 2.5 seconds while excessive tilt remains. */
+    private static final int GENERAL_WARNING_REPEAT_TICKS = 50;
+    private static final Map<UUID, Integer> TILT_COOLDOWNS = new HashMap<>();
+    private static final Map<UUID, Integer> GENERAL_WARNING_COOLDOWNS = new HashMap<>();
     private static final Map<UUID, Boolean> WARNINGS = new HashMap<>();
 
     @Inject(method = "tick", at = @At("TAIL"))
@@ -30,8 +34,10 @@ public abstract class FlightControllerTiltWarningMixin {
         if (controller == null || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
 
         UUID id = controller.getControllerId();
-        int cooldown = COOLDOWNS.getOrDefault(id, 0);
-        if (cooldown > 0) COOLDOWNS.put(id, cooldown - 1);
+        int tiltCooldown = Math.max(0, TILT_COOLDOWNS.getOrDefault(id, 0) - 1);
+        int generalWarningCooldown = Math.max(0, GENERAL_WARNING_COOLDOWNS.getOrDefault(id, 0) - 1);
+        TILT_COOLDOWNS.put(id, tiltCooldown);
+        GENERAL_WARNING_COOLDOWNS.put(id, generalWarningCooldown);
 
         Double tilt = readTilt(controller);
         if (tilt == null) return;
@@ -39,15 +45,21 @@ public abstract class FlightControllerTiltWarningMixin {
         boolean warning = WARNINGS.getOrDefault(id, false);
         if (tilt >= WARNING_DEGREES) {
             WARNINGS.put(id, true);
-            if (!warning || cooldown <= 0) {
-                Level level = controller.getLevel();
-                BlockPos pos = controller.getBlockPos();
+            Level level = controller.getLevel();
+            BlockPos pos = controller.getBlockPos();
+
+            if (tiltCooldown <= 0) {
                 level.playSound(null, pos, ModSounds.TILT_WARNING.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
-                COOLDOWNS.put(id, REPEAT_TICKS);
+                TILT_COOLDOWNS.put(id, TILT_REPEAT_TICKS);
+            }
+            if (!warning || generalWarningCooldown <= 0) {
+                level.playSound(null, pos, ModSounds.WARNING.get(), SoundSource.BLOCKS, 1.0F, 1.0F);
+                GENERAL_WARNING_COOLDOWNS.put(id, GENERAL_WARNING_REPEAT_TICKS);
             }
         } else if (tilt <= CLEAR_DEGREES) {
             WARNINGS.put(id, false);
-            COOLDOWNS.put(id, 0);
+            TILT_COOLDOWNS.put(id, 0);
+            GENERAL_WARNING_COOLDOWNS.put(id, 0);
         }
     }
 

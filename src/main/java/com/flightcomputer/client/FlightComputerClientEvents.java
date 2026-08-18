@@ -20,7 +20,6 @@ public final class FlightComputerClientEvents {
     @SubscribeEvent
     public static void clientTick(ClientTickEvent.Post event) {
         FlightComputerSoundClient.tick();
-        FlightComputerTiltWarningClient.tick();
     }
 
     @SubscribeEvent

@@ -11,7 +11,7 @@ import net.minecraft.core.BlockPos;
 
 /**
  * Maps Flight Computer UI controls directly onto the same server-authoritative network path
- * used by the controller actions.  The server resolves the controller block and performs
+ * used by the controller actions. The server resolves the controller block and performs
  * Level.playSound(..., SoundSource.BLOCKS), exactly like Emergency Shutdown.
  */
 public final class AudioUiSoundBridge {
@@ -33,8 +33,9 @@ public final class AudioUiSoundBridge {
     }
 
     /**
-     * Called from Button.onPress before the button callback executes.  Vanilla button audio is
-     * muted separately; this is the only UI audio trigger.  No client-side sound is played here.
+     * Called from Button.onPress before the button callback executes. Vanilla button audio is
+     * muted separately; this is the only generic UI audio trigger. No client-side sound is
+     * played here.
      */
     public static void playForButton(Button button) {
         Minecraft mc = Minecraft.getInstance();
@@ -44,6 +45,14 @@ public final class AudioUiSoundBridge {
         if (pos == null) return;
 
         String text = button.getMessage().getString().trim().toUpperCase(java.util.Locale.ROOT);
+
+        // Emergency Shutdown has its dedicated controller-block sound and must not also emit
+        // the generic UI interaction sound.
+        if (text.equals("EMERGENCY SHUTDOWN")) return;
+
+        // Cooling inventory operations have dedicated server-side sounds emitted by the
+        // CoolingSlot packet handler, so do not emit UI_INTERACT here as well.
+        if (text.equals("INSERT HELD") || text.equals("REMOVE")) return;
 
         if (text.equals("MAP") || text.equals("ROUTE") || text.equals("FLIGHT CONTROL")
                 || text.equals("DIAGNOSTICS") || text.equals("THERMAL") || text.equals("COOLING")
@@ -62,7 +71,8 @@ public final class AudioUiSoundBridge {
                 || text.contains("NAVIGATION:")
                 || text.startsWith("TERRAIN:")
                 || text.startsWith("FLIGHT MAP:")
-                || text.startsWith("WAYPOINTS:");
+                || text.startsWith("WAYPOINTS:")
+                || text.startsWith("STABILISER AMBIENT:");
 
         if (toggle) {
             boolean currentlyOn = text.contains(": ON") || text.contains(": ENGAGED");
