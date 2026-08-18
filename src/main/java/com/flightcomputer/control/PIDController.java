@@ -54,6 +54,9 @@ public final class PIDController {
         return clamped;
     }
 
+    /** Clears accumulated steady-state correction without throwing away derivative state. */
+    public void resetIntegral() { integral = 0.0D; }
+
     public void reset() { integral = 0; filteredDerivative = 0; lastMeasurement = 0; initialized = false; }
 
     private static double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
