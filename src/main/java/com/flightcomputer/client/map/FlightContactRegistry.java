@@ -13,16 +13,10 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Client contact cache for remote powered Flight Controllers.
- *
- * <p>The controller that owns the currently open Navigation Console is deliberately excluded
- * from this remote-contact set. The local controller already has its own map/telemetry marker
- * and must never be converted into a selectable remote contact or become the map centre merely
- * because its discovery packet was received.</p>
- */
+/** Client contact cache for remote powered Flight Controllers. */
 public final class FlightContactRegistry {
     private static final ConcurrentHashMap<UUID, FlightContact> CONTACTS = new ConcurrentHashMap<>();
+    private static volatile UUID trackedController;
     private FlightContactRegistry() { }
 
     public static void accept(FlightContact contact) {
@@ -45,10 +39,7 @@ public final class FlightContactRegistry {
             return;
         }
         CONTACTS.put(payload.controllerId(), new FlightContact(
-                payload.controllerId(),
-                payload.subLevelName(),
-                payload.flightId(),
-                "",
+                payload.controllerId(), payload.subLevelName(), payload.flightId(), "",
                 payload.x(), payload.y(), payload.z(),
                 0.0D, 0.0D, 0.0D, 0.0D,
                 "POWERED", System.currentTimeMillis() / 50L));
@@ -59,12 +50,10 @@ public final class FlightContactRegistry {
         return CONTACTS.get(id);
     }
 
-    /** Returns only remote powered contacts; the local Navigation Console controller is excluded. */
     public static List<FlightContact> active(long ignoredTick) {
         long tick = System.currentTimeMillis() / 50L;
         UUID localId = localControllerId();
         if (localId != null) CONTACTS.remove(localId);
-
         CONTACTS.values().removeIf(c -> c == null || c.isStale(tick) || (localId != null && localId.equals(c.controllerId())));
         List<FlightContact> result = new ArrayList<>(CONTACTS.values());
         result.sort(Comparator.comparing(FlightContact::displayId, String.CASE_INSENSITIVE_ORDER));
@@ -72,15 +61,17 @@ public final class FlightContactRegistry {
     }
 
     public static void remove(UUID id) { if (id != null) CONTACTS.remove(id); }
-    public static void clear() { CONTACTS.clear(); }
+    public static void clear() { CONTACTS.clear(); trackedController = null; }
 
-    /** Resolve the controller that owns the open Navigation Console without using marker coordinates. */
+    /** Sets the remote controller currently being followed by the map. Null returns control to the local controller. */
+    public static void setTrackedController(UUID id) { trackedController = id; }
+    public static UUID trackedController() { return trackedController; }
+    public static boolean isTrackingRemote() { return trackedController != null && !isLocalController(trackedController); }
+
     private static UUID localControllerId() {
         try {
             Minecraft minecraft = Minecraft.getInstance();
-            if (minecraft == null || minecraft.level == null || !(minecraft.screen instanceof NavigationConsoleScreen screen)) {
-                return null;
-            }
+            if (minecraft == null || minecraft.level == null || !(minecraft.screen instanceof NavigationConsoleScreen screen)) return null;
             BlockEntity be = minecraft.level.getBlockEntity(screen.controllerPos());
             return be instanceof FlightControllerBlockEntity controller ? controller.getControllerId() : null;
         } catch (RuntimeException ignored) {
