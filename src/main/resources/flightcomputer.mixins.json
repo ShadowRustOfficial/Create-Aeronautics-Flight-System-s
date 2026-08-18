@@ -15,6 +15,7 @@
     "FlightControllerRouteActionMixin",
     "FlightControllerAudioMixin",
     "FlightControllerTiltWarningMixin",
+    "FlightControllerAttitudeCorrectionMixin",
     "SixAxisStabilizerStartupMixin",
     "FlightControllerAutopilotIsolationMixin"
   ],
@@ -26,7 +27,8 @@
     "client.NavigationConsoleFlightControllerContactsMixin",
     "client.NavigationConsoleButtonServerSoundMixin",
     "client.NavigationConsoleMuteVanillaButtonSoundMixin",
-    "client.NavigationConsoleIdentityButtonMixin"
+    "client.NavigationConsoleIdentityButtonMixin",
+    "client.FlightComputerDiscoverScreenMixin"
   ],
   "injectors": {
     "defaultRequire": 1
