@@ -44,7 +44,13 @@ public final class ThrustAllocator {
 
         List<ThrusterLink> sources = List.copyOf(unique.values());
         double[] commands = seedVectorBanks(sources, target, vehicleRotation);
-        double forceScale = Math.max(1.0D, totalAuthority(sources));
+
+        // Stabilisation is a hover/attitude function, not a translation function. When the
+        // autopilot is not participating, make unintended linear movement considerably more
+        // expensive than residual attitude error. This prevents a main forward thruster from
+        // being selected simply because it can generate pitch/yaw torque.
+        boolean stabiliserOnly = autopilot == null || autopilot.isEmpty();
+        double forceScale = Math.max(1.0D, totalAuthority(sources)) * (stabiliserOnly ? 8.0D : 1.0D);
         double torqueScale = Math.max(1.0D, totalTorqueAuthority(sources, state, vehicleRotation));
 
         for (int iteration = 0; iteration < ITERATIONS; iteration++) {
@@ -121,9 +127,59 @@ public final class ThrustAllocator {
 
     private Map<String, ThrusterLink> collectActiveSources(ThrusterRegistry registry, Map<ControlAxis, Double> stabiliser, Map<ControlAxis, Double> autopilot) {
         Map<String, ThrusterLink> unique = new LinkedHashMap<>();
-        if (stabiliser != null && !stabiliser.isEmpty()) for (ThrusterLink link : registry.getAllLinks(FlightMode.STABILIZE)) unique.putIfAbsent(link.source.getId(), link);
-        if (autopilot != null && !autopilot.isEmpty()) for (ThrusterLink link : registry.getAllLinks(FlightMode.CRUISE)) unique.putIfAbsent(link.source.getId(), link);
+        if (stabiliser != null && !stabiliser.isEmpty()) addStabiliserSources(registry, stabiliser, unique);
+        if (autopilot != null && !autopilot.isEmpty()) {
+            for (ThrusterLink link : registry.getAllLinks(FlightMode.CRUISE)) unique.putIfAbsent(link.source.getId(), link);
+        }
         return unique;
+    }
+
+    /**
+     * Keep stabilisation physically local to the vector banks that can perform the requested
+     * stabilisation without turning it into forward flight:
+     *
+     *   vertical force / pitch -> UP + DOWN
+     *   roll                  -> EAST + WEST
+     *   yaw                   -> horizontal vectors only when yaw correction is actually requested
+     *
+     * Longitudinal/lateral force is deliberately excluded from STABILIZE. Cruise/autopilot owns
+     * deliberate horizontal translation.
+     */
+    private static void addStabiliserSources(ThrusterRegistry registry, Map<ControlAxis, Double> commands,
+                                             Map<String, ThrusterLink> unique) {
+        boolean vertical = nonZero(commands.get(ControlAxis.VERTICAL));
+        boolean pitch = nonZero(commands.get(ControlAxis.PITCH));
+        boolean roll = nonZero(commands.get(ControlAxis.ROLL));
+        boolean yaw = nonZero(commands.get(ControlAxis.YAW));
+
+        if (vertical || pitch) addDirectionSources(registry, VectorDirection.UP, unique, FlightMode.STABILIZE);
+        if (vertical || pitch) addDirectionSources(registry, VectorDirection.DOWN, unique, FlightMode.STABILIZE);
+
+        if (roll) {
+            addDirectionSources(registry, VectorDirection.EAST, unique, FlightMode.STABILIZE);
+            addDirectionSources(registry, VectorDirection.WEST, unique, FlightMode.STABILIZE);
+        }
+
+        // Yaw is normally zero during hover. If the craft genuinely rotates, allow the four
+        // horizontal vectors to generate counter-torque; the force weighting above makes paired
+        // counter-thrust preferable to simply driving the craft sideways/forwards.
+        if (yaw) {
+            addDirectionSources(registry, VectorDirection.NORTH, unique, FlightMode.STABILIZE);
+            addDirectionSources(registry, VectorDirection.SOUTH, unique, FlightMode.STABILIZE);
+            addDirectionSources(registry, VectorDirection.EAST, unique, FlightMode.STABILIZE);
+            addDirectionSources(registry, VectorDirection.WEST, unique, FlightMode.STABILIZE);
+        }
+    }
+
+    private static void addDirectionSources(ThrusterRegistry registry, VectorDirection direction,
+                                            Map<String, ThrusterLink> unique, FlightMode mode) {
+        for (ThrusterLink link : registry.getLinks(mode, direction)) {
+            if (link != null && link.source != null) unique.putIfAbsent(link.source.getId(), link);
+        }
+    }
+
+    private static boolean nonZero(Double value) {
+        return value != null && Double.isFinite(value) && Math.abs(value) > 1.0e-6D;
     }
 
     private double[] achieved(List<ThrusterLink> links, double[] commands, Quaterniond rotation, VehicleState state) {
