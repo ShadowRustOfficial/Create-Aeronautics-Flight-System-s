@@ -10,16 +10,11 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * Corrects the attitude presented to the stabiliser using Sable's actual Y-X-Z vessel pose.
- * The runtime manager historically extracted the quaternion with a generic formula that does
- * not match the Y-X-Z composition used by the flight controller, causing pitch/roll to cross-talk
- * badly as the vessel tilted. This keeps the existing runtime/control architecture intact and
- * only corrects the state immediately before the controller consumes it.
- */
+/** Corrects Sable attitude and keeps the controller's angular-rate history on the same Euler convention. */
 @Mixin(targets = "com.flightcomputer.control.FlightControlRuntimeManager$Runtime")
 public abstract class FlightControllerAttitudeCorrectionMixin {
     @Shadow private VehicleState snapshot;
+    @Shadow private VehicleState previousSnapshot;
 
     @Inject(method = "update", at = @At("TAIL"))
     private void flightcomputer$correctAttitude(FlightControllerBlockEntity controller, CallbackInfo ci) {
@@ -44,6 +39,15 @@ public abstract class FlightControllerAttitudeCorrectionMixin {
             snapshot.pitch = euler.x;
             snapshot.yaw = euler.y;
             snapshot.roll = euler.z;
+
+            // Runtime.update() computes angular-rate history before this tail injection. Keep the
+            // previous snapshot on the same Y-X-Z convention so the next tick cannot manufacture
+            // a false pitch/roll/yaw-rate spike from the old generic quaternion decomposition.
+            if (previousSnapshot != null) {
+                previousSnapshot.pitch = snapshot.pitch;
+                previousSnapshot.yaw = snapshot.yaw;
+                previousSnapshot.roll = snapshot.roll;
+            }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
             // Keep the runtime manager's last valid state if Sable is unavailable.
         }
