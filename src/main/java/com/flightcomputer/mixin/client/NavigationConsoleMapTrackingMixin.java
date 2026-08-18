@@ -3,6 +3,7 @@ package com.flightcomputer.mixin.client;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.client.FlightComputerTelemetryClient;
 import com.flightcomputer.client.gui.NavigationConsoleScreen;
+import com.flightcomputer.client.map.FlightContactRegistry;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -10,11 +11,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * Keeps the Navigation Console map centred on the Flight Computer's authoritative logical
- * position while preserving the screen's own map interaction. The controller BlockEntity may
- * remain at a Sable plot/storage coordinate, so the map must follow telemetry rather than raw BlockPos.
- */
+/** Keeps the map centred on the local controller only when no remote Flight Controller is being tracked. */
 @Mixin(NavigationConsoleScreen.class)
 public abstract class NavigationConsoleMapTrackingMixin {
     @Shadow private FlightControllerBlockEntity controller;
@@ -28,12 +25,13 @@ public abstract class NavigationConsoleMapTrackingMixin {
     @Inject(method = "init", at = @At("TAIL"))
     private void flightcomputer$initialiseMapTracking(CallbackInfo ci) {
         flightcomputer$followController = true;
+        FlightContactRegistry.setTrackedController(null);
         flightcomputer$followTelemetryPosition();
     }
 
     @Inject(method = "tick", at = @At("TAIL"))
     private void flightcomputer$trackController(CallbackInfo ci) {
-        if (flightcomputer$followController) {
+        if (flightcomputer$followController && !FlightContactRegistry.isTrackingRemote()) {
             flightcomputer$followTelemetryPosition();
         }
     }
@@ -41,11 +39,13 @@ public abstract class NavigationConsoleMapTrackingMixin {
     @Inject(method = "centreController", at = @At("HEAD"))
     private void flightcomputer$enableControllerFollow(CallbackInfo ci) {
         flightcomputer$followController = true;
+        FlightContactRegistry.setTrackedController(null);
     }
 
     @Inject(method = "centrePlayer", at = @At("HEAD"))
     private void flightcomputer$disableControllerFollow(CallbackInfo ci) {
         flightcomputer$followController = false;
+        FlightContactRegistry.setTrackedController(null);
     }
 
     @Unique
