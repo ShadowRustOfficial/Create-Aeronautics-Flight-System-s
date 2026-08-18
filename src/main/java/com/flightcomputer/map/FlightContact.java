@@ -27,9 +27,16 @@ public record FlightContact(
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
-    public String displayName() {
+    /** User-facing controller identifier. The stable UUID remains internal. */
+    public String displayId() {
         if (callsign != null && !callsign.isBlank()) return callsign;
+        return "(Unknown)";
+    }
+
+    public String displayName() {
+        String id = displayId();
+        if (!"(Unknown)".equals(id)) return id;
         if (shipName != null && !shipName.isBlank()) return shipName;
-        return "FLIGHT CONTACT";
+        return "(Unknown)";
     }
 }
