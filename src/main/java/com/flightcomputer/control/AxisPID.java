@@ -39,5 +39,8 @@ public final class AxisPID {
     public double ki() { return pid.ki(); }
     public double kd() { return pid.kd(); }
 
+    /** Clears only the accumulated integral correction when entering a captured hold state. */
+    public void resetIntegral() { pid.resetIntegral(); }
+
     public void reset() { pid.reset(); }
 }
