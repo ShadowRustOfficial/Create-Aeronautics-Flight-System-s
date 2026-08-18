@@ -45,12 +45,12 @@ public final class ThrustAllocator {
         List<ThrusterLink> sources = List.copyOf(unique.values());
         double[] commands = seedVectorBanks(sources, target, vehicleRotation);
 
-        // Stabilisation is a hover/attitude function, not a translation function. When the
-        // autopilot is not participating, make unintended linear movement considerably more
-        // expensive than residual attitude error. This prevents a main forward thruster from
-        // being selected simply because it can generate pitch/yaw torque.
+        // Stabilisation is a hover controller. Do not trade translation for an attitude correction:
+        // pitch/yaw are intentionally filtered out upstream and only roll gets lateral vector
+        // authority. A large force penalty makes the allocator prefer balanced opposing vector
+        // thrusters when roll correction is required instead of translating the craft.
         boolean stabiliserOnly = autopilot == null || autopilot.isEmpty();
-        double forceScale = Math.max(1.0D, totalAuthority(sources)) * (stabiliserOnly ? 8.0D : 1.0D);
+        double forceScale = Math.max(1.0D, totalAuthority(sources)) * (stabiliserOnly ? 100.0D : 1.0D);
         double torqueScale = Math.max(1.0D, totalTorqueAuthority(sources, state, vehicleRotation));
 
         for (int iteration = 0; iteration < ITERATIONS; iteration++) {
@@ -134,38 +134,15 @@ public final class ThrustAllocator {
         return unique;
     }
 
-    /**
-     * Keep stabilisation physically local to the vector banks that can perform the requested
-     * stabilisation without turning it into forward flight:
-     *
-     *   vertical force / pitch -> UP + DOWN
-     *   roll                  -> EAST + WEST
-     *   yaw                   -> horizontal vectors only when yaw correction is actually requested
-     *
-     * Longitudinal/lateral force is deliberately excluded from STABILIZE. Cruise/autopilot owns
-     * deliberate horizontal translation.
-     */
+    /** Stabiliser actuator policy: UP for lift, EAST/WEST only for roll. */
     private static void addStabiliserSources(ThrusterRegistry registry, Map<ControlAxis, Double> commands,
                                              Map<String, ThrusterLink> unique) {
-        boolean vertical = nonZero(commands.get(ControlAxis.VERTICAL));
-        boolean pitch = nonZero(commands.get(ControlAxis.PITCH));
-        boolean roll = nonZero(commands.get(ControlAxis.ROLL));
-        boolean yaw = nonZero(commands.get(ControlAxis.YAW));
-
-        if (vertical || pitch) addDirectionSources(registry, VectorDirection.UP, unique, FlightMode.STABILIZE);
-        if (vertical || pitch) addDirectionSources(registry, VectorDirection.DOWN, unique, FlightMode.STABILIZE);
-
-        if (roll) {
-            addDirectionSources(registry, VectorDirection.EAST, unique, FlightMode.STABILIZE);
-            addDirectionSources(registry, VectorDirection.WEST, unique, FlightMode.STABILIZE);
+        if (nonZero(commands.get(ControlAxis.VERTICAL))) {
+            // Never fire the DOWN bank for ordinary stabilisation. Descent is achieved by reducing
+            // the common upward thrust; the DOWN bank is reserved for deliberate manoeuvres.
+            addDirectionSources(registry, VectorDirection.UP, unique, FlightMode.STABILIZE);
         }
-
-        // Yaw is normally zero during hover. If the craft genuinely rotates, allow the four
-        // horizontal vectors to generate counter-torque; the force weighting above makes paired
-        // counter-thrust preferable to simply driving the craft sideways/forwards.
-        if (yaw) {
-            addDirectionSources(registry, VectorDirection.NORTH, unique, FlightMode.STABILIZE);
-            addDirectionSources(registry, VectorDirection.SOUTH, unique, FlightMode.STABILIZE);
+        if (nonZero(commands.get(ControlAxis.ROLL))) {
             addDirectionSources(registry, VectorDirection.EAST, unique, FlightMode.STABILIZE);
             addDirectionSources(registry, VectorDirection.WEST, unique, FlightMode.STABILIZE);
         }
