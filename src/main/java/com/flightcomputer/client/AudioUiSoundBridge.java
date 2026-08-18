@@ -1,6 +1,5 @@
 package com.flightcomputer.client;
 
-import com.flightcomputer.avionics.FlightControllerAction;
 import com.flightcomputer.avionics.FlightHold;
 import com.flightcomputer.avionics.FlightOperationsHolder;
 import com.flightcomputer.block.FlightControllerBlockEntity;
@@ -61,9 +60,9 @@ public final class AudioUiSoundBridge {
         // CoolingSlot packet handler, so do not emit UI_INTERACT here as well.
         if (text.equals("INSERT HELD") || text.equals("REMOVE")) return;
 
-        // These buttons already send FlightControllerAction through the existing controller
-        // action packet. Their corresponding sound is emitted server-side from applyAction().
-        if (isControllerActionButton(text)) return;
+        // Only Navigation Console flight-control widgets use these labels as controller actions.
+        // The same words are legitimate tab names on the Thermal/Cooling/Operations consoles.
+        if (mc.screen instanceof NavigationConsoleScreen && isControllerActionButton(text)) return;
 
         if (isTabButton(text)) {
             FlightComputerNetwork.sendUiButtonSound(pos, soundId(Kind.TAB));
