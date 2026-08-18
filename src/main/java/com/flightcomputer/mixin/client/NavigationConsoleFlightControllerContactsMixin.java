@@ -16,15 +16,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.List;
 import java.util.UUID;
 
-/** Adds a live powered-controller selector and controller labels without changing Navigation Console control paths. */
+/** Adds live Flight Controller map markers and explicit remote-controller tracking. */
 @Mixin(com.flightcomputer.client.gui.NavigationConsoleScreen.class)
 public abstract class NavigationConsoleFlightControllerContactsMixin extends Screen {
     @Shadow private double centerX;
     @Shadow private double centerZ;
 
     @Unique private Button flightComputer$controllerSelector;
+    @Unique private Button flightComputer$controllerVisibility;
     @Unique private UUID flightComputer$selectedController;
     @Unique private int flightComputer$selectionIndex;
+    @Unique private boolean flightComputer$showControllers = true;
 
     protected NavigationConsoleFlightControllerContactsMixin() {
         super(Component.literal("Navigation Console"));
@@ -33,13 +35,21 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
     @Inject(method = "initMap", at = @At("TAIL"))
     private void flightComputer$initControllerSelector(int left, int width, CallbackInfo ci) {
         int y = top() + 374;
-        int buttonWidth = Math.min(260, Math.max(190, width - 8));
+        int buttonWidth = Math.min(260, Math.max(190, width - 150));
         flightComputer$controllerSelector = Button.builder(
-                Component.literal("CONTROLLER: (None) ▼"),
-                b -> flightComputer$cycleController())
-                .bounds(left, y, buttonWidth, 20)
-                .build();
+                Component.literal("CONTROLLER: (None) ▼"), b -> flightComputer$cycleController())
+                .bounds(left, y, buttonWidth, 20).build();
         addRenderableWidget(flightComputer$controllerSelector);
+
+        int toggleX = left + buttonWidth + 8;
+        int toggleWidth = Math.max(130, Math.min(155, width - buttonWidth - 8));
+        flightComputer$controllerVisibility = Button.builder(
+                Component.literal("CONTROLLERS: ON"), b -> {
+                    flightComputer$showControllers = !flightComputer$showControllers;
+                    b.setMessage(Component.literal("CONTROLLERS: " + (flightComputer$showControllers ? "ON" : "OFF")));
+                })
+                .bounds(toggleX, y, toggleWidth, 20).build();
+        addRenderableWidget(flightComputer$controllerVisibility);
         flightComputer$refreshControllerSelector();
     }
 
@@ -50,7 +60,7 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
 
     @Inject(method = "renderMap", at = @At("TAIL"))
     private void flightComputer$renderControllerContacts(GuiGraphics graphics, int left, int mapTop, CallbackInfo ci) {
-        if (minecraft == null || minecraft.level == null) return;
+        if (!flightComputer$showControllers || minecraft == null || minecraft.level == null) return;
 
         int mapLeft = left;
         int mapRight = left + Math.max(1, panelWidth() - 36);
@@ -65,8 +75,7 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
             int y = (int) Math.round(mapTopPx + mapHeight / 2.0D + (contact.z() - centerZ));
             if (x < mapLeft || x >= mapRight || y < mapTopPx || y >= mapBottom) continue;
 
-            int markerColor = contact.controllerId().equals(flightComputer$selectedController)
-                    ? 0xFF55FF55 : 0xFFFFAA55;
+            int markerColor = contact.controllerId().equals(flightComputer$selectedController) ? 0xFF55FF55 : 0xFFFFAA55;
             graphics.fill(x - 4, y, x + 5, y + 1, markerColor);
             graphics.fill(x - 2, y - 2, x + 3, y + 3, markerColor);
             graphics.fill(x - 1, y - 3, x + 2, y + 4, markerColor);
@@ -81,6 +90,7 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
         if (contacts.isEmpty()) {
             flightComputer$selectedController = null;
             flightComputer$selectionIndex = 0;
+            FlightContactRegistry.setTrackedController(null);
             flightComputer$controllerSelector.setMessage(Component.literal("CONTROLLER: (None) ▼"));
             return;
         }
@@ -89,8 +99,7 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
             for (int i = 0; i < contacts.size(); i++) {
                 if (contacts.get(i).controllerId().equals(flightComputer$selectedController)) {
                     flightComputer$selectionIndex = i;
-                    flightComputer$controllerSelector.setMessage(Component.literal(
-                            "CONTROLLER: " + contacts.get(i).displayId() + " ▼"));
+                    flightComputer$controllerSelector.setMessage(Component.literal("CONTROLLER: " + contacts.get(i).displayId() + " ▼"));
                     return;
                 }
             }
@@ -99,8 +108,7 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
         flightComputer$selectionIndex = Math.floorMod(flightComputer$selectionIndex, contacts.size());
         FlightContact contact = contacts.get(flightComputer$selectionIndex);
         flightComputer$selectedController = contact.controllerId();
-        flightComputer$controllerSelector.setMessage(Component.literal(
-                "CONTROLLER: " + contact.displayId() + " ▼"));
+        flightComputer$controllerSelector.setMessage(Component.literal("CONTROLLER: " + contact.displayId() + " ▼"));
     }
 
     @Unique
@@ -110,6 +118,7 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
         if (contacts.isEmpty()) {
             flightComputer$selectedController = null;
             flightComputer$selectionIndex = 0;
+            FlightContactRegistry.setTrackedController(null);
             flightComputer$refreshControllerSelector();
             return;
         }
@@ -117,6 +126,7 @@ public abstract class NavigationConsoleFlightControllerContactsMixin extends Scr
         flightComputer$selectionIndex = Math.floorMod(flightComputer$selectionIndex + 1, contacts.size());
         FlightContact selected = contacts.get(flightComputer$selectionIndex);
         flightComputer$selectedController = selected.controllerId();
+        FlightContactRegistry.setTrackedController(selected.controllerId());
         centerX = selected.x();
         centerZ = selected.z();
         flightComputer$refreshControllerSelector();
