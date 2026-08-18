@@ -17,7 +17,8 @@
     "FlightControllerTiltWarningMixin",
     "FlightControllerAttitudeCorrectionMixin",
     "FlightControllerAutopilotIsolationMixin",
-    "FlightControlPhysicsSnapshotMixin"
+    "FlightControlPhysicsSnapshotMixin",
+    "FlightComputerAdaptiveTuningMixin"
   ],
   "client": [
     "client.FlightControllerGoggleMixin",
