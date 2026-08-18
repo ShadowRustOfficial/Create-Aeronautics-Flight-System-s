@@ -22,12 +22,12 @@ public final class SixAxisStabilizer {
 
     public SixAxisStabilizer(boolean legacyStableProfile) {
         this.legacyStableProfile = legacyStableProfile;
-        // Both STABILIZE and CRUISE use the same attitude gains so autopilot roll/pitch remain
-        // synchronised. Only the manual/stabiliser profile gets the deliberately slower vertical
-        // thrust response; autopilot retains its faster directional translation authority.
-        pitchPID = new AxisPID(3.2, 0.04, 1.8, 10.0);
-        rollPID = new AxisPID(5.0, 0.08, 2.5, 18.0);
-        yawPID = new AxisPID(4.5, 0.2, 2.0, 18.0);
+        // Attitude control is deliberately conservative: position error provides the restoring
+        // authority while measured angular rate supplies the damping. This avoids the violent
+        // over-correction seen when the vessel has a large Sable inertia or asymmetric thrusters.
+        pitchPID = new AxisPID(2.4, 0.02, 3.2, 12.0);
+        rollPID = new AxisPID(3.0, 0.03, 4.5, 14.0);
+        yawPID = new AxisPID(3.0, 0.10, 3.0, 12.0);
         if (legacyStableProfile) {
             // Vertical movement is translation only. It is not converted into a pitch request.
             // Lower authority plus the slew limiter makes ascent/descent a smooth common-mode
@@ -39,7 +39,6 @@ public final class SixAxisStabilizer {
             longitudinalPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
             lateralPID = new AxisPID(2.0, 0.2, 0.8, 40.0);
         } else {
-            // Cruise/autopilot keeps the more responsive translation profile.
             verticalPID = new AxisPID(3.0, 0.4, 1.2, 36.0);
             longitudinalPID = new AxisPID(2.0, 0.15, 0.8, 36.0);
             lateralPID = new AxisPID(2.0, 0.15, 0.8, 36.0);
@@ -61,7 +60,6 @@ public final class SixAxisStabilizer {
         return computeCommands(state, sp, dt, null, FlightMode.STABILIZE);
     }
 
-    /** Computes force/torque commands from the live Sable vessel state. */
     public Map<ControlAxis, Double> computeCommands(VehicleState state, StabilizationSetpoint sp, double dt,
                                                     ThrusterRegistry registry, FlightMode mode) {
         Map<ControlAxis, Double> out = new EnumMap<>(ControlAxis.class);
@@ -73,7 +71,6 @@ public final class SixAxisStabilizer {
         double rollScale = responseScale(angularAuthority(registry, mode, state, ControlAxis.ROLL), 4.0D);
         double yawScale = responseScale(angularAuthority(registry, mode, state, ControlAxis.YAW), 3.0D);
 
-        // Sable exposes physical angular velocity. Use it directly for derivative damping.
         double pitchAcceleration = pitchPID.updateWithMeasurementRate(pitchError, state.pitchRate, dt, pitchScale);
         double rollAcceleration = rollPID.updateWithMeasurementRate(rollError, state.rollRate, dt, rollScale);
         double yawAcceleration = sp.yawIsRateNotHeading
@@ -98,19 +95,8 @@ public final class SixAxisStabilizer {
 
         double requestedVerticalForce = verticalAcceleration * mass - externalForce.y;
         if (legacyStableProfile) {
-            // STABILIZE descends by reducing the common upward lift bank, never by firing the
-            // opposite/downward bank. Autopilot is the only mode allowed to command directional
-            // vertical manoeuvres through the full six-axis allocator.
-            //
-            // The measured external force is the feed-forward hover term. This is important for
-            // large Sable vessels and for builds using levitation: we do not replace the measured
-            // lift/gravity balance with a hard-coded gravity constant.
             double hoverForce = -externalForce.y;
             double correction = verticalAcceleration * mass;
-
-            // Never allow the stabiliser's velocity PID to turn a small vertical error into an
-            // unbounded upward command. At most +2 m/s^2 above the measured hover requirement is
-            // allowed, while descent can reduce that requirement all the way to zero.
             double correctionLimit = mass * 2.0D;
             correction = clamp(correction, -correctionLimit, correctionLimit);
             requestedVerticalForce = Math.max(0.0D, hoverForce + correction);
@@ -122,22 +108,11 @@ public final class SixAxisStabilizer {
         return out;
     }
 
-    /**
-     * Limits only the RATE OF CHANGE of vertical thrust. The first demand is accepted immediately
-     * so enabling the stabiliser does not take seconds to reach hover thrust; subsequent ascent /
-     * descent changes are deliberately smooth and cannot create a vertical impulse that excites
-     * pitch or roll.
-     */
     private double slewVerticalForce(double requested, double mass, double dt) {
         if (!Double.isFinite(requested)) return verticalForceInitialized ? lastVerticalForce : 0.0D;
-        if (!verticalForceInitialized) {
-            lastVerticalForce = requested;
-            verticalForceInitialized = true;
-            return requested;
-        }
+        if (!verticalForceInitialized) { lastVerticalForce = requested; verticalForceInitialized = true; return requested; }
         double safeDt = clamp(dt, 1.0 / 200.0, 0.5);
-        double maxVerticalAccelerationChange = 1.25D;
-        double maxDelta = Math.max(1.0D, mass * maxVerticalAccelerationChange * safeDt);
+        double maxDelta = Math.max(1.0D, mass * 1.25D * safeDt);
         lastVerticalForce += clamp(requested - lastVerticalForce, -maxDelta, maxDelta);
         return lastVerticalForce;
     }
