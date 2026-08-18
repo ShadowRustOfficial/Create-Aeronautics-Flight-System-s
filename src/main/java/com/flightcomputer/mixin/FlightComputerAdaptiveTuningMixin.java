@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Recomputes controller gains when the physical sub-level actually changes. */
+/** Recomputes controller gains when the physical sub-level or actuator set changes. */
 @Mixin(FlightComputer.class)
 public abstract class FlightComputerAdaptiveTuningMixin {
     @Shadow @Final private VehicleStateProvider stateProvider;
@@ -22,7 +22,7 @@ public abstract class FlightComputerAdaptiveTuningMixin {
     @Shadow @Final private SixAxisStabilizer cruiseStabilizer;
     private final AdaptiveFlightTuner flightcomputer$adaptiveTuner=new AdaptiveFlightTuner();
 
-    @Inject(method="tick(DZZ)V",at=@At("HEAD"))
+    @Inject(method="tick(DZZ)V",at=@At(value="INVOKE",target="Lcom/flightcomputer/control/ThrusterRegistry;refresh(Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;Ljava/util/Map;Ljava/util/Map;J)V",shift=At.Shift.AFTER))
     private void flightcomputer$adaptiveTuning(double dt,boolean stabiliserEnabled,boolean autopilotEnabled,CallbackInfo ci){
         if(stateProvider==null||registry==null||stabilizeStabilizer==null||cruiseStabilizer==null)return;
         VehicleState state=stateProvider.getState();if(state!=null)flightcomputer$adaptiveTuner.update(state,registry,stabilizeStabilizer,cruiseStabilizer);
