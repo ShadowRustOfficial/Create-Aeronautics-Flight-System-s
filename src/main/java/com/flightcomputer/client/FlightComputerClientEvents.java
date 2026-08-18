@@ -19,8 +19,10 @@ public final class FlightComputerClientEvents {
 
     @SubscribeEvent
     public static void clientTick(ClientTickEvent.Post event) {
+        // FlightComputerSoundClient owns the complete client-side flight audio loop,
+        // including the rate-limited tilt warning. The old standalone
+        // FlightComputerTiltWarningClient was removed, so do not tick it here.
         FlightComputerSoundClient.tick();
-        FlightComputerTiltWarningClient.tick();
     }
 
     @SubscribeEvent
