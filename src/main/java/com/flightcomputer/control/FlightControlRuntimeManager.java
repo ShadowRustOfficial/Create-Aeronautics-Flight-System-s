@@ -147,6 +147,7 @@ public final class FlightControlRuntimeManager {
         private FlightComputer computer;
         private Vec3 lastNavigatorTarget;
         private Object helper;
+        private Object currentSubLevel;
         private Method getContainingBlockEntity, getContainingPosition, projectOut;
         private boolean initialized, available;
         private int setupTelemetryTicker;
@@ -157,6 +158,7 @@ public final class FlightControlRuntimeManager {
             Vec3 local = Vec3.atCenterOf(controller.getBlockPos());
 
             Object subLevel = containing(level, controller, local);
+            currentSubLevel = subLevel;
             Vec3 world = project(subLevel, level, local);
             VehicleState state = snapshot == null ? new VehicleState() : snapshot;
             state.x = world.x; state.y = world.y; state.z = world.z;
@@ -262,7 +264,7 @@ public final class FlightControlRuntimeManager {
             if(computer==null)computer=new FlightComputer(()->snapshot);
             computer.setAltitudeHoldTarget(altitudeHoldTargetY);
             ThrusterRegistry registry=computer.getRegistry();
-            registry.refresh(controller.getLevel(),controller.getBlockPos(),controller.getVectorLinks(FlightMode.STABILIZE),controller.getVectorLinks(FlightMode.CRUISE),controller.getLevel().getGameTime());
+            registry.refresh(controller.getLevel(),controller.getBlockPos(),controller.getVectorLinks(FlightMode.STABILIZE),controller.getVectorLinks(FlightMode.CRUISE),controller.getLevel().getGameTime(),currentSubLevel);
             if(targetActive&&target!=null){if(lastNavigatorTarget==null||!target.equals(lastNavigatorTarget)){computer.getNavigator().setTarget(target.x,target.y,target.z);lastNavigatorTarget=target;}}
             else if(computer.getNavigator().hasTarget()){computer.getNavigator().clearTarget();lastNavigatorTarget=null;}
             FlightControllerState state=controller.getControllerState();
