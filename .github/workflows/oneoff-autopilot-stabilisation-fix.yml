@@ -1,0 +1,59 @@
+name: One-off autopilot stabilisation patch
+
+on:
+  push:
+    branches: ['fix/stabiliser-hover-vector-selection-20260818']
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Run autopilot stabilisation patch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch control allocation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/main/java/com/flightcomputer/control/FlightComputer.java')
+          text = p.read_text()
+          old = 'private static Map<ControlAxis,Double> filterStabilizerAxes(Map<ControlAxis,Double> m){if(m==null||m.isEmpty())return Map.of();Map<ControlAxis,Double> r=new EnumMap<>(ControlAxis.class);for(Map.Entry<ControlAxis,Double> e:m.entrySet())if(e.getKey()==ControlAxis.PITCH||e.getKey()==ControlAxis.ROLL)r.put(e.getKey(),e.getValue());return r;} private static Map<ControlAxis,Double> filterAutopilotAxes(Map<ControlAxis,Double> m){if(m==null||m.isEmpty())return Map.of();Map<ControlAxis,Double> r=new EnumMap<>(ControlAxis.class);for(Map.Entry<ControlAxis,Double> e:m.entrySet()){ControlAxis a=e.getKey();if(a==ControlAxis.VERTICAL||a==ControlAxis.LONGITUDINAL||a==ControlAxis.LATERAL||a==ControlAxis.YAW)r.put(a,e.getValue());}return r;}'
+          new = 'private static Map<ControlAxis,Double> filterStabilizerAxes(Map<ControlAxis,Double> m){if(m==null||m.isEmpty())return Map.of();Map<ControlAxis,Double> r=new EnumMap<>(ControlAxis.class);for(Map.Entry<ControlAxis,Double> e:m.entrySet()){ControlAxis a=e.getKey();if(a==ControlAxis.PITCH||a==ControlAxis.ROLL||a==ControlAxis.VERTICAL)r.put(a,e.getValue());}return r;} private static Map<ControlAxis,Double> filterAutopilotAxes(Map<ControlAxis,Double> m){if(m==null||m.isEmpty())return Map.of();Map<ControlAxis,Double> r=new EnumMap<>(ControlAxis.class);for(Map.Entry<ControlAxis,Double> e:m.entrySet()){ControlAxis a=e.getKey();if(a==ControlAxis.LONGITUDINAL||a==ControlAxis.LATERAL||a==ControlAxis.YAW)r.put(a,e.getValue());}return r;}'
+          if old not in text: raise SystemExit('FlightComputer filter block not found')
+          p.write_text(text.replace(old, new, 1))
+
+          p = Path('src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java')
+          text = p.read_text()
+          old = '        private Object helper;\n        private Method getContainingBlockEntity, getContainingPosition, projectOut;'
+          new = '        private Object helper;\n        private Object currentSubLevel;\n        private Method getContainingBlockEntity, getContainingPosition, projectOut;'
+          if old not in text: raise SystemExit('Runtime field anchor not found')
+          text = text.replace(old, new, 1)
+          old = '            Object subLevel = containing(level, controller, local);\n            Vec3 world = project(subLevel, level, local);'
+          new = '            Object subLevel = containing(level, controller, local);\n            currentSubLevel = subLevel;\n            Vec3 world = project(subLevel, level, local);'
+          if old not in text: raise SystemExit('Runtime sublevel anchor not found')
+          text = text.replace(old, new, 1)
+          old = '            registry.refresh(controller.getLevel(),controller.getBlockPos(),controller.getVectorLinks(FlightMode.STABILIZE),controller.getVectorLinks(FlightMode.CRUISE),controller.getLevel().getGameTime());'
+          new = '            registry.refresh(controller.getLevel(),controller.getBlockPos(),controller.getVectorLinks(FlightMode.STABILIZE),controller.getVectorLinks(FlightMode.CRUISE),controller.getLevel().getGameTime(),currentSubLevel);'
+          if old not in text: raise SystemExit('Registry refresh call not found')
+          p.write_text(text.replace(old, new, 1))
+          PY
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/main/java/com/flightcomputer/control/FlightComputer.java src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java
+          git commit -m 'Fix autopilot stabilisation and Sable sublevel handoff'
+          git push origin HEAD:fix/stabiliser-hover-vector-selection-20260818
+      - name: Build
+        run: bash ./gradlew build --no-daemon --stacktrace
+      - name: Remove one-off workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/oneoff-autopilot-stabilisation-fix.yml
+          git commit -m 'Remove one-off autopilot patch workflow'
+          git push origin HEAD:fix/stabiliser-hover-vector-selection-20260818
