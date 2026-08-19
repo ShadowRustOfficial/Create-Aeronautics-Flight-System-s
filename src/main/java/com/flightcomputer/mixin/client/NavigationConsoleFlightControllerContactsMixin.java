@@ -2,10 +2,9 @@ package com.flightcomputer.mixin.client;
 
 import com.flightcomputer.client.map.FlightContactRegistry;
 import com.flightcomputer.map.FlightContact;
-import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import org.spongepowered.asm.mixin.Final;
@@ -22,8 +21,11 @@ import java.util.UUID;
 /** Adds a live powered-controller selector and controller labels without changing Navigation Console control paths. */
 @Mixin(com.flightcomputer.client.gui.NavigationConsoleScreen.class)
 public abstract class NavigationConsoleFlightControllerContactsMixin extends Screen {
-    @Shadow @Final private Minecraft minecraft;
-    @Shadow @Final private Font font;
+    /*
+     * Do not @Shadow Screen.minecraft or Screen.font here. NavigationConsoleScreen does not
+     * declare those fields; they are inherited from Screen. The previous shadows caused
+     * MixinPreProcessorStandard to reject this mixin before the client could start.
+     */
     @Shadow private double centerX;
     @Shadow private double centerZ;
 
