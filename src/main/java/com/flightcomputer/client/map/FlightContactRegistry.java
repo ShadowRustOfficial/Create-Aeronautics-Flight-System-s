@@ -1,6 +1,7 @@
 package com.flightcomputer.client.map;
 
 import com.flightcomputer.map.FlightContact;
+import com.flightcomputer.network.FlightControllerContactNetwork;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -17,13 +18,30 @@ public final class FlightContactRegistry {
         if (contact != null && contact.controllerId() != null) CONTACTS.put(contact.controllerId(), contact);
     }
 
+    public static void acceptPacket(FlightControllerContactNetwork.ContactPayload payload) {
+        if (payload == null || payload.controllerId() == null) return;
+        if (!payload.powered() || !payload.visible()) {
+            CONTACTS.remove(payload.controllerId());
+            return;
+        }
+        CONTACTS.put(payload.controllerId(), new FlightContact(
+                payload.controllerId(),
+                payload.subLevelName(),
+                payload.flightId(),
+                "",
+                payload.x(), payload.y(), payload.z(),
+                0.0D, 0.0D, 0.0D, 0.0D,
+                "POWERED", System.currentTimeMillis() / 50L));
+    }
+
     public static FlightContact get(UUID id) { return id == null ? null : CONTACTS.get(id); }
 
-    public static List<FlightContact> active(long tick) {
+    public static List<FlightContact> active(long ignoredTick) {
+        long tick = System.currentTimeMillis() / 50L;
         List<FlightContact> result = new ArrayList<>();
         CONTACTS.values().removeIf(c -> c.isStale(tick));
         result.addAll(CONTACTS.values());
-        result.sort(Comparator.comparing(FlightContact::displayName, String.CASE_INSENSITIVE_ORDER));
+        result.sort(Comparator.comparing(FlightContact::displayId, String.CASE_INSENSITIVE_ORDER));
         return result;
     }
 

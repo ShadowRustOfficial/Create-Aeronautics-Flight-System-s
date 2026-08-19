@@ -21,6 +21,13 @@ public final class AxisPID {
         return accelCommand * Math.max(scale, 1.0e-3);
     }
 
+    /** Uses the authoritative physical process rate for derivative damping. */
+    public double updateWithMeasurementRate(double error, double measurementRate, double dt, double scale) {
+        double accelCommand = pid.updateWithMeasurementRate(error, measurementRate, dt);
+        if (Math.abs(accelCommand) < correctionDeadband) accelCommand = 0.0D;
+        return accelCommand * Math.max(scale, 1.0e-3);
+    }
+
     public void setGains(double p, double i, double d, double maxOutput) {
         double limit = Math.max(0.001D, Math.min(maxAccelCorrection, Math.abs(maxOutput)));
         pid.setGains(p, i, d);
@@ -31,6 +38,9 @@ public final class AxisPID {
     public double kp() { return pid.kp(); }
     public double ki() { return pid.ki(); }
     public double kd() { return pid.kd(); }
+
+    /** Clears only the accumulated integral correction when entering a captured hold state. */
+    public void resetIntegral() { pid.resetIntegral(); }
 
     public void reset() { pid.reset(); }
 }

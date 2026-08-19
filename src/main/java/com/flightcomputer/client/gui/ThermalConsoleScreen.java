@@ -30,6 +30,10 @@ public final class ThermalConsoleScreen extends Screen {
         this.controllerPos = controllerPos;
     }
 
+    public BlockPos controllerPos() {
+        return controllerPos;
+    }
+
     @Override
     protected void init() {
         controller = getController();

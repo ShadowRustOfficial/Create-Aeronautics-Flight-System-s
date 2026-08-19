@@ -26,8 +26,7 @@ public final class PIDController {
     public double ki() { return ki; }
     public double kd() { return kd; }
 
-    /** Updates the controller using the measured process variable. Derivative is deliberately
-     * taken from the measurement so setpoint changes do not create derivative kick. */
+    /** Updates using the measured process variable; derivative is taken from measurement. */
     public double update(double error, double measurement, double dt) {
         double safeDt = clamp(dt, 1.0 / 200.0, 0.5);
         if (!initialized) { lastMeasurement = measurement; initialized = true; }
@@ -35,13 +34,30 @@ public final class PIDController {
         double rawDerivative = -(measurement - lastMeasurement) / safeDt;
         filteredDerivative += derivativeFilterAlpha * (rawDerivative - filteredDerivative);
         lastMeasurement = measurement;
-        double output = kp * error + ki * integral + kd * filteredDerivative;
+        return finish(kp * error + ki * integral + kd * filteredDerivative);
+    }
+
+    /** Uses an authoritative physical process rate directly for derivative damping. */
+    public double updateWithMeasurementRate(double error, double measurementRate, double dt) {
+        double safeDt = clamp(dt, 1.0 / 200.0, 0.5);
+        if (!initialized) initialized = true;
+        integral = clamp(integral + error * safeDt, integralMin, integralMax);
+        double rawDerivative = -measurementRate;
+        filteredDerivative += derivativeFilterAlpha * (rawDerivative - filteredDerivative);
+        lastMeasurement = measurementRate;
+        return finish(kp * error + ki * integral + kd * filteredDerivative);
+    }
+
+    private double finish(double output) {
         double clamped = clamp(output, outputMin, outputMax);
         if (ki != 0 && clamped != output) integral = clamp(integral + (clamped - output) / ki, integralMin, integralMax);
         return clamped;
     }
 
-    public void reset() { integral = 0; filteredDerivative = 0; initialized = false; }
+    /** Clears accumulated steady-state correction without throwing away derivative state. */
+    public void resetIntegral() { integral = 0.0D; }
+
+    public void reset() { integral = 0; filteredDerivative = 0; lastMeasurement = 0; initialized = false; }
 
     private static double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
 }

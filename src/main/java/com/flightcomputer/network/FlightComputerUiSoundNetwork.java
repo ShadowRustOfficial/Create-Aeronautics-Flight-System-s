@@ -1,6 +1,7 @@
 package com.flightcomputer.network;
 
 import com.flightcomputer.FlightComputer;
+import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.registry.ModSounds;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
@@ -11,14 +12,16 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
-/** Server-authoritative UI audio. Uses the exact server-side block sound path as Emergency Shutdown. */
-@EventBusSubscriber(modid = FlightComputer.MOD_ID)
+/**
+ * Server-authoritative Flight Computer UI audio.
+ * Playback deliberately mirrors Emergency Shutdown: the server resolves the actual Flight
+ * Controller block entity and calls its Level.playSound(null, blockPos, ..., SoundSource.BLOCKS).
+ */
 public final class FlightComputerUiSoundNetwork {
     private static final String VERSION = "1";
     private static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "ui_block_sound");
@@ -33,13 +36,10 @@ public final class FlightComputerUiSoundNetwork {
                 UiSoundPayload::new
         );
 
-        @Override
-        public Type<? extends CustomPacketPayload> type() {
-            return TYPE;
-        }
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    @SubscribeEvent
+    /** RegisterPayloadHandlersEvent is a mod-bus event; FlightComputer registers this listener directly. */
     public static void register(RegisterPayloadHandlersEvent event) {
         event.registrar(VERSION)
                 .playToServer(TYPE, UiSoundPayload.STREAM_CODEC, FlightComputerUiSoundNetwork::handle);
@@ -53,16 +53,19 @@ public final class FlightComputerUiSoundNetwork {
     private static void handle(UiSoundPayload payload, IPayloadContext context) {
         context.enqueueWork(() -> {
             if (!(context.player() instanceof ServerPlayer player)) return;
-            if (!near(player, payload.controllerPos(), 64.0D)) return;
+            BlockPos requestedPos = payload.controllerPos();
+            if (!near(player, requestedPos, 64.0D)) return;
+
+            BlockEntity blockEntity = player.level().getBlockEntity(requestedPos);
+            if (!(blockEntity instanceof FlightControllerBlockEntity controller)) return;
 
             SoundEvent sound = soundFor(payload.soundId());
             if (sound == null) return;
 
-            // Deliberately do NOT resolve through Sable or Sound Physics. This is the same
-            // logical-server playback path used by FlightControllerBlockEntity emergency audio.
-            player.level().playSound(
+            // This is intentionally the same server-side block playback used by Emergency Shutdown.
+            controller.getLevel().playSound(
                     null,
-                    payload.controllerPos(),
+                    controller.getBlockPos(),
                     sound,
                     SoundSource.BLOCKS,
                     1.0F,

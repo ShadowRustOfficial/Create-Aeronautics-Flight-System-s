@@ -7,9 +7,11 @@ import com.flightcomputer.block.FlightControllerBlockEntity;
 import com.flightcomputer.control.FlightControlRuntimeManager;
 import com.flightcomputer.control.FlightMode;
 import com.flightcomputer.control.VectorDirection;
+import com.flightcomputer.identity.FlightIdentityAccess;
 import com.flightcomputer.integration.WaystoneServerIntegration;
 import com.flightcomputer.item.CoolingUpgradeItem;
 import com.flightcomputer.item.FlightLinkToolItem;
+import com.flightcomputer.registry.ModSounds;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.ByteBufCodecs;
@@ -17,6 +19,8 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
@@ -33,6 +37,12 @@ import java.util.UUID;
 
 public final class FlightComputerNetwork {
     private static final String VERSION = "5.2";
+    private static final String SET_NAME_PREFIX = "__SET_NAME__:";
+    private static final String SET_ID_PREFIX = "__SET_ID__:";
+    private static final String SET_HOME = "__SET_HOME__";
+    private static final String HOME_TARGET = "__HOME__";
+    private static final String PLAYER_TARGET_PREFIX = "__PLAYER__:";
+
     public static final CustomPacketPayload.Type<ControllerActionPayload> CONTROLLER_ACTION_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "controller_action"));
     public static final CustomPacketPayload.Type<OperationsActionPayload> OPERATIONS_ACTION_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "operations_action"));
     public static final CustomPacketPayload.Type<LinkVectorPayload> LINK_VECTOR_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "link_vector"));
@@ -44,6 +54,7 @@ public final class FlightComputerNetwork {
     public static final CustomPacketPayload.Type<SetAltitudeHoldTargetPayload> SET_ALTITUDE_HOLD_TARGET_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "set_altitude_hold_target"));
     public static final CustomPacketPayload.Type<RequestWaystoneSnapshotPayload> REQUEST_WAYSTONES_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "request_waystones"));
     public static final CustomPacketPayload.Type<WaystoneSyncPayload> WAYSTONE_SYNC_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "waystone_sync"));
+    public static final CustomPacketPayload.Type<UiButtonSoundPayload> UI_BUTTON_SOUND_TYPE = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(FlightComputer.MOD_ID, "ui_button_sound"));
 
     public record ControllerActionPayload(BlockPos pos, int actionId) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, ControllerActionPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, ControllerActionPayload::pos, ByteBufCodecs.VAR_INT, ControllerActionPayload::actionId, ControllerActionPayload::new); @Override public Type<? extends CustomPacketPayload> type() { return CONTROLLER_ACTION_TYPE; } }
     public record OperationsActionPayload(BlockPos pos, int actionId) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, OperationsActionPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, OperationsActionPayload::pos, ByteBufCodecs.VAR_INT, OperationsActionPayload::actionId, OperationsActionPayload::new); @Override public Type<? extends CustomPacketPayload> type() { return OPERATIONS_ACTION_TYPE; } }
@@ -54,6 +65,7 @@ public final class FlightComputerNetwork {
     public record ClearTargetPayload(BlockPos controllerPos) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, ClearTargetPayload> STREAM_CODEC = BlockPos.STREAM_CODEC.map(ClearTargetPayload::new, ClearTargetPayload::controllerPos); @Override public Type<? extends CustomPacketPayload> type() { return CLEAR_TARGET_TYPE; } }
     public record SetAltitudeHoldTargetPayload(BlockPos controllerPos, double y) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, SetAltitudeHoldTargetPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, SetAltitudeHoldTargetPayload::controllerPos, ByteBufCodecs.DOUBLE, SetAltitudeHoldTargetPayload::y, SetAltitudeHoldTargetPayload::new); @Override public Type<? extends CustomPacketPayload> type() { return SET_ALTITUDE_HOLD_TARGET_TYPE; } }
     public record RequestWaystoneSnapshotPayload() implements CustomPacketPayload { public static final StreamCodec<ByteBuf, RequestWaystoneSnapshotPayload> STREAM_CODEC = StreamCodec.unit(new RequestWaystoneSnapshotPayload()); @Override public Type<? extends CustomPacketPayload> type() { return REQUEST_WAYSTONES_TYPE; } }
+    public record UiButtonSoundPayload(BlockPos controllerPos, int soundId) implements CustomPacketPayload { public static final StreamCodec<ByteBuf, UiButtonSoundPayload> STREAM_CODEC = StreamCodec.composite(BlockPos.STREAM_CODEC, UiButtonSoundPayload::controllerPos, ByteBufCodecs.VAR_INT, UiButtonSoundPayload::soundId, UiButtonSoundPayload::new); @Override public Type<? extends CustomPacketPayload> type() { return UI_BUTTON_SOUND_TYPE; } }
     public record WaystoneSyncEntry(String name, double x, double y, double z) { }
     public record WaystoneSyncPayload(String dimension, List<WaystoneSyncEntry> entries) implements CustomPacketPayload {
         public static final StreamCodec<ByteBuf, WaystoneSyncPayload> STREAM_CODEC = StreamCodec.of((buf, payload) -> payload.encode(buf), WaystoneSyncPayload::decode);
@@ -70,17 +82,70 @@ public final class FlightComputerNetwork {
 
     @EventBusSubscriber(modid=FlightComputer.MOD_ID)
     public static final class Registration {
-        @SubscribeEvent public static void register(RegisterPayloadHandlersEvent event){event.registrar(VERSION).playToServer(CONTROLLER_ACTION_TYPE,ControllerActionPayload.STREAM_CODEC,FlightComputerNetwork::handleAction).playToServer(OPERATIONS_ACTION_TYPE,OperationsActionPayload.STREAM_CODEC,FlightComputerNetwork::handleOperationsAction).playToServer(LINK_VECTOR_TYPE,LinkVectorPayload.STREAM_CODEC,FlightComputerNetwork::handleVectorLink).playToServer(TOOL_CONFIG_TYPE,ToolConfigPayload.STREAM_CODEC,FlightComputerNetwork::handleToolConfig).playToServer(COOLING_SLOT_TYPE,CoolingSlotPayload.STREAM_CODEC,FlightComputerNetwork::handleCoolingSlot).playToServer(SET_TARGET_TYPE,SetTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetTarget).playToServer(CLEAR_TARGET_TYPE,ClearTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleClearTarget).playToServer(SET_ALTITUDE_HOLD_TARGET_TYPE,SetAltitudeHoldTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetAltitudeHoldTarget).playToServer(REQUEST_WAYSTONES_TYPE,RequestWaystoneSnapshotPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneRequest).playToClient(TELEMETRY_TYPE,TelemetryPayload.STREAM_CODEC,FlightComputerNetwork::handleTelemetry).playToClient(WAYSTONE_SYNC_TYPE,WaystoneSyncPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneSync);}
+        @SubscribeEvent public static void register(RegisterPayloadHandlersEvent event){event.registrar(VERSION).playToServer(CONTROLLER_ACTION_TYPE,ControllerActionPayload.STREAM_CODEC,FlightComputerNetwork::handleAction).playToServer(OPERATIONS_ACTION_TYPE,OperationsActionPayload.STREAM_CODEC,FlightComputerNetwork::handleOperationsAction).playToServer(LINK_VECTOR_TYPE,LinkVectorPayload.STREAM_CODEC,FlightComputerNetwork::handleVectorLink).playToServer(TOOL_CONFIG_TYPE,ToolConfigPayload.STREAM_CODEC,FlightComputerNetwork::handleToolConfig).playToServer(COOLING_SLOT_TYPE,CoolingSlotPayload.STREAM_CODEC,FlightComputerNetwork::handleCoolingSlot).playToServer(SET_TARGET_TYPE,SetTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetTarget).playToServer(CLEAR_TARGET_TYPE,ClearTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleClearTarget).playToServer(SET_ALTITUDE_HOLD_TARGET_TYPE,SetAltitudeHoldTargetPayload.STREAM_CODEC,FlightComputerNetwork::handleSetAltitudeHoldTarget).playToServer(REQUEST_WAYSTONES_TYPE,RequestWaystoneSnapshotPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneRequest).playToServer(UI_BUTTON_SOUND_TYPE,UiButtonSoundPayload.STREAM_CODEC,FlightComputerNetwork::handleUiButtonSound).playToClient(TELEMETRY_TYPE,TelemetryPayload.STREAM_CODEC,FlightComputerNetwork::handleTelemetry).playToClient(WAYSTONE_SYNC_TYPE,WaystoneSyncPayload.STREAM_CODEC,FlightComputerNetwork::handleWaystoneSync);}
     }
     private static boolean near(ServerPlayer p,BlockPos pos,double radius){return p!=null&&pos!=null&&p.distanceToSqr(pos.getX()+.5,pos.getY()+.5,pos.getZ()+.5)<=radius*radius;}
     private static void handleAction(ControllerActionPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.pos(),64))return;BlockEntity be=player.level().getBlockEntity(p.pos());if(be instanceof FlightControllerBlockEntity fc)FlightControllerAction.fromNetworkId(p.actionId()).ifPresent(fc::applyAction);});}
     private static void handleOperationsAction(OperationsActionPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.pos(),64))return;BlockEntity be=player.level().getBlockEntity(p.pos());if(be instanceof FlightControllerBlockEntity fc)FlightOperationsAction.fromNetworkId(p.actionId()).ifPresent(fc::applyOperationsAction);});}
     private static void handleVectorLink(LinkVectorPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||!near(player,p.targetPos(),1024))return;FlightMode[] modes=FlightMode.values();VectorDirection[] dirs=VectorDirection.values();if(p.modeId()<0||p.modeId()>=modes.length||p.directionId()<0||p.directionId()>=dirs.length)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||player.level().getBlockState(p.targetPos()).isAir())return;fc.bindVector(modes[p.modeId()],dirs[p.directionId()],p.targetPos());});}
     private static void handleToolConfig(ToolConfigPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player))return;if(p.modeId()<0||p.modeId()>=FlightMode.values().length||p.directionId()<0||p.directionId()>=VectorDirection.values().length)return;FlightLinkToolItem.setSelection(player.getUUID(),p.modeId(),p.directionId());});}
-    private static void handleCoolingSlot(CoolingSlotPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||p.slot()<0||p.slot()>=3)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||fc.isThermalLockout())return;var handler=fc.getUpgradeHandler();if(p.action()==0){var hand=player.getMainHandItem();if(hand.isEmpty()||!(hand.getItem() instanceof CoolingUpgradeItem))return;var remainder=handler.insertItem(p.slot(),hand.copyWithCount(1),false);if(remainder.isEmpty())hand.shrink(1);}else if(p.action()==1){var extracted=handler.extractItem(p.slot(),1,false);if(!extracted.isEmpty()&&!player.addItem(extracted))player.drop(extracted,false);}fc.setChanged();});}
-    private static void handleSetTarget(SetTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||Double.isNaN(p.x())||Double.isNaN(p.y())||Double.isNaN(p.z()))return;FlightControlRuntimeManager.setTarget(fc,new Vec3(p.x(),p.y(),p.z()),p.name());});}
+    private static void handleCoolingSlot(CoolingSlotPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||p.slot()<0||p.slot()>=3)return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity fc)||fc.isThermalLockout())return;var handler=fc.getUpgradeHandler();if(p.action()==0){var hand=player.getMainHandItem();if(hand.isEmpty()||!(hand.getItem() instanceof CoolingUpgradeItem))return;var remainder=handler.insertItem(p.slot(),hand.copyWithCount(1),false);if(remainder.isEmpty()){hand.shrink(1);fc.getLevel().playSound(null,fc.getBlockPos(),ModSounds.COOLING_INSERT.get(),SoundSource.BLOCKS,1.0F,1.0F);}}else if(p.action()==1){var extracted=handler.extractItem(p.slot(),1,false);if(!extracted.isEmpty()){if(!player.addItem(extracted))player.drop(extracted,false);fc.getLevel().playSound(null,fc.getBlockPos(),ModSounds.COOLING_REMOVE.get(),SoundSource.BLOCKS,1.0F,1.0F);}}fc.setChanged();});}
+
+    private static void handleSetTarget(SetTargetPayload p,IPayloadContext c){c.enqueueWork(()->{
+        if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;
+        BlockEntity be=player.level().getBlockEntity(p.controllerPos());
+        if(!(be instanceof FlightControllerBlockEntity fc))return;
+        String name=p.name()==null?"":p.name().trim();
+
+        if(name.startsWith(SET_NAME_PREFIX)){
+            String requested=name.substring(SET_NAME_PREFIX.length()).trim();
+            if(requested.isEmpty())return;
+            requested=requested.length()>64?requested.substring(0,64):requested;
+            String escaped=requested.replace("\\","\\\\").replace("\"","\\\"");
+            if(player.getServer()!=null){
+                player.getServer().getCommands().performPrefixedCommand(
+                        player.createCommandSourceStack().withSuppressedOutput(),
+                        "sable name set @v \""+escaped+"\"");
+            }
+            if(fc instanceof FlightIdentityAccess identity)identity.flightcomputer$setSubLevelName(requested);
+            return;
+        }
+
+        if(name.startsWith(SET_ID_PREFIX)){
+            String id=name.substring(SET_ID_PREFIX.length()).trim();
+            if(fc instanceof FlightIdentityAccess identity)identity.flightcomputer$setFlightId(id.length()>32?id.substring(0,32):id);
+            return;
+        }
+
+        if(SET_HOME.equals(name)){
+            if(fc instanceof FlightIdentityAccess identity)identity.flightcomputer$setHome(player.getUUID(),player.position());
+            return;
+        }
+
+        if(HOME_TARGET.equals(name)){
+            if(fc instanceof FlightIdentityAccess identity){
+                Vec3 home=identity.flightcomputer$getHome(player.getUUID());
+                if(home!=null)FlightControlRuntimeManager.setTarget(fc,home,"Home");
+            }
+            return;
+        }
+
+        if(name.startsWith(PLAYER_TARGET_PREFIX)){
+            String playerName=name.substring(PLAYER_TARGET_PREFIX.length()).trim();
+            if(playerName.isEmpty()||player.getServer()==null)return;
+            ServerPlayer target=player.getServer().getPlayerList().getPlayerByName(playerName);
+            if(target!=null&&target.level().dimension().equals(player.level().dimension())){
+                FlightControlRuntimeManager.setTarget(fc,target.position(),target.getGameProfile().getName());
+            }
+            return;
+        }
+
+        if(Double.isNaN(p.x())||Double.isNaN(p.y())||Double.isNaN(p.z()))return;
+        FlightControlRuntimeManager.setTarget(fc,new Vec3(p.x(),p.y(),p.z()),p.name());
+    });}
     private static void handleClearTarget(ClearTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(be instanceof FlightControllerBlockEntity fc)FlightControlRuntimeManager.clearTarget(fc);});}
     private static void handleSetAltitudeHoldTarget(SetAltitudeHoldTargetPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64)||!Double.isFinite(p.y()))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(be instanceof FlightControllerBlockEntity fc)FlightControlRuntimeManager.setAltitudeHoldTarget(fc,p.y());});}
+    private static void handleUiButtonSound(UiButtonSoundPayload p,IPayloadContext c){c.enqueueWork(()->{if(!(c.player() instanceof ServerPlayer player)||!near(player,p.controllerPos(),64))return;BlockEntity be=player.level().getBlockEntity(p.controllerPos());if(!(be instanceof FlightControllerBlockEntity controller)||controller.getLevel()==null||controller.getLevel().isClientSide())return;SoundEvent sound=switch(p.soundId()){case 0->ModSounds.UI_TOGGLE_ON.get();case 1->ModSounds.UI_TOGGLE_OFF.get();case 2->ModSounds.UI_OPEN.get();case 3->ModSounds.UI_INTERACT.get();case 4->ModSounds.UI_DISCOVER.get();default->null;};if(sound!=null){controller.getLevel().playSound(null,controller.getBlockPos(),sound,SoundSource.BLOCKS,1.0F,1.0F);}});}
     private static void handleWaystoneRequest(RequestWaystoneSnapshotPayload p,IPayloadContext c){c.enqueueWork(()->{if(c.player() instanceof ServerPlayer player){List<WaystoneServerIntegration.Entry> entries=WaystoneServerIntegration.snapshot(player);List<WaystoneSyncEntry> payload=new ArrayList<>(entries.size());for(var entry:entries)payload.add(new WaystoneSyncEntry(entry.name(),entry.x(),entry.y(),entry.z()));PacketDistributor.sendToPlayer(player,new WaystoneSyncPayload(player.level().dimension().location().toString(),payload));}});}
     private static void handleTelemetry(TelemetryPayload p,IPayloadContext c){if(FMLEnvironment.dist==Dist.CLIENT)c.enqueueWork(()->com.flightcomputer.client.FlightComputerTelemetryClient.accept(p));}
     private static void handleWaystoneSync(WaystoneSyncPayload p,IPayloadContext c){if(FMLEnvironment.dist==Dist.CLIENT)c.enqueueWork(()->{List<com.flightcomputer.client.map.FlightMapMarker> markers=new ArrayList<>();for(WaystoneSyncEntry e:p.entries())markers.add(new com.flightcomputer.client.map.FlightMapMarker(com.flightcomputer.client.map.FlightMapMarker.Type.WAYSTONE,e.name(),e.x(),e.y(),e.z()));com.flightcomputer.client.map.WaystoneMapProvider.acceptServerSnapshot(p.dimension(),markers);});}
@@ -92,6 +157,7 @@ public final class FlightComputerNetwork {
     public static void sendTarget(BlockPos cp,double x,double y,double z,String name){PacketDistributor.sendToServer(new SetTargetPayload(cp,x,y,z,name));}
     public static void clearTarget(BlockPos cp){PacketDistributor.sendToServer(new ClearTargetPayload(cp));}
     public static void sendAltitudeHoldTarget(BlockPos cp,double y){PacketDistributor.sendToServer(new SetAltitudeHoldTargetPayload(cp,y));}
+    public static void sendUiButtonSound(BlockPos cp,int soundId){if(cp!=null&&soundId>=0&&soundId<=4)PacketDistributor.sendToServer(new UiButtonSoundPayload(cp,soundId));}
     public static void requestWaystoneSnapshot(){PacketDistributor.sendToServer(new RequestWaystoneSnapshotPayload());}
     public static void sendTelemetry(ServerPlayer player,TelemetryPayload payload){PacketDistributor.sendToPlayer(player,payload);}
     private FlightComputerNetwork(){}

@@ -10,20 +10,15 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Replaces vanilla widget click audio for every Flight Computer screen. */
+/** Mutes vanilla Minecraft widget click audio on Flight Computer screens. */
 @Mixin(AbstractWidget.class)
 public abstract class NavigationConsoleButtonSoundMixin {
-
     @Inject(method = "playDownSound", at = @At("HEAD"), cancellable = true)
-    private void flightcomputer$replaceSound(SoundManager soundManager, CallbackInfo ci) {
+    private void flightcomputer$muteVanillaSound(SoundManager soundManager, CallbackInfo ci) {
         Object widget = this;
-        if (!(widget instanceof Button button)) return;
-
+        if (!(widget instanceof Button)) return;
         Minecraft minecraft = Minecraft.getInstance();
         if (!AudioUiSoundBridge.isFlightComputerScreen(minecraft.screen)) return;
-
-        AudioUiSoundBridge.playForButton(button);
-        // Do not allow the vanilla Minecraft click sound to play as well.
         ci.cancel();
     }
 }

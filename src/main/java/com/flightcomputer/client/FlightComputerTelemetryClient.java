@@ -1,7 +1,5 @@
 package com.flightcomputer.client;
 
-import com.flightcomputer.map.FlightContact;
-import com.flightcomputer.map.FlightContactRegistry;
 import com.flightcomputer.network.FlightComputerNetwork;
 
 import java.util.ArrayList;
@@ -17,12 +15,7 @@ public final class FlightComputerTelemetryClient {
     private FlightComputerTelemetryClient() { }
 
     public static void accept(FlightComputerNetwork.TelemetryPayload payload) {
-        if (payload == null) return;
-        SNAPSHOTS.put(payload.controllerId(), payload);
-        FlightContactRegistry.upsert(new FlightContact(
-                payload.controllerId(), "", "", "",
-                payload.x(), payload.y(), payload.z(), payload.speed(), payload.heading(),
-                payload.pitch(), payload.roll(), "ACTIVE", System.currentTimeMillis() / 50L));
+        if (payload != null) SNAPSHOTS.put(payload.controllerId(), payload);
     }
 
     public static FlightComputerNetwork.TelemetryPayload get(UUID id) {

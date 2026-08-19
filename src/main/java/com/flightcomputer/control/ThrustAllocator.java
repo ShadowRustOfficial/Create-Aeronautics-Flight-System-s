@@ -9,6 +9,8 @@ import java.util.Map;
 /** Final allocator: combined controller output is converted into one physical actuator command per thruster. */
 public final class ThrustAllocator {
     private static final int ITERATIONS = 10;
+    /** Relax the sequential solver so coupled thrusters converge instead of ping-ponging over/under target. */
+    private static final double SOLVER_RELAXATION = 0.65D;
     private final Map<String, PropulsionSource> lastActiveSources = new LinkedHashMap<>();
     private double lastThermalLoad;
     private double lastWorldForceX, lastWorldForceY, lastWorldForceZ;
@@ -44,12 +46,18 @@ public final class ThrustAllocator {
 
         List<ThrusterLink> sources = List.copyOf(unique.values());
         double[] commands = seedVectorBanks(sources, target, vehicleRotation);
+        boolean stabilizerOnly = autopilot == null || autopilot.isEmpty();
+        boolean[] lockedVerticalSources = stabilizerOnly && stabiliser != null && !stabiliser.isEmpty()
+                ? lockStabilizerVerticalBank(sources, commands, stabiliser.getOrDefault(ControlAxis.VERTICAL, 0.0D))
+                : new boolean[sources.size()];
+
         double forceScale = Math.max(1.0D, totalAuthority(sources));
         double torqueScale = Math.max(1.0D, totalTorqueAuthority(sources, state, vehicleRotation));
 
         for (int iteration = 0; iteration < ITERATIONS; iteration++) {
             double[] achieved = achieved(sources, commands, vehicleRotation, state);
             for (int i = 0; i < sources.size(); i++) {
+                if (lockedVerticalSources[i]) continue;
                 double available = sources.get(i).source.getAvailableThrust();
                 if (available <= 0.0D) { commands[i] = 0.0D; continue; }
                 double[] contribution = contribution(sources.get(i), available, state, vehicleRotation);
@@ -62,7 +70,8 @@ public final class ThrustAllocator {
                     magnitude += weightedContribution * weightedContribution;
                 }
                 if (magnitude <= 1.0e-12) continue;
-                commands[i] = clamp(commands[i] + dot / magnitude, 0.0D, 1.0D);
+                double correction = SOLVER_RELAXATION * dot / magnitude;
+                commands[i] = clamp(commands[i] + correction, 0.0D, 1.0D);
             }
         }
 
@@ -84,10 +93,28 @@ public final class ThrustAllocator {
         applyCombined(registry, new VehicleState(), mode == FlightMode.STABILIZE ? commands : Map.of(), mode == FlightMode.CRUISE ? commands : Map.of());
     }
 
-    public void hardStop() {
-        for (PropulsionSource source : lastActiveSources.values()) source.applyThrust(0.0D);
-        lastActiveSources.clear();
-        resetLastWrench();
+    /**
+     * STABILIZE/altitude-hold vertical motion is common-mode lift only. Every physically upward
+     * vertical thruster receives the same command fraction; the six-axis solver is not allowed to
+     * steal thrust from one side of the lift bank to manufacture pitch/roll torque. That prevents
+     * a vertical ascent from becoming a pitch manoeuvre and keeps the vessel level as it rises.
+     */
+    private boolean[] lockStabilizerVerticalBank(List<ThrusterLink> sources, double[] commands, double requestedVerticalForce) {
+        boolean[] locked = new boolean[sources.size()];
+        double upwardAuthority = 0.0D;
+        for (int i = 0; i < sources.size(); i++) {
+            ThrusterLink link = sources.get(i);
+            double bodyY = link.direction.y() * link.polarity;
+            if (Math.abs(link.direction.y()) < 1.0e-9 || bodyY <= 0.0D) continue;
+            double available = Math.max(0.0D, link.source.getAvailableThrust());
+            if (available <= 0.0D) continue;
+            upwardAuthority += available * bodyY;
+            locked[i] = true;
+        }
+        if (upwardAuthority <= 0.0D) return locked;
+        double fraction = clamp(Math.max(0.0D, requestedVerticalForce) / upwardAuthority, 0.0D, 1.0D);
+        for (int i = 0; i < sources.size(); i++) if (locked[i]) commands[i] = fraction;
+        return locked;
     }
 
     /** Seed same-vector thrusters from the combined vector authority before six-axis correction. */
@@ -176,5 +203,11 @@ public final class ThrustAllocator {
 
     private static double clamp(double value, double min, double max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    public void hardStop() {
+        for (PropulsionSource source : lastActiveSources.values()) source.applyThrust(0.0D);
+        lastActiveSources.clear();
+        resetLastWrench();
     }
 }
