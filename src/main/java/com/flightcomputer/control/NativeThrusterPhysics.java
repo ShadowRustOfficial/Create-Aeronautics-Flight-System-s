@@ -3,29 +3,32 @@ package com.flightcomputer.control;
 import com.flightcomputer.block.FlightControllerBlockEntity;
 import net.minecraft.world.level.Level;
 
-import java.lang.reflect.Field;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /** Submits native flight-system actuator impulses after the guidance allocator has commanded them. */
 public final class NativeThrusterPhysics {
-    private static final Map<Object, Long> LAST_TICKS = new LinkedHashMap<>();
+    private static final Map<UUID, ThrusterRegistry> REGISTRIES = new HashMap<>();
 
     private NativeThrusterPhysics() { }
 
-    public static void tick(FlightControllerBlockEntity controller) {
+    public static synchronized void tick(FlightControllerBlockEntity controller) {
         if (controller == null || controller.getLevel() == null || controller.getLevel().isClientSide()) return;
         Level level = controller.getLevel();
-        long gameTime = level.getGameTime();
         Object subLevel = resolveSubLevel(controller);
         if (subLevel == null) return;
 
-        ThrusterRegistry registry = new ThrusterRegistry();
-        registry.refresh(level, controller.getBlockPos(), controller.getVectorLinks(FlightMode.STABILIZE), controller.getVectorLinks(FlightMode.CRUISE), gameTime, subLevel);
+        ThrusterRegistry registry = REGISTRIES.computeIfAbsent(controller.getControllerId(), id -> new ThrusterRegistry());
+        registry.refresh(level, controller.getBlockPos(), controller.getVectorLinks(FlightMode.STABILIZE), controller.getVectorLinks(FlightMode.CRUISE), level.getGameTime(), subLevel);
         for (ThrusterLink link : registry.getAllLinks()) {
             if (link == null || link.source == null) continue;
             link.source.applyPhysicsImpulse(subLevel, 1.0D / 20.0D);
         }
+    }
+
+    public static synchronized void remove(FlightControllerBlockEntity controller) {
+        if (controller != null) REGISTRIES.remove(controller.getControllerId());
     }
 
     private static Object resolveSubLevel(FlightControllerBlockEntity controller) {
