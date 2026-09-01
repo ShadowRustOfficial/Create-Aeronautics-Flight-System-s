@@ -1,0 +1,48 @@
+name: Repair native thruster runtime
+
+on:
+  push:
+    branches: ['fix/physical-thruster-model-20260901']
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.head_commit.message == 'Run native thruster runtime repair'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Restore runtime and integrate native actuators
+        run: |
+          git revert --no-edit 67da76f2db10856cf4092569353dd2b551f7b5c4
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java')
+          text=p.read_text()
+          text=text.replace('import com.flightcomputer.block.FlightControllerBlockEntity;\n', 'import com.flightcomputer.block.FlightControllerBlockEntity;\nimport com.flightcomputer.block.FlightThrusterBlockEntity;\n', 1)
+          old='            computer.tick(1.0D/20.0D,stabiliserEnabled,autopilotEnabled);\n'
+          new='            computer.tick(1.0D/20.0D,stabiliserEnabled,autopilotEnabled);\n            applyNativeThrusterPhysics(registry, currentSubLevel, 1.0D/20.0D);\n'
+          if old not in text: raise SystemExit('control tick anchor missing')
+          text=text.replace(old,new,1)
+          anchor='        private static double controllerBackYawOffset(FlightControllerBlockEntity controller){'
+          method='        private void applyNativeThrusterPhysics(ThrusterRegistry registry, Object subLevel, double dt) {\n            if (registry == null || subLevel == null) return;\n            java.util.HashSet<String> applied = new java.util.HashSet<>();\n            for (ThrusterLink link : registry.getAllLinks()) {\n                if (!(link.source instanceof FlightThrusterBlockEntity thruster)) continue;\n                if (!applied.add(thruster.getId())) continue;\n                thruster.applyPhysicsImpulse(subLevel, dt);\n            }\n        }\n\n'
+          if anchor not in text: raise SystemExit('method anchor missing')
+          text=text.replace(anchor,method+anchor,1)
+          p.write_text(text)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java
+          git commit -m 'Connect native thrusters to runtime physics'
+          git push origin HEAD:fix/physical-thruster-model-20260901
+      - name: Build
+        run: chmod +x gradlew && ./gradlew build --no-daemon --stacktrace
+      - name: Remove one-off workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/repair-native-thruster-runtime.yml
+          git commit -m 'Remove one-off native thruster repair workflow'
+          git push origin HEAD:fix/physical-thruster-model-20260901
