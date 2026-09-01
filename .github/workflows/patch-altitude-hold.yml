@@ -1,0 +1,56 @@
+name: Patch automatic altitude hold
+
+on:
+  push:
+    branches: ['fix/autopilot-altitude-hold-20260901']
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Run automatic altitude hold patch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Patch altitude hold
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/main/java/com/flightcomputer/control/FlightComputer.java')
+          text=p.read_text()
+          text=text.replace('private double holdX,holdY,holdZ,holdYaw,holdVx,holdVy,holdVz,altitudeHoldTargetY=Double.NaN; private double lastCruiseLongitudinalVelocity,lastCruiseLateralVelocity;', 'private double holdX,holdY,holdZ,holdYaw,holdVx,holdVy,holdVz,altitudeHoldTargetY=Double.NaN; private double stabilizerAltitudeTargetY=Double.NaN; private boolean previousStabiliserEnabled,previousAutopilotEnabled; private double lastCruiseLongitudinalVelocity,lastCruiseLateralVelocity;', 1)
+          old='public void tick(double dt,boolean stabiliserEnabled,boolean autopilotEnabled){VehicleState state=stateProvider.getState();if(state==null)return;if(detectPhysicsDisturbance(state))recoverFromPhysicsDisturbance();synchronizeExternalTarget();'
+          new='public void tick(double dt,boolean stabiliserEnabled,boolean autopilotEnabled){VehicleState state=stateProvider.getState();if(state==null)return;if(detectPhysicsDisturbance(state))recoverFromPhysicsDisturbance();synchronizeExternalTarget();boolean stabiliserJustEngaged=stabiliserEnabled&&!previousStabiliserEnabled;boolean autopilotJustDisengaged=previousAutopilotEnabled&&!autopilotEnabled;if(stabiliserJustEngaged||autopilotJustDisengaged)stabilizerAltitudeTargetY=state.y;if(!stabiliserEnabled)stabilizerAltitudeTargetY=Double.NaN;'
+          if old not in text: raise SystemExit('tick anchor missing')
+          text=text.replace(old,new,1)
+          old='if(stabiliserEnabled){StabilizationSetpoint sp=StabilizationSetpoint.manualNudge(pitchStick,rollStick,yawRateStick,verticalStick,longitudinalStick,lateralStick,maxManualTiltRadians,maxManualYawRate,maxManualSpeed);applyHoldSetpoints(sp,state,!autopilotEnabled);'
+          new='if(stabiliserEnabled){StabilizationSetpoint sp=StabilizationSetpoint.manualNudge(pitchStick,rollStick,yawRateStick,verticalStick,longitudinalStick,lateralStick,maxManualTiltRadians,maxManualYawRate,maxManualSpeed);if(!autopilotEnabled&&!altitudeHold){if(!Double.isFinite(stabilizerAltitudeTargetY))stabilizerAltitudeTargetY=state.y;if(Math.abs(verticalStick)>0.05D)stabilizerAltitudeTargetY+=clamp(verticalStick,-1.0D,1.0D)*maxManualSpeed*Math.max(dt,0.0D);sp.desiredVerticalVelocity=clamp((stabilizerAltitudeTargetY-state.y)*1.25D,-maxManualSpeed,maxManualSpeed);}applyHoldSetpoints(sp,state,!autopilotEnabled);'
+          if old not in text: raise SystemExit('stabiliser anchor missing')
+          text=text.replace(old,new,1)
+          old='allocator.applyCombined(registry,state,stabiliseCommands,autopilotCommands);previousControlState=state.copy();}'
+          new='allocator.applyCombined(registry,state,stabiliseCommands,autopilotCommands);previousStabiliserEnabled=stabiliserEnabled;previousAutopilotEnabled=autopilotEnabled;previousControlState=state.copy();}'
+          if old not in text: raise SystemExit('tick tail missing')
+          text=text.replace(old,new,1)
+          p.write_text(text)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/main/java/com/flightcomputer/control/FlightComputer.java
+          git commit -m 'Implement automatic altitude hold without changing attitude stabilisation'
+          git push origin HEAD:fix/autopilot-altitude-hold-20260901
+      - name: Build patched branch
+        run: ./gradlew build --no-daemon --stacktrace
+      - name: Remove one-off workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/patch-altitude-hold.yml
+          git commit -m 'Remove one-off altitude hold workflow'
+          git push origin HEAD:fix/autopilot-altitude-hold-20260901
