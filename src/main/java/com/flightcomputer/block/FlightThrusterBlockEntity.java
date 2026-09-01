@@ -1,5 +1,8 @@
 package com.flightcomputer.block;
 
+import com.flightcomputer.control.PropulsionSource;
+import com.flightcomputer.control.PropulsionType;
+import com.flightcomputer.control.VectorDirection;
 import com.flightcomputer.registry.ModBlockEntities;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -8,13 +11,11 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import org.joml.Vector3d;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.function.Supplier;
 
 /** Native flight-system actuator backed by Sable's queued propulsion force group. */
-public final class FlightThrusterBlockEntity extends BlockEntity {
-    /** Matches the 600-base-thrust / 1000-units-per-kN convention used by Create Propulsion: Simulated. */
+public final class FlightThrusterBlockEntity extends BlockEntity implements PropulsionSource {
     public static final double MAX_THRUST = 600_000.0D;
     private static final double MIN_COMMAND = 0.01D;
     private static final double MAX_RESPONSE_STEP = 0.12D;
@@ -28,26 +29,42 @@ public final class FlightThrusterBlockEntity extends BlockEntity {
     public FlightThrusterBlockEntity(BlockPos pos, BlockState state) { super(ModBlockEntities.FLIGHT_THRUSTER.get(), pos, state); }
     public Direction getFacing() { return getBlockState().getValue(FlightThrusterBlock.FACING); }
     public Direction getDirection() { return getFacing(); }
-    public double getMaxThrust() { return MAX_THRUST; }
-    public double getThrust() { return appliedThrottle * MAX_THRUST; }
-    public double getCurrentThrust() { return getThrust(); }
-    public double getThrottle() { return appliedThrottle; }
-    public boolean isEnabled() { return enabled; }
-    public boolean isOperational() { return level != null; }
-    public boolean hasPower() { return true; }
+    @Override public String getId() { return "native:" + getBlockPos().asLong(); }
+    @Override public PropulsionType getType() { return PropulsionType.GENERIC; }
+    @Override public VectorDirection getDirection() {
+        return switch (getFacing()) {
+            case UP -> VectorDirection.UP;
+            case DOWN -> VectorDirection.DOWN;
+            case NORTH -> VectorDirection.NORTH;
+            case SOUTH -> VectorDirection.SOUTH;
+            case EAST -> VectorDirection.EAST;
+            case WEST -> VectorDirection.WEST;
+        };
+    }
+    @Override public double getMaxThrust() { return MAX_THRUST; }
+    @Override public double getThrust() { return appliedThrottle * MAX_THRUST; }
+    @Override public double getCurrentThrust() { return getThrust(); }
+    @Override public double getThrottle() { return appliedThrottle; }
+    @Override public boolean isEnabled() { return enabled; }
+    @Override public boolean isOperational() { return level != null; }
+    @Override public boolean hasPower() { return true; }
     public boolean isCreative() { return true; }
-    public double getAvailableThrust() { return enabled && isOperational() ? MAX_THRUST : 0.0D; }
-    public double[] getForceDirection() {
+    @Override public double getAvailableThrust() { return enabled && isOperational() ? MAX_THRUST : 0.0D; }
+    @Override public double[] getForceDirection() {
         Direction d = getFacing();
         return new double[]{d.getStepX(), d.getStepY(), d.getStepZ()};
     }
-    public double[] getMountOffset() { return new double[]{0.0D, 0.0D, 0.0D}; }
+    @Override public double[] getMountOffset() {
+        return new double[]{getBlockPos().getX() + 0.5D, getBlockPos().getY() + 0.5D, getBlockPos().getZ() + 0.5D};
+    }
+    @Override public void applyThrust(double signedFraction) {
+        setThrottle(Math.max(0.0D, signedFraction));
+    }
 
     public void setThrottle(double value) { throttle = clamp(value, 0.0D, 1.0D); setChanged(); }
     public void setThrust(double value) { setThrottle(value / MAX_THRUST); }
     public void toggleEnabled() { enabled = !enabled; if (!enabled) throttle = 0.0D; setChanged(); }
 
-    /** Smooth actuator response; physical impulse submission happens during the controller tick. */
     public void serverTick() {
         if (level == null || level.isClientSide() || lastAppliedTick == level.getGameTime()) return;
         lastAppliedTick = level.getGameTime();
@@ -60,8 +77,7 @@ public final class FlightThrusterBlockEntity extends BlockEntity {
         if (subLevel == null || level == null || appliedThrottle <= 0.0D || !enabled) return;
         double thrust = appliedThrottle * MAX_THRUST;
         Direction d = getFacing();
-        Vector3d impulse = new Vector3d(d.getStepX(), d.getStepY(), d.getStepZ())
-                .mul(thrust * timeStep / THRUST_UNITS_PER_KN);
+        Vector3d impulse = new Vector3d(d.getStepX(), d.getStepY(), d.getStepZ()).mul(thrust * timeStep / THRUST_UNITS_PER_KN);
         Vector3d point = new Vector3d(getBlockPos().getX() + 0.5D, getBlockPos().getY() + 0.5D, getBlockPos().getZ() + 0.5D);
         try {
             Object forceGroup = getOrCreatePropulsionForceGroup(subLevel);
@@ -87,14 +103,9 @@ public final class FlightThrusterBlockEntity extends BlockEntity {
     private static double clamp(double value, double min, double max) { return Math.max(min, Math.min(max, value)); }
 
     @Override protected void saveAdditional(CompoundTag tag) {
-        super.saveAdditional(tag);
-        tag.putDouble("Throttle", throttle);
-        tag.putBoolean("Enabled", enabled);
+        super.saveAdditional(tag); tag.putDouble("Throttle", throttle); tag.putBoolean("Enabled", enabled);
     }
-
     @Override protected void loadAdditional(CompoundTag tag) {
-        super.loadAdditional(tag);
-        throttle = clamp(tag.getDouble("Throttle"), 0.0D, 1.0D);
-        enabled = !tag.contains("Enabled") || tag.getBoolean("Enabled");
+        super.loadAdditional(tag); throttle = clamp(tag.getDouble("Throttle"), 0.0D, 1.0D); enabled = !tag.contains("Enabled") || tag.getBoolean("Enabled");
     }
 }
