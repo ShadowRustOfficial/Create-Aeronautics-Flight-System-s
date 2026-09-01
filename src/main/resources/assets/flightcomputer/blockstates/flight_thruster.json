@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "facing=north": { "model": "flightcomputer:block/flight_thruster", "x": 90 },
+    "facing=south": { "model": "flightcomputer:block/flight_thruster", "x": 90, "y": 180 },
+    "facing=east": { "model": "flightcomputer:block/flight_thruster", "x": 90, "y": 90 },
+    "facing=west": { "model": "flightcomputer:block/flight_thruster", "x": 90, "y": 270 },
+    "facing=up": { "model": "flightcomputer:block/flight_thruster" },
+    "facing=down": { "model": "flightcomputer:block/flight_thruster", "x": 180 }
+  }
+}
