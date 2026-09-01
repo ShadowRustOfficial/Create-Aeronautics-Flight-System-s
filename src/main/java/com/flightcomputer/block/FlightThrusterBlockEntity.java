@@ -28,7 +28,6 @@ public final class FlightThrusterBlockEntity extends BlockEntity implements Prop
 
     public FlightThrusterBlockEntity(BlockPos pos, BlockState state) { super(ModBlockEntities.FLIGHT_THRUSTER.get(), pos, state); }
     public Direction getFacing() { return getBlockState().getValue(FlightThrusterBlock.FACING); }
-    public Direction getDirection() { return getFacing(); }
     @Override public String getId() { return "native:" + getBlockPos().asLong(); }
     @Override public PropulsionType getType() { return PropulsionType.GENERIC; }
     @Override public VectorDirection getDirection() {
@@ -42,13 +41,12 @@ public final class FlightThrusterBlockEntity extends BlockEntity implements Prop
         };
     }
     @Override public double getMaxThrust() { return MAX_THRUST; }
-    @Override public double getThrust() { return appliedThrottle * MAX_THRUST; }
+    public double getThrust() { return appliedThrottle * MAX_THRUST; }
     @Override public double getCurrentThrust() { return getThrust(); }
-    @Override public double getThrottle() { return appliedThrottle; }
+    public double getThrottle() { return appliedThrottle; }
     @Override public boolean isEnabled() { return enabled; }
     @Override public boolean isOperational() { return level != null; }
     @Override public boolean hasPower() { return true; }
-    public boolean isCreative() { return true; }
     @Override public double getAvailableThrust() { return enabled && isOperational() ? MAX_THRUST : 0.0D; }
     @Override public double[] getForceDirection() {
         Direction d = getFacing();
@@ -57,9 +55,7 @@ public final class FlightThrusterBlockEntity extends BlockEntity implements Prop
     @Override public double[] getMountOffset() {
         return new double[]{getBlockPos().getX() + 0.5D, getBlockPos().getY() + 0.5D, getBlockPos().getZ() + 0.5D};
     }
-    @Override public void applyThrust(double signedFraction) {
-        setThrottle(Math.max(0.0D, signedFraction));
-    }
+    @Override public void applyThrust(double signedFraction) { setThrottle(Math.max(0.0D, signedFraction)); }
 
     public void setThrottle(double value) { throttle = clamp(value, 0.0D, 1.0D); setChanged(); }
     public void setThrust(double value) { setThrottle(value / MAX_THRUST); }
@@ -101,11 +97,6 @@ public final class FlightThrusterBlockEntity extends BlockEntity implements Prop
     }
 
     private static double clamp(double value, double min, double max) { return Math.max(min, Math.min(max, value)); }
-
-    @Override protected void saveAdditional(CompoundTag tag) {
-        super.saveAdditional(tag); tag.putDouble("Throttle", throttle); tag.putBoolean("Enabled", enabled);
-    }
-    @Override protected void loadAdditional(CompoundTag tag) {
-        super.loadAdditional(tag); throttle = clamp(tag.getDouble("Throttle"), 0.0D, 1.0D); enabled = !tag.contains("Enabled") || tag.getBoolean("Enabled");
-    }
+    @Override protected void saveAdditional(CompoundTag tag) { super.saveAdditional(tag); tag.putDouble("Throttle", throttle); tag.putBoolean("Enabled", enabled); }
+    @Override protected void loadAdditional(CompoundTag tag) { super.loadAdditional(tag); throttle = clamp(tag.getDouble("Throttle"), 0.0D, 1.0D); enabled = !tag.contains("Enabled") || tag.getBoolean("Enabled"); }
 }
