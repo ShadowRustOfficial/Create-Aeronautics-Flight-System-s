@@ -46,7 +46,7 @@ jobs:
           git commit -m 'Implement automatic altitude hold without changing attitude stabilisation'
           git push origin HEAD:fix/autopilot-altitude-hold-20260901
       - name: Build patched branch
-        run: ./gradlew build --no-daemon --stacktrace
+        run: chmod +x gradlew && ./gradlew build --no-daemon --stacktrace
       - name: Remove one-off workflow
         run: |
           git config user.name 'github-actions[bot]'
