@@ -14,6 +14,7 @@ public final class ModCreativeTabs {
             .icon(() -> new ItemStack(ModItems.FLIGHT_LINK_TOOL.get()))
             .displayItems((params, output) -> {
                 output.accept(ModItems.FLIGHT_CONTROLLER.get());
+                output.accept(ModItems.FLIGHT_THRUSTER.get());
                 output.accept(ModItems.DEBUG_POWER_GENERATOR.get());
                 output.accept(ModItems.FLIGHT_LINK_TOOL.get());
                 output.accept(ModItems.BASIC_COOLING.get());
