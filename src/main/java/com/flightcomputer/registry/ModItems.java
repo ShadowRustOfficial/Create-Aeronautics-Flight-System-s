@@ -17,6 +17,9 @@ public final class ModItems {
     public static final DeferredHolder<Item, BlockItem> DEBUG_POWER_GENERATOR = REGISTRY.register("debug_power_generator", () -> new BlockItem(
             ModBlocks.DEBUG_POWER_GENERATOR.get(), new Item.Properties()));
 
+    public static final DeferredHolder<Item, BlockItem> FLIGHT_THRUSTER = REGISTRY.register("flight_thruster", () -> new BlockItem(
+            ModBlocks.FLIGHT_THRUSTER.get(), new Item.Properties()));
+
     public static final DeferredHolder<Item, FlightLinkToolItem> FLIGHT_LINK_TOOL = REGISTRY.register("flight_link_tool", () -> new FlightLinkToolItem(new Item.Properties().stacksTo(1)));
     public static final DeferredHolder<Item, CoolingUpgradeItem> BASIC_COOLING = REGISTRY.register("basic_cooling", () -> new CoolingUpgradeItem(new Item.Properties().stacksTo(1), CoolingUpgradeItem.Tier.BASIC));
     public static final DeferredHolder<Item, CoolingUpgradeItem> IMPROVED_COOLING = REGISTRY.register("improved_cooling", () -> new CoolingUpgradeItem(new Item.Properties().stacksTo(1), CoolingUpgradeItem.Tier.IMPROVED));
