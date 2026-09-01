@@ -1,12 +1,12 @@
 package com.flightcomputer.control;
 
 import com.flightcomputer.block.FlightControllerBlockEntity;
+import com.flightcomputer.block.FlightThrusterBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
-
 import java.lang.reflect.Method;
 import java.util.*;
 
@@ -17,281 +17,31 @@ public final class ThrusterRegistry {
     private final Map<FlightMode, Map<VectorDirection, List<ThrusterLink>>> links = new EnumMap<>(FlightMode.class);
     private long lastRefreshTick = Long.MIN_VALUE;
     private Object lastSubLevel;
-
-    public ThrusterRegistry() {
-        for (FlightMode mode : FlightMode.values()) {
-            Map<VectorDirection, List<ThrusterLink>> vectors = new EnumMap<>(VectorDirection.class);
-            for (VectorDirection direction : VectorDirection.values()) vectors.put(direction, new ArrayList<>());
-            links.put(mode, vectors);
-        }
-    }
-
-    public void refresh(Level level, BlockPos controllerPos, Map<VectorDirection, BlockPos> stabiliserLinks,
-                        Map<VectorDirection, BlockPos> autopilotLinks, long gameTime) {
-        refresh(level, controllerPos, stabiliserLinks, autopilotLinks, gameTime, null);
-    }
-
-    public void refresh(Level level, BlockPos controllerPos, Map<VectorDirection, BlockPos> stabiliserLinks,
-                        Map<VectorDirection, BlockPos> autopilotLinks, long gameTime, Object subLevel) {
-        if (level == null || controllerPos == null
-                || (gameTime == lastRefreshTick && Objects.equals(subLevel, lastSubLevel))) return;
-
-        if (subLevel == null) subLevel = resolveSubLevel(level, controllerPos);
-        lastRefreshTick = gameTime;
-        lastSubLevel = subLevel;
-
-        refreshBank(level, controllerPos, FlightMode.STABILIZE, stabiliserLinks, subLevel);
-        Map<VectorDirection, BlockPos> effective = new EnumMap<>(VectorDirection.class);
-        if (stabiliserLinks != null) effective.putAll(stabiliserLinks);
-        if (autopilotLinks != null) effective.putAll(autopilotLinks);
-        refreshBank(level, controllerPos, FlightMode.CRUISE, effective, subLevel);
-    }
-
-    private void refreshBank(Level level, BlockPos controllerPos, FlightMode mode,
-                             Map<VectorDirection, BlockPos> assignments, Object subLevel) {
-        Map<VectorDirection, List<ThrusterLink>> bank = links.get(mode);
-        for (List<ThrusterLink> value : bank.values()) value.clear();
-
-        if (assignments != null && !assignments.isEmpty()) {
-            for (Map.Entry<VectorDirection, BlockPos> entry : assignments.entrySet()) {
-                addExplicit(level, controllerPos, mode, entry.getKey(), entry.getValue(), bank, subLevel);
-            }
-        }
-
-        if (subLevel != null && scanSablePlot(controllerPos, mode, bank, subLevel)) return;
-        scanOrdinaryLevel(level, controllerPos, mode, bank);
-    }
-
-    /** Discover block entities directly from Sable's loaded plot chunks. */
-    private boolean scanSablePlot(BlockPos controllerPos, FlightMode mode,
-                                  Map<VectorDirection, List<ThrusterLink>> bank, Object subLevel) {
-        try {
-            Object plot = invokeNoArg(subLevel, "getPlot");
-            if (plot == null) return false;
-
-            Object loadedChunks = invokeNoArg(plot, "getLoadedChunks");
-            if (loadedChunks != null) {
-                Iterable<?> holders = asValues(loadedChunks);
-                if (holders != null) {
-                    boolean scannedAnyChunk = false;
-                    for (Object holder : holders) {
-                        Object chunk = invokeNoArg(holder, "getChunk", "chunk");
-                        if (chunk == null && hasBlockEntityMap(holder)) chunk = holder;
-                        Object blockEntities = invokeNoArg(chunk, "getBlockEntities", "blockEntities");
-                        if (!(blockEntities instanceof Map<?, ?> entities)) continue;
-                        scannedAnyChunk = true;
-
-                        for (Object value : entities.values()) {
-                            if (!(value instanceof BlockEntity blockEntity)) continue;
-                            discoverCompatible(
-                                    blockEntity,
-                                    mountOffset(controllerPos, blockEntity.getBlockPos()),
-                                    mode,
-                                    bank
-                            );
-                        }
-                    }
-                    if (scannedAnyChunk) return true;
-                }
-            }
-
-            // Compatibility fallback: Sable's EmbeddedPlotLevelAccessor uses
-            // coordinates centered on getCenterBlock(). LevelPlot#getBoundingBox()
-            // is local to the plot, so translate both into that accessor space.
-            Object accessor = invokeNoArg(plot, "getEmbeddedLevelAccessor");
-            if (!(accessor instanceof LevelAccessor levelAccessor)) return false;
-
-            Object centerObject = invokeNoArg(plot, "getCenterBlock");
-            if (!(centerObject instanceof BlockPos center)) return false;
-
-            Object bounds = invokeNoArg(plot, "getBoundingBox");
-            Integer minX = invokeInt(bounds, "minX"), minY = invokeInt(bounds, "minY"), minZ = invokeInt(bounds, "minZ");
-            Integer maxX = invokeInt(bounds, "maxX"), maxY = invokeInt(bounds, "maxY"), maxZ = invokeInt(bounds, "maxZ");
-            if (minX == null || minY == null || minZ == null || maxX == null || maxY == null || maxZ == null) return false;
-            if (minX > maxX || minY > maxY || minZ > maxZ) return true;
-
-            long volume = ((long) maxX - minX + 1L) * ((long) maxY - minY + 1L) * ((long) maxZ - minZ + 1L);
-            if (volume <= 0L || volume > MAX_SABLE_SCAN_VOLUME) return false;
-
-            int localMinX = minX - center.getX();
-            int localMinY = minY - center.getY();
-            int localMinZ = minZ - center.getZ();
-            int localMaxX = maxX - center.getX();
-            int localMaxY = maxY - center.getY();
-            int localMaxZ = maxZ - center.getZ();
-            BlockPos controllerLocal = controllerPos.subtract(center);
-
-            for (BlockPos scanPos : BlockPos.betweenClosed(
-                    localMinX, localMinY, localMinZ,
-                    localMaxX, localMaxY, localMaxZ)) {
-                BlockEntity blockEntity = levelAccessor.getBlockEntity(scanPos);
-                if (blockEntity == null) continue;
-                discoverCompatible(blockEntity, mountOffset(controllerLocal, scanPos), mode, bank);
-            }
-            return true;
-        } catch (RuntimeException | LinkageError ignored) {
-            return false;
-        }
-    }
-
-    private static Iterable<?> asValues(Object value) {
-        if (value instanceof Iterable<?> iterable) return iterable;
-        if (value instanceof Map<?, ?> map) return map.values();
-        return null;
-    }
-
-    private static boolean hasBlockEntityMap(Object target) {
-        return invokeNoArg(target, "getBlockEntities", "blockEntities") instanceof Map<?, ?>;
-    }
-
-    private void scanOrdinaryLevel(Level level, BlockPos controllerPos, FlightMode mode,
-                                   Map<VectorDirection, List<ThrusterLink>> bank) {
-        BlockPos min = controllerPos.offset(-DISCOVERY_RADIUS, -DISCOVERY_RADIUS, -DISCOVERY_RADIUS);
-        BlockPos max = controllerPos.offset(DISCOVERY_RADIUS, DISCOVERY_RADIUS, DISCOVERY_RADIUS);
-        for (BlockPos scanPos : BlockPos.betweenClosed(min, max)) {
-            if (scanPos.equals(controllerPos)) continue;
-            BlockEntity blockEntity = level.getBlockEntity(scanPos);
-            if (blockEntity != null) discoverCompatible(blockEntity, mountOffset(controllerPos, scanPos), mode, bank);
-        }
-    }
-
-    private static void discoverCompatible(BlockEntity blockEntity, double[] offset, FlightMode mode,
-                                           Map<VectorDirection, List<ThrusterLink>> bank) {
-        for (VectorDirection direction : VectorDirection.values()) {
-            PropulsionSource source = ReflectivePropulsionSource.tryCreate(blockEntity, direction, offset);
-            if (!(source instanceof ReflectivePropulsionSource reflective)) continue;
-            VectorDirection physicalDirection = reflective.getPhysicalDirection();
-            if (physicalDirection == null || physicalDirection != direction) continue;
-            addIfUnique(bank.get(direction), new ThrusterLink(source, direction, mode));
-        }
-    }
-
-    private void addExplicit(Level level, BlockPos controllerPos, FlightMode mode, VectorDirection direction,
-                             BlockPos storedTarget, Map<VectorDirection, List<ThrusterLink>> bank, Object subLevel) {
-        if (storedTarget == null || direction == null) return;
-        BlockEntity direct = level.getBlockEntity(storedTarget);
-        PropulsionSource directSource = direct == null ? null
-                : ReflectivePropulsionSource.tryCreate(direct, direction, mountOffset(controllerPos, storedTarget));
-        if (directSource != null) {
-            addIfUnique(bank.get(direction), new ThrusterLink(directSource, direction, mode));
-            return;
-        }
-        if (subLevel != null) {
-            BlockEntity subLevelEntity = getSubLevelBlockEntity(subLevel, storedTarget);
-            if (subLevelEntity != null) {
-                PropulsionSource source = ReflectivePropulsionSource.tryCreate(subLevelEntity, direction,
-                        mountOffset(controllerPos, storedTarget));
-                if (source != null) {
-                    addIfUnique(bank.get(direction), new ThrusterLink(source, direction, mode));
-                    return;
-                }
-            }
-        }
-        BlockPos localTarget = controllerPos.offset(storedTarget);
-        BlockEntity local = level.getBlockEntity(localTarget);
-        PropulsionSource localSource = ReflectivePropulsionSource.tryCreate(local, direction,
-                mountOffset(controllerPos, localTarget));
-        if (localSource != null) addIfUnique(bank.get(direction), new ThrusterLink(localSource, direction, mode));
-    }
-
-    private static Object resolveSubLevel(Level level, BlockPos controllerPos) {
-        try {
-            BlockEntity be = level.getBlockEntity(controllerPos);
-            if (!(be instanceof FlightControllerBlockEntity controller)) return null;
-            Class<?> sable = Class.forName("dev.ryanhcode.sable.companion.SableCompanion", false,
-                    ThrusterRegistry.class.getClassLoader());
-            Object instance = sable.getField("INSTANCE").get(null);
-            if (instance == null) return null;
-            try {
-                return instance.getClass().getMethod("getContaining", BlockEntity.class).invoke(instance, controller);
-            } catch (NoSuchMethodException ignored) { }
-            try {
-                return instance.getClass().getMethod("getContaining", Level.class, Vec3.class)
-                        .invoke(instance, level, Vec3.atCenterOf(controllerPos));
-            } catch (NoSuchMethodException ignored) { }
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) { }
-        return null;
-    }
-
-    private static BlockEntity getSubLevelBlockEntity(Object subLevel, BlockPos pos) {
-        try {
-            Object plot = invokeNoArg(subLevel, "getPlot");
-            Object accessor = invokeNoArg(plot, "getEmbeddedLevelAccessor");
-            if (accessor instanceof LevelAccessor levelAccessor) return levelAccessor.getBlockEntity(pos);
-        } catch (RuntimeException ignored) { }
-        return null;
-    }
-
-    private static Method findNoArg(Class<?> type, String... names) {
-        for (String name : names) {
-            try {
-                Method method = type.getMethod(name);
-                if (method.getParameterCount() == 0 && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) return method;
-            } catch (ReflectiveOperationException ignored) { }
-        }
-        return null;
-    }
-
-    private static Object invokeNoArg(Object target, String... names) {
-        if (target == null) return null;
-        Method method = findNoArg(target.getClass(), names);
-        if (method == null) return null;
-        try { return method.invoke(target); }
-        catch (ReflectiveOperationException | RuntimeException ignored) { return null; }
-    }
-
-    private static Integer invokeInt(Object target, String name) {
-        Object value = invokeNoArg(target, name);
-        return value instanceof Number n ? n.intValue() : null;
-    }
-
-    private static double[] mountOffset(BlockPos controllerPos, BlockPos target) {
-        return new double[]{
-                target.getX() + 0.5D - (controllerPos.getX() + 0.5D),
-                target.getY() + 0.5D - (controllerPos.getY() + 0.5D),
-                target.getZ() + 0.5D - (controllerPos.getZ() + 0.5D)
-        };
-    }
-
-    private static void addIfUnique(List<ThrusterLink> list, ThrusterLink link) {
-        if (list == null || link == null || link.source == null) return;
-        String id = link.source.getId();
-        for (ThrusterLink existing : list) if (existing.source.getId().equals(id)) return;
-        list.add(link);
-    }
-
-    public void link(ThrusterLink link) { if (link != null) addIfUnique(links.get(link.mode).get(link.direction), link); }
-    public List<ThrusterLink> getLinks(FlightMode mode, VectorDirection direction) { return Collections.unmodifiableList(links.get(mode).get(direction)); }
-    public List<ThrusterLink> getAllLinks(FlightMode mode) {
-        LinkedHashMap<String, ThrusterLink> unique = new LinkedHashMap<>();
-        for (VectorDirection direction : VectorDirection.values()) for (ThrusterLink link : links.get(mode).get(direction)) unique.putIfAbsent(link.source.getId(), link);
-        return List.copyOf(unique.values());
-    }
-    public List<ThrusterLink> getLinks(FlightMode mode, ControlAxis axis) {
-        List<ThrusterLink> result = new ArrayList<>();
-        for (VectorDirection direction : VectorDirection.values()) {
-            if (axis == ControlAxis.VERTICAL && direction != VectorDirection.UP && direction != VectorDirection.DOWN) continue;
-            if (axis == ControlAxis.LONGITUDINAL && direction != VectorDirection.NORTH && direction != VectorDirection.SOUTH) continue;
-            if (axis == ControlAxis.LATERAL && direction != VectorDirection.EAST && direction != VectorDirection.WEST) continue;
-            if (axis.isRotational() || axis.isTranslational()) result.addAll(links.get(mode).get(direction));
-        }
-        return Collections.unmodifiableList(result);
-    }
-    public List<ThrusterLink> getAllLinks() {
-        LinkedHashMap<String, ThrusterLink> unique = new LinkedHashMap<>();
-        for (FlightMode mode : FlightMode.values()) for (VectorDirection direction : VectorDirection.values())
-            for (ThrusterLink link : links.get(mode).get(direction)) unique.putIfAbsent(link.source.getId(), link);
-        return List.copyOf(unique.values());
-    }
-    public double getVectorAuthority(FlightMode mode, VectorDirection direction) {
-        double total = 0; for (ThrusterLink link : links.get(mode).get(direction)) total += Math.max(0, link.source.getAvailableThrust()); return total;
-    }
-    public int getVectorThrusterCount(FlightMode mode, VectorDirection direction) { return links.get(mode).get(direction).size(); }
-    public double getAxisAuthority(FlightMode mode, ControlAxis axis) {
-        double total = 0; for (ThrusterLink link : getLinks(mode, axis)) total += Math.max(0, link.source.getAvailableThrust()); return total;
-    }
-    public boolean hasAnyVector(FlightMode mode, VectorDirection direction) { return getVectorAuthority(mode, direction) > 0; }
-    public List<ControlAxis> getUnlinkedAxes(FlightMode mode) {
-        List<ControlAxis> missing = new ArrayList<>(); for (ControlAxis axis : ControlAxis.values()) if (getAxisAuthority(mode, axis) <= 0) missing.add(axis); return missing;
-    }
+    public ThrusterRegistry() { for (FlightMode mode : FlightMode.values()) { Map<VectorDirection,List<ThrusterLink>> v=new EnumMap<>(VectorDirection.class); for(VectorDirection d:VectorDirection.values())v.put(d,new ArrayList<>()); links.put(mode,v); } }
+    public void refresh(Level level,BlockPos controllerPos,Map<VectorDirection,BlockPos> stabiliserLinks,Map<VectorDirection,BlockPos> autopilotLinks,long gameTime){refresh(level,controllerPos,stabiliserLinks,autopilotLinks,gameTime,null);}
+    public void refresh(Level level,BlockPos controllerPos,Map<VectorDirection,BlockPos> stabiliserLinks,Map<VectorDirection,BlockPos> autopilotLinks,long gameTime,Object subLevel){if(level==null||controllerPos==null||(gameTime==lastRefreshTick&&Objects.equals(subLevel,lastSubLevel)))return;if(subLevel==null)subLevel=resolveSubLevel(level,controllerPos);lastRefreshTick=gameTime;lastSubLevel=subLevel;refreshBank(level,controllerPos,FlightMode.STABILIZE,stabiliserLinks,subLevel);Map<VectorDirection,BlockPos> effective=new EnumMap<>(VectorDirection.class);if(stabiliserLinks!=null)effective.putAll(stabiliserLinks);if(autopilotLinks!=null)effective.putAll(autopilotLinks);refreshBank(level,controllerPos,FlightMode.CRUISE,effective,subLevel);}
+    private void refreshBank(Level level,BlockPos controllerPos,FlightMode mode,Map<VectorDirection,BlockPos> assignments,Object subLevel){Map<VectorDirection,List<ThrusterLink>> bank=links.get(mode);for(List<ThrusterLink> value:bank.values())value.clear();if(assignments!=null)for(Map.Entry<VectorDirection,BlockPos> e:assignments.entrySet())addExplicit(level,controllerPos,mode,e.getKey(),e.getValue(),bank,subLevel);if(subLevel!=null&&scanSablePlot(controllerPos,mode,bank,subLevel))return;scanOrdinaryLevel(level,controllerPos,mode,bank);}
+    private boolean scanSablePlot(BlockPos controllerPos,FlightMode mode,Map<VectorDirection,List<ThrusterLink>> bank,Object subLevel){try{Object plot=invokeNoArg(subLevel,"getPlot");if(plot==null)return false;Object loadedChunks=invokeNoArg(plot,"getLoadedChunks");if(loadedChunks!=null){Iterable<?> holders=asValues(loadedChunks);if(holders!=null){boolean scanned=false;for(Object holder:holders){Object chunk=invokeNoArg(holder,"getChunk","chunk");if(chunk==null&&hasBlockEntityMap(holder))chunk=holder;Object blockEntities=invokeNoArg(chunk,"getBlockEntities","blockEntities");if(!(blockEntities instanceof Map<?,?> entities))continue;scanned=true;for(Object value:entities.values())if(value instanceof BlockEntity be)discoverCompatible(be,mountOffset(controllerPos,be.getBlockPos()),mode,bank);}if(scanned)return true;}}Object accessor=invokeNoArg(plot,"getEmbeddedLevelAccessor");if(!(accessor instanceof LevelAccessor levelAccessor))return false;Object centerObject=invokeNoArg(plot,"getCenterBlock");if(!(centerObject instanceof BlockPos center))return false;Object bounds=invokeNoArg(plot,"getBoundingBox");Integer minX=invokeInt(bounds,"minX"),minY=invokeInt(bounds,"minY"),minZ=invokeInt(bounds,"minZ"),maxX=invokeInt(bounds,"maxX"),maxY=invokeInt(bounds,"maxY"),maxZ=invokeInt(bounds,"maxZ");if(minX==null||minY==null||minZ==null||maxX==null||maxY==null||maxZ==null)return false;long volume=((long)maxX-minX+1)*((long)maxY-minY+1)*((long)maxZ-minZ+1);if(volume<=0||volume>MAX_SABLE_SCAN_VOLUME)return false;BlockPos controllerLocal=controllerPos.subtract(center);for(BlockPos scanPos:BlockPos.betweenClosed(minX-center.getX(),minY-center.getY(),minZ-center.getZ(),maxX-center.getX(),maxY-center.getY(),maxZ-center.getZ())){BlockEntity be=levelAccessor.getBlockEntity(scanPos);if(be!=null)discoverCompatible(be,mountOffset(controllerLocal,scanPos),mode,bank);}return true;}catch(RuntimeException|LinkageError ignored){return false;}}
+    private static Iterable<?> asValues(Object value){if(value instanceof Iterable<?> i)return i;if(value instanceof Map<?,?> m)return m.values();return null;}
+    private static boolean hasBlockEntityMap(Object target){return invokeNoArg(target,"getBlockEntities","blockEntities") instanceof Map<?,?>;}
+    private void scanOrdinaryLevel(Level level,BlockPos controllerPos,FlightMode mode,Map<VectorDirection,List<ThrusterLink>> bank){BlockPos min=controllerPos.offset(-DISCOVERY_RADIUS,-DISCOVERY_RADIUS,-DISCOVERY_RADIUS),max=controllerPos.offset(DISCOVERY_RADIUS,DISCOVERY_RADIUS,DISCOVERY_RADIUS);for(BlockPos scanPos:BlockPos.betweenClosed(min,max)){if(scanPos.equals(controllerPos))continue;BlockEntity be=level.getBlockEntity(scanPos);if(be!=null)discoverCompatible(be,mountOffset(controllerPos,scanPos),mode,bank);}}
+    private static void discoverCompatible(BlockEntity blockEntity,double[] offset,FlightMode mode,Map<VectorDirection,List<ThrusterLink>> bank){if(blockEntity instanceof FlightThrusterBlockEntity nativeThruster){VectorDirection d=nativeThruster.getDirection();if(d!=null)addIfUnique(bank.get(d),new ThrusterLink(nativeThruster,d,mode));return;}for(VectorDirection direction:VectorDirection.values()){PropulsionSource source=ReflectivePropulsionSource.tryCreate(blockEntity,direction,offset);if(!(source instanceof ReflectivePropulsionSource reflective))continue;VectorDirection physicalDirection=reflective.getPhysicalDirection();if(physicalDirection==null||physicalDirection!=direction)continue;addIfUnique(bank.get(direction),new ThrusterLink(source,direction,mode));}}
+    private void addExplicit(Level level,BlockPos controllerPos,FlightMode mode,VectorDirection direction,BlockPos storedTarget,Map<VectorDirection,List<ThrusterLink>> bank,Object subLevel){if(storedTarget==null||direction==null)return;BlockEntity direct=level.getBlockEntity(storedTarget);PropulsionSource directSource=direct instanceof FlightThrusterBlockEntity nativeThruster&&nativeThruster.getDirection()==direction?nativeThruster:direct==null?null:ReflectivePropulsionSource.tryCreate(direct,direction,mountOffset(controllerPos,storedTarget));if(directSource!=null){addIfUnique(bank.get(direction),new ThrusterLink(directSource,direction,mode));return;}if(subLevel!=null){BlockEntity be=getSubLevelBlockEntity(subLevel,storedTarget);if(be!=null){PropulsionSource source=be instanceof FlightThrusterBlockEntity nativeThruster&&nativeThruster.getDirection()==direction?nativeThruster:ReflectivePropulsionSource.tryCreate(be,direction,mountOffset(controllerPos,storedTarget));if(source!=null){addIfUnique(bank.get(direction),new ThrusterLink(source,direction,mode));return;}}}}
+    private static Object resolveSubLevel(Level level,BlockPos controllerPos){try{BlockEntity be=level.getBlockEntity(controllerPos);if(!(be instanceof FlightControllerBlockEntity controller))return null;Class<?> sable=Class.forName("dev.ryanhcode.sable.companion.SableCompanion",false,ThrusterRegistry.class.getClassLoader());Object instance=sable.getField("INSTANCE").get(null);if(instance==null)return null;try{return instance.getClass().getMethod("getContaining",BlockEntity.class).invoke(instance,controller);}catch(NoSuchMethodException ignored){}try{return instance.getClass().getMethod("getContaining",Level.class,Vec3.class).invoke(instance,level,Vec3.atCenterOf(controllerPos));}catch(NoSuchMethodException ignored){}}catch(ReflectiveOperationException|RuntimeException|LinkageError ignored){}return null;}
+    private static BlockEntity getSubLevelBlockEntity(Object subLevel,BlockPos pos){try{Object plot=invokeNoArg(subLevel,"getPlot"),accessor=invokeNoArg(plot,"getEmbeddedLevelAccessor");if(accessor instanceof LevelAccessor a)return a.getBlockEntity(pos);}catch(RuntimeException ignored){}return null;}
+    private static Method findNoArg(Class<?> type,String... names){for(String name:names)try{Method m=type.getMethod(name);if(m.getParameterCount()==0&&!java.lang.reflect.Modifier.isStatic(m.getModifiers()))return m;}catch(ReflectiveOperationException ignored){}return null;}
+    private static Object invokeNoArg(Object target,String... names){if(target==null)return null;Method m=findNoArg(target.getClass(),names);if(m==null)return null;try{return m.invoke(target);}catch(ReflectiveOperationException|RuntimeException ignored){return null;}}
+    private static Integer invokeInt(Object target,String name){Object v=invokeNoArg(target,name);return v instanceof Number n?n.intValue():null;}
+    private static double[] mountOffset(BlockPos controllerPos,BlockPos target){return new double[]{target.getX()+.5-(controllerPos.getX()+.5),target.getY()+.5-(controllerPos.getY()+.5),target.getZ()+.5-(controllerPos.getZ()+.5)};}
+    private static void addIfUnique(List<ThrusterLink> list,ThrusterLink link){if(list==null||link==null||link.source==null)return;for(ThrusterLink e:list)if(e.source.getId().equals(link.source.getId()))return;list.add(link);}
+    public void link(ThrusterLink link){if(link!=null)addIfUnique(links.get(link.mode).get(link.direction),link);}
+    public List<ThrusterLink> getLinks(FlightMode mode,VectorDirection direction){return Collections.unmodifiableList(links.get(mode).get(direction));}
+    public List<ThrusterLink> getAllLinks(FlightMode mode){LinkedHashMap<String,ThrusterLink> u=new LinkedHashMap<>();for(VectorDirection d:VectorDirection.values())for(ThrusterLink l:links.get(mode).get(d))u.putIfAbsent(l.source.getId(),l);return List.copyOf(u.values());}
+    public List<ThrusterLink> getLinks(FlightMode mode,ControlAxis axis){List<ThrusterLink> r=new ArrayList<>();for(VectorDirection d:VectorDirection.values()){if(axis==ControlAxis.VERTICAL&&d!=VectorDirection.UP&&d!=VectorDirection.DOWN)continue;if(axis==ControlAxis.LONGITUDINAL&&d!=VectorDirection.NORTH&&d!=VectorDirection.SOUTH)continue;if(axis==ControlAxis.LATERAL&&d!=VectorDirection.EAST&&d!=VectorDirection.WEST)continue;r.addAll(links.get(mode).get(d));}return Collections.unmodifiableList(r);}
+    public List<ThrusterLink> getAllLinks(){LinkedHashMap<String,ThrusterLink> u=new LinkedHashMap<>();for(FlightMode m:FlightMode.values())for(VectorDirection d:VectorDirection.values())for(ThrusterLink l:links.get(m).get(d))u.putIfAbsent(l.source.getId(),l);return List.copyOf(u.values());}
+    public double getVectorAuthority(FlightMode m,VectorDirection d){double t=0;for(ThrusterLink l:links.get(m).get(d))t+=Math.max(0,l.source.getAvailableThrust());return t;}
+    public int getVectorThrusterCount(FlightMode m,VectorDirection d){return links.get(m).get(d).size();}
+    public double getAxisAuthority(FlightMode m,ControlAxis a){double t=0;for(ThrusterLink l:getLinks(m,a))t+=Math.max(0,l.source.getAvailableThrust());return t;}
+    public boolean hasAnyVector(FlightMode m,VectorDirection d){return getVectorAuthority(m,d)>0;}
+    public List<ControlAxis> getUnlinkedAxes(FlightMode m){List<ControlAxis> r=new ArrayList<>();for(ControlAxis a:ControlAxis.values())if(getAxisAuthority(m,a)<=0)r.add(a);return r;}
 }
