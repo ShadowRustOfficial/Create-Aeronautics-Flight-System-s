@@ -4,31 +4,28 @@ import com.flightcomputer.registry.ModBlockEntities;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
-import net.neoforged.neoforge.common.util.INBTSerializable;
+import org.joml.Vector3d;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.function.Supplier;
 
-/**
- * Native flight-system actuator. The controller allocator commands throttle; this block then
- * applies the corresponding physical force to the containing Sable vehicle at its mount point.
- */
+/** Native flight-system actuator backed by Sable's queued propulsion force group. */
 public final class FlightThrusterBlockEntity extends BlockEntity {
-    public static final double MAX_THRUST = 600.0D;
+    /** Matches the 600-base-thrust / 1000-units-per-kN convention used by Create Propulsion: Simulated. */
+    public static final double MAX_THRUST = 600_000.0D;
     private static final double MIN_COMMAND = 0.01D;
     private static final double MAX_RESPONSE_STEP = 0.12D;
+    private static final double THRUST_UNITS_PER_KN = 1000.0D;
 
     private double throttle;
     private double appliedThrottle;
     private boolean enabled = true;
     private long lastAppliedTick = Long.MIN_VALUE;
 
-    public FlightThrusterBlockEntity(BlockPos pos, BlockState state) {
-        super(ModBlockEntities.FLIGHT_THRUSTER.get(), pos, state);
-    }
-
+    public FlightThrusterBlockEntity(BlockPos pos, BlockState state) { super(ModBlockEntities.FLIGHT_THRUSTER.get(), pos, state); }
     public Direction getFacing() { return getBlockState().getValue(FlightThrusterBlock.FACING); }
     public Direction getDirection() { return getFacing(); }
     public double getMaxThrust() { return MAX_THRUST; }
@@ -44,72 +41,47 @@ public final class FlightThrusterBlockEntity extends BlockEntity {
         Direction d = getFacing();
         return new double[]{d.getStepX(), d.getStepY(), d.getStepZ()};
     }
-    public double[] getMountOffset() {
-        if (level == null) return new double[]{0.0D, 0.0D, 0.0D};
-        return new double[]{
-                getBlockPos().getX() + 0.5D - (getBlockPos().getX() + 0.5D),
-                getBlockPos().getY() + 0.5D - (getBlockPos().getY() + 0.5D),
-                getBlockPos().getZ() + 0.5D - (getBlockPos().getZ() + 0.5D)
-        };
-    }
+    public double[] getMountOffset() { return new double[]{0.0D, 0.0D, 0.0D}; }
 
-    /** Called by the allocator through the generic propulsion adapter. */
-    public void setThrottle(double value) {
-        throttle = clamp(value, 0.0D, 1.0D);
-        setChanged();
-    }
-
+    public void setThrottle(double value) { throttle = clamp(value, 0.0D, 1.0D); setChanged(); }
     public void setThrust(double value) { setThrottle(value / MAX_THRUST); }
+    public void toggleEnabled() { enabled = !enabled; if (!enabled) throttle = 0.0D; setChanged(); }
 
-    public void toggleEnabled() {
-        enabled = !enabled;
-        if (!enabled) throttle = 0.0D;
-        setChanged();
-    }
-
+    /** Smooth actuator response; physical impulse submission happens during the controller tick. */
     public void serverTick() {
         if (level == null || level.isClientSide() || lastAppliedTick == level.getGameTime()) return;
         lastAppliedTick = level.getGameTime();
         double target = enabled ? throttle : 0.0D;
-        // Give the actuator a small physical response time instead of an infinitely rigid control.
-        double delta = clamp(target - appliedThrottle, -MAX_RESPONSE_STEP, MAX_RESPONSE_STEP);
-        appliedThrottle += delta;
+        appliedThrottle += clamp(target - appliedThrottle, -MAX_RESPONSE_STEP, MAX_RESPONSE_STEP);
         if (Math.abs(appliedThrottle) < MIN_COMMAND) appliedThrottle = 0.0D;
-        applyToContainingVehicle(appliedThrottle);
     }
 
-    private void applyToContainingVehicle(double fraction) {
-        if (fraction <= 0.0D || level == null) return;
+    public void applyPhysicsImpulse(Object subLevel, double timeStep) {
+        if (subLevel == null || level == null || appliedThrottle <= 0.0D || !enabled) return;
+        double thrust = appliedThrottle * MAX_THRUST;
+        Direction d = getFacing();
+        Vector3d impulse = new Vector3d(d.getStepX(), d.getStepY(), d.getStepZ())
+                .mul(thrust * timeStep / THRUST_UNITS_PER_KN);
+        Vector3d point = new Vector3d(getBlockPos().getX() + 0.5D, getBlockPos().getY() + 0.5D, getBlockPos().getZ() + 0.5D);
         try {
-            Class<?> sable = Class.forName("dev.ryanhcode.sable.companion.SableCompanion", false, getClass().getClassLoader());
-            Object helper = sable.getField("INSTANCE").get(null);
-            if (helper == null) return;
-            Object subLevel = null;
-            try { subLevel = helper.getClass().getMethod("getContaining", BlockEntity.class).invoke(helper, this); }
-            catch (ReflectiveOperationException ignored) { }
-            if (subLevel == null) return;
-
-            double thrust = fraction * MAX_THRUST;
-            Direction d = getFacing();
-            double x = d.getStepX() * thrust;
-            double y = d.getStepY() * thrust;
-            double z = d.getStepZ() * thrust;
-
-            // Prefer the same body-space force path used by CC:VS-style flight control. Fallbacks
-            // keep this integration tolerant of Sable API changes without making Sable a hard dep.
-            if (invoke(subLevel, "applyRotDependentForce", x, y, z)) return;
-            if (invoke(subLevel, "applyBodyForce", x, y, z)) return;
-            if (invoke(subLevel, "applyForce", x, y, z)) return;
-            invoke(subLevel, "addForce", x, y, z);
+            Object forceGroup = getOrCreatePropulsionForceGroup(subLevel);
+            if (forceGroup == null) return;
+            Method apply = forceGroup.getClass().getMethod("applyAndRecordPointForce", Vector3d.class, Vector3d.class);
+            apply.invoke(forceGroup, point, impulse);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) { }
     }
 
-    private static boolean invoke(Object target, String name, double x, double y, double z) {
+    private static Object getOrCreatePropulsionForceGroup(Object subLevel) {
         try {
-            Method method = target.getClass().getMethod(name, double.class, double.class, double.class);
-            method.invoke(target, x, y, z);
-            return true;
-        } catch (ReflectiveOperationException | RuntimeException ignored) { return false; }
+            Class<?> forceGroups = Class.forName("dev.ryanhcode.sable.api.physics.force.ForceGroups", false, FlightThrusterBlockEntity.class.getClassLoader());
+            Object holder = forceGroups.getField("PROPULSION").get(null);
+            Object group = holder instanceof Supplier<?> supplier ? supplier.get() : holder.getClass().getMethod("get").invoke(holder);
+            for (Method method : subLevel.getClass().getMethods()) {
+                if (!method.getName().equals("getOrCreateQueuedForceGroup") || method.getParameterCount() != 1) continue;
+                if (method.getParameterTypes()[0].isInstance(group)) return method.invoke(subLevel, group);
+            }
+        } catch (ReflectiveOperationException | RuntimeException ignored) { }
+        return null;
     }
 
     private static double clamp(double value, double min, double max) { return Math.max(min, Math.min(max, value)); }
