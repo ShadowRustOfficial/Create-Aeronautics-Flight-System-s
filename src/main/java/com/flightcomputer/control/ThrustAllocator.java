@@ -104,11 +104,11 @@ public final class ThrustAllocator {
         double upwardAuthority = 0.0D;
         for (int i = 0; i < sources.size(); i++) {
             ThrusterLink link = sources.get(i);
-            double bodyY = link.direction.y() * link.polarity;
-            if (Math.abs(link.direction.y()) < 1.0e-9 || bodyY <= 0.0D) continue;
+            double[] forceDirection = forceDirection(link, 1.0D);
+            if (forceDirection[1] <= 0.0D) continue;
             double available = Math.max(0.0D, link.source.getAvailableThrust());
             if (available <= 0.0D) continue;
-            upwardAuthority += available * bodyY;
+            upwardAuthority += available * forceDirection[1];
             locked[i] = true;
         }
         if (upwardAuthority <= 0.0D) return locked;
@@ -117,7 +117,7 @@ public final class ThrustAllocator {
         return locked;
     }
 
-    /** Seed same-vector thrusters from the combined vector authority before six-axis correction. */
+    /** Seed same-direction thrusters from their physical force vectors before six-axis correction. */
     private double[] seedVectorBanks(List<ThrusterLink> sources, ControlWrench target, Quaterniond rotation) {
         double[] commands = new double[sources.size()];
         for (VectorDirection direction : VectorDirection.values()) {
@@ -129,8 +129,8 @@ public final class ThrustAllocator {
                 if (available <= 0.0D) continue;
                 authority += available;
                 if (unitForce == null) {
-                    unitForce = new Vector3d(direction.x(), direction.y(), direction.z());
-                    rotation.transform(unitForce).mul(link.polarity);
+                    unitForce = new Vector3d(forceDirection(link, 1.0D)[0], forceDirection(link, 1.0D)[1], forceDirection(link, 1.0D)[2]);
+                    rotation.transform(unitForce);
                     double length = unitForce.length();
                     if (length > 1.0e-9) unitForce.div(length);
                 }
@@ -140,7 +140,7 @@ public final class ThrustAllocator {
             double fraction = clamp(required / authority, 0.0D, 1.0D);
             for (int i = 0; i < sources.size(); i++) {
                 ThrusterLink link = sources.get(i);
-                if (link.direction == direction && link.source.getAvailableThrust() > 0.0D) commands[i] = fraction;
+                if (link.direction == direction && sources.get(i).source.getAvailableThrust() > 0.0D) commands[i] = fraction;
             }
         }
         return commands;
@@ -163,14 +163,25 @@ public final class ThrustAllocator {
     }
 
     private double[] contribution(ThrusterLink link, double thrust, VehicleState state, Quaterniond rotation) {
-        VectorDirection d = link.direction;
-        Vector3d force = new Vector3d(d.x(), d.y(), d.z()).mul(thrust * link.polarity);
-        Vector3d r = new Vector3d(link.source.getMountOffset())
-                .sub(state.comX, state.comY, state.comZ);
+        double[] local = forceDirection(link, thrust);
+        Vector3d force = new Vector3d(local[0], local[1], local[2]);
+        Vector3d r = new Vector3d(link.source.getMountOffset()).sub(state.comX, state.comY, state.comZ);
         rotation.transform(force);
         rotation.transform(r);
         double fx = force.x, fy = force.y, fz = force.z;
         return new double[]{fx, fy, fz, r.y * fz - r.z * fy, r.z * fx - r.x * fz, r.x * fy - r.y * fx};
+    }
+
+    private static double[] forceDirection(ThrusterLink link, double thrust) {
+        double[] direction = link.source.getForceDirection();
+        if (direction == null || direction.length < 3) direction = new double[]{link.direction.x(), link.direction.y(), link.direction.z()};
+        double x = direction[0] * link.polarity;
+        double y = direction[1] * link.polarity;
+        double z = direction[2] * link.polarity;
+        double length = Math.sqrt(x * x + y * y + z * z);
+        if (length <= 1.0e-9) return new double[]{0.0D, 0.0D, 0.0D};
+        double magnitude = Math.max(0.0D, thrust);
+        return new double[]{x / length * magnitude, y / length * magnitude, z / length * magnitude};
     }
 
     private static double totalAuthority(List<ThrusterLink> sources) {
@@ -184,7 +195,8 @@ public final class ThrustAllocator {
         for (ThrusterLink link : sources) {
             double thrust = Math.max(0.0D, link.source.getAvailableThrust());
             if (thrust <= 0.0D) continue;
-            Vector3d force = new Vector3d(link.direction.x(), link.direction.y(), link.direction.z()).mul(thrust * link.polarity);
+            double[] local = forceDirection(link, thrust);
+            Vector3d force = new Vector3d(local[0], local[1], local[2]);
             Vector3d r = new Vector3d(link.source.getMountOffset()).sub(state.comX, state.comY, state.comZ);
             rotation.transform(force); rotation.transform(r);
             total += r.cross(force, new Vector3d()).length();
