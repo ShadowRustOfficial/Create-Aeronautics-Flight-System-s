@@ -2,6 +2,7 @@ package com.flightcomputer.block;
 
 import com.flightcomputer.avionics.buttons.FlightControllerButtonLayout;
 import com.flightcomputer.control.FlightControlRuntimeManager;
+import com.flightcomputer.control.NativeThrusterPhysics;
 import com.flightcomputer.control.TiltWarningController;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
@@ -61,6 +62,7 @@ public class FlightControllerBlock extends BaseEntityBlock {
             if (blockEntity instanceof FlightControllerBlockEntity controller) {
                 controller.serverTick();
                 FlightControlRuntimeManager.tick(controller);
+                NativeThrusterPhysics.tick(controller);
                 TiltWarningController.tick(controller);
                 FlightControlRuntimeManager.sendTelemetry(controller);
             }
