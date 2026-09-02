@@ -44,18 +44,6 @@ jobs:
           new='    @Override public double[] getMountOffset() {\n        BlockPos reference = referencePos == null ? getBlockPos() : referencePos;\n        return new double[]{getBlockPos().getX() + 0.5D - (reference.getX() + 0.5D), getBlockPos().getY() + 0.5D - (reference.getY() + 0.5D), getBlockPos().getZ() + 0.5D - (reference.getZ() + 0.5D)};\n    }\n\n    public void setReferencePosition(BlockPos pos) { referencePos = pos; }\n'
           if old not in text: raise SystemExit('mount offset anchor missing')
           text=text.replace(old,new,1)
-          text=text.replace('    @Override protected void saveAdditional(CompoundTag tag) {', '    @Override protected void saveAdditional(CompoundTag tag) {', 1)
-          p.write_text(text)
-
-          p=Path('src/main/java/com/flightcomputer/control/ThrusterRegistry.java')
-          text=p.read_text()
-          old='if(blockEntity instanceof FlightThrusterBlockEntity nativeThruster){VectorDirection d=nativeThruster.getDirection();if(d!=null)addIfUnique(bank.get(d),new ThrusterLink(nativeThruster,d,mode));return;}'
-          new='if(blockEntity instanceof FlightThrusterBlockEntity nativeThruster){VectorDirection d=nativeThruster.getDirection();if(d!=null)addIfUnique(bank.get(d),new ThrusterLink(nativeThruster,d,mode));return;}'
-          if old not in text: raise SystemExit('registry native anchor missing')
-          # Reference position is assigned centrally when the native actuator is discovered.
-          old2='private static void discoverCompatible(BlockEntity blockEntity,double[] offset,FlightMode mode,Map<VectorDirection,List<ThrusterLink>> bank){'
-          new2='private static void discoverCompatible(BlockEntity blockEntity,double[] offset,FlightMode mode,Map<VectorDirection,List<ThrusterLink>> bank){'
-          # No textual rewrite here; runtime allocator uses the existing relative offsets for reflective sources.
           p.write_text(text)
           PY
       - name: Verify compile
