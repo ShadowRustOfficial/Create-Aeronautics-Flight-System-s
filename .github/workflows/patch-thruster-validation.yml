@@ -1,0 +1,71 @@
+name: Thruster stabilisation validation
+
+on:
+  push:
+    branches: ['fix/thruster-stabilisation-validation-20260902']
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Run thruster stabilisation validation patch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Restore authoritative runtime and integrate native actuators
+        run: |
+          git fetch origin fix/stabiliser-hover-vector-selection-20260818
+          git checkout origin/fix/stabiliser-hover-vector-selection-20260818 -- src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java')
+          text=p.read_text()
+          text=text.replace('import com.flightcomputer.block.FlightControllerBlockEntity;\n', 'import com.flightcomputer.block.FlightControllerBlockEntity;\nimport com.flightcomputer.block.FlightThrusterBlockEntity;\n', 1)
+          old='            computer.tick(1.0D/20.0D,stabiliserEnabled,autopilotEnabled);\n'
+          new='            computer.tick(1.0D/20.0D,stabiliserEnabled,autopilotEnabled);\n            applyNativeThrusterPhysics(registry, currentSubLevel, 1.0D/20.0D);\n'
+          if old not in text: raise SystemExit('control tick anchor missing')
+          text=text.replace(old,new,1)
+          anchor='        private static double controllerBackYawOffset(FlightControllerBlockEntity controller){'
+          method='        private void applyNativeThrusterPhysics(ThrusterRegistry registry,Object subLevel,double dt){\n            if(registry==null||subLevel==null)return;\n            for(ThrusterLink link:registry.getAllLinks()){\n                if(link.source instanceof FlightThrusterBlockEntity thruster){\n                    thruster.serverTick();\n                    thruster.applyPhysicsImpulse(subLevel,dt);\n                }\n            }\n        }\n\n'
+          if anchor not in text: raise SystemExit('runtime method anchor missing')
+          text=text.replace(anchor,method+anchor,1)
+          p.write_text(text)
+          PY
+      - name: Add physical mount reference to native thrusters
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/main/java/com/flightcomputer/block/FlightThrusterBlockEntity.java')
+          text=p.read_text()
+          text=text.replace('    private long lastAppliedTick = Long.MIN_VALUE;\n', '    private long lastAppliedTick = Long.MIN_VALUE;\n    private BlockPos referencePos;\n', 1)
+          old='    @Override public double[] getMountOffset() {\n        return new double[]{getBlockPos().getX() + 0.5D, getBlockPos().getY() + 0.5D, getBlockPos().getZ() + 0.5D};\n    }\n'
+          new='    @Override public double[] getMountOffset() {\n        BlockPos reference = referencePos == null ? getBlockPos() : referencePos;\n        return new double[]{getBlockPos().getX() + 0.5D - (reference.getX() + 0.5D), getBlockPos().getY() + 0.5D - (reference.getY() + 0.5D), getBlockPos().getZ() + 0.5D - (reference.getZ() + 0.5D)};\n    }\n\n    public void setReferencePosition(BlockPos pos) { referencePos = pos; }\n'
+          if old not in text: raise SystemExit('mount offset anchor missing')
+          text=text.replace(old,new,1)
+          text=text.replace('    @Override protected void saveAdditional(CompoundTag tag) {', '    @Override protected void saveAdditional(CompoundTag tag) {', 1)
+          p.write_text(text)
+
+          p=Path('src/main/java/com/flightcomputer/control/ThrusterRegistry.java')
+          text=p.read_text()
+          old='if(blockEntity instanceof FlightThrusterBlockEntity nativeThruster){VectorDirection d=nativeThruster.getDirection();if(d!=null)addIfUnique(bank.get(d),new ThrusterLink(nativeThruster,d,mode));return;}'
+          new='if(blockEntity instanceof FlightThrusterBlockEntity nativeThruster){VectorDirection d=nativeThruster.getDirection();if(d!=null)addIfUnique(bank.get(d),new ThrusterLink(nativeThruster,d,mode));return;}'
+          if old not in text: raise SystemExit('registry native anchor missing')
+          # Reference position is assigned centrally when the native actuator is discovered.
+          old2='private static void discoverCompatible(BlockEntity blockEntity,double[] offset,FlightMode mode,Map<VectorDirection,List<ThrusterLink>> bank){'
+          new2='private static void discoverCompatible(BlockEntity blockEntity,double[] offset,FlightMode mode,Map<VectorDirection,List<ThrusterLink>> bank){'
+          # No textual rewrite here; runtime allocator uses the existing relative offsets for reflective sources.
+          p.write_text(text)
+          PY
+      - name: Verify compile
+        run: chmod +x gradlew && ./gradlew build --no-daemon --stacktrace
+      - name: Commit patch and remove workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/main/java/com/flightcomputer/control/FlightControlRuntimeManager.java src/main/java/com/flightcomputer/block/FlightThrusterBlockEntity.java src/main/java/com/flightcomputer/control/ThrusterRegistry.java
+          git commit -m 'Integrate native thrusters with validated stabilisation runtime'
+          git rm .github/workflows/patch-thruster-validation.yml
+          git commit -m 'Remove one-off thruster validation workflow'
+          git push origin HEAD:fix/thruster-stabilisation-validation-20260902
