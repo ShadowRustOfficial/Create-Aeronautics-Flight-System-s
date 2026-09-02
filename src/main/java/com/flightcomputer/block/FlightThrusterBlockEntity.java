@@ -25,6 +25,7 @@ public final class FlightThrusterBlockEntity extends BlockEntity implements Prop
     private double appliedThrottle;
     private boolean enabled = true;
     private long lastAppliedTick = Long.MIN_VALUE;
+    private BlockPos referencePosition;
 
     public FlightThrusterBlockEntity(BlockPos pos, BlockState state) { super(ModBlockEntities.FLIGHT_THRUSTER.get(), pos, state); }
     public Direction getFacing() { return getBlockState().getValue(FlightThrusterBlock.FACING); }
@@ -52,9 +53,16 @@ public final class FlightThrusterBlockEntity extends BlockEntity implements Prop
         Direction d = getFacing();
         return new double[]{d.getStepX(), d.getStepY(), d.getStepZ()};
     }
+    /** Offset from the controller reference point, not an absolute world coordinate. */
     @Override public double[] getMountOffset() {
-        return new double[]{getBlockPos().getX() + 0.5D, getBlockPos().getY() + 0.5D, getBlockPos().getZ() + 0.5D};
+        BlockPos reference = referencePosition == null ? getBlockPos() : referencePosition;
+        return new double[]{
+                getBlockPos().getX() + 0.5D - (reference.getX() + 0.5D),
+                getBlockPos().getY() + 0.5D - (reference.getY() + 0.5D),
+                getBlockPos().getZ() + 0.5D - (reference.getZ() + 0.5D)
+        };
     }
+    public void setReferencePosition(BlockPos pos) { referencePosition = pos; }
     @Override public void applyThrust(double signedFraction) { setThrottle(Math.max(0.0D, signedFraction)); }
 
     public void setThrottle(double value) { throttle = clamp(value, 0.0D, 1.0D); setChanged(); }
