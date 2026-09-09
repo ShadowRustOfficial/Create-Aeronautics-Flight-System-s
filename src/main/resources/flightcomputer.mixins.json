@@ -18,7 +18,8 @@
     "FlightControllerAttitudeCorrectionMixin",
     "FlightControllerAutopilotIsolationMixin",
     "FlightControlPhysicsSnapshotMixin",
-    "FlightComputerAdaptiveTuningMixin"
+    "FlightComputerAdaptiveTuningMixin",
+    "FlightControlNativeThrusterPhysicsMixin"
   ],
   "client": [
     "client.FlightControllerGoggleMixin",
