@@ -14,6 +14,9 @@ public final class ModItems {
     public static final DeferredHolder<Item, BlockItem> FLIGHT_CONTROLLER = REGISTRY.register("flight_controller", () -> new BlockItem(
             ModBlocks.FLIGHT_CONTROLLER.get(), new Item.Properties()));
 
+    public static final DeferredHolder<Item, BlockItem> FLIGHT_THRUSTER = REGISTRY.register("flight_thruster", () -> new BlockItem(
+            ModBlocks.FLIGHT_THRUSTER.get(), new Item.Properties()));
+
     public static final DeferredHolder<Item, BlockItem> DEBUG_POWER_GENERATOR = REGISTRY.register("debug_power_generator", () -> new BlockItem(
             ModBlocks.DEBUG_POWER_GENERATOR.get(), new Item.Properties()));
 
