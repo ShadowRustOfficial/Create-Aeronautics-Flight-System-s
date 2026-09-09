@@ -13,6 +13,13 @@ public interface PropulsionSource {
     boolean hasPower();
     double[] getMountOffset();
 
-    /** Apply one final physical command. Negative values are clamped by the adapter. */
+    /** Physical force direction in the controller/vehicle frame when the actuator exposes one. */
+    default double[] getForceDirection() {
+        VectorDirection direction = getDirection();
+        return direction == null ? new double[]{0.0D, 0.0D, 0.0D}
+                : new double[]{direction.x(), direction.y(), direction.z()};
+    }
+
+    /** Apply one final physical command. Negative values are clamped by the actuator. */
     void applyThrust(double signedFraction);
 }
