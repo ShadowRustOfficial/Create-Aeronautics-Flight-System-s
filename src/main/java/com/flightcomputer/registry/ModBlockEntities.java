@@ -3,6 +3,7 @@ package com.flightcomputer.registry;
 import com.flightcomputer.FlightComputer;
 import com.flightcomputer.block.DebugPowerGeneratorBlockEntity;
 import com.flightcomputer.block.FlightControllerBlockEntity;
+import com.flightcomputer.block.FlightThrusterBlockEntity;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -15,6 +16,10 @@ public final class ModBlockEntities {
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<FlightControllerBlockEntity>> FLIGHT_CONTROLLER =
             REGISTRY.register("flight_controller", () -> BlockEntityType.Builder.of(
                     FlightControllerBlockEntity::new, ModBlocks.FLIGHT_CONTROLLER.get()).build(null));
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<FlightThrusterBlockEntity>> FLIGHT_THRUSTER =
+            REGISTRY.register("flight_thruster", () -> BlockEntityType.Builder.of(
+                    FlightThrusterBlockEntity::new, ModBlocks.FLIGHT_THRUSTER.get()).build(null));
 
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<DebugPowerGeneratorBlockEntity>> DEBUG_POWER_GENERATOR =
             REGISTRY.register("debug_power_generator", () -> BlockEntityType.Builder.of(
